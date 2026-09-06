@@ -2,7 +2,7 @@
 
 Multi-format image optimizer with best-in-class defaults. A library and a CLI, pure Rust by default, C codecs when you want the last few percent.
 
-> **Note**: Private, pre-alpha. The library decodes PNG and writes PNG and JPEG; everything else below is the plan. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md).
+> **Note**: Private, pre-alpha. The library decodes JPEG, PNG, WebP, AVIF and JPEG XL and writes PNG and JPEG; everything else below is the plan. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md).
 
 ## What it is for
 
@@ -42,12 +42,15 @@ Backends come in tiers, mirrored by Cargo features:
 
 ```
 portable   pure Rust, permissive licences, builds on wasm32. Always on.
-           JPEG (mozjpeg-rs), PNG (oxipng), AVIF (ravif / rav1d), lossless WebP, JXL decode.
+           JPEG (mozjpeg-rs / zune-jpeg), PNG (oxipng), AVIF (ravif / re_rav1d),
+           WebP (image-webp, lossless write), JXL decode (jxl-oxide).
 native     C bindings, opt-in. libwebp, libjxl, libavif + libaom, libheif.
 agpl       reserved. Never a default dependency, never in the library.
 ```
 
 > **Note**: The portable tier cannot write lossy WebP or JPEG XL. No permissive pure-Rust encoder exists for either as of September 2026. Requesting one in a portable build returns `EncoderUnavailable` with the feature that would provide it, it never silently falls back.
+
+> **Note**: AVIF decoding is desktop only. `rav1d` does not compile for `wasm32`, so the WASM build recognises AVIF input but has no decoder for it.
 
 ## Layout
 

@@ -10,10 +10,18 @@
 
 pub use sqzer_core::Registry;
 
+#[cfg(all(feature = "avif", not(target_arch = "wasm32")))]
+pub mod avif;
+#[cfg(any(feature = "jpeg", feature = "webp-lossless"))]
+mod exif;
 #[cfg(feature = "jpeg")]
 pub mod jpeg;
+#[cfg(feature = "jxl-decode")]
+pub mod jxl;
 #[cfg(feature = "png")]
 pub mod png;
+#[cfg(feature = "webp-lossless")]
+pub mod webp;
 
 /// Every backend enabled by the active feature set, portable tier first.
 #[must_use]
@@ -26,14 +34,27 @@ pub fn registry() -> Registry {
 
 /// Add the compiled-in portable (pure Rust, permissive) backends.
 pub fn register_portable(reg: &mut Registry) {
+    #[cfg(feature = "jpeg")]
+    {
+        reg.register_decoder(jpeg::JpegDecoder);
+        reg.register_encoder(jpeg::MozjpegEncoder);
+    }
     #[cfg(feature = "png")]
     {
         reg.register_decoder(png::PngDecoder);
         reg.register_encoder(png::PngEncoder);
     }
-    #[cfg(feature = "jpeg")]
+    #[cfg(feature = "webp-lossless")]
     {
-        reg.register_encoder(jpeg::MozjpegEncoder);
+        reg.register_decoder(webp::WebPDecoder);
+    }
+    #[cfg(all(feature = "avif", not(target_arch = "wasm32")))]
+    {
+        reg.register_decoder(avif::AvifDecoder);
+    }
+    #[cfg(feature = "jxl-decode")]
+    {
+        reg.register_decoder(jxl::JxlDecoder);
     }
     // Silence the unused-variable lint when no portable feature is on.
     let _ = reg;

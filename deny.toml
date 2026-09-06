@@ -46,6 +46,12 @@ deny = [
 
 [advisories]
 yanked = "deny"
+ignore = [
+    # `paste` is archived, not vulnerable: a proc macro that only runs at
+    # build time. It reaches us through `re_rav1d`. Drop this entry when
+    # the AVIF decoder moves to a rav1d release without it.
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained proc macro, build-time only, via re_rav1d" },
+]
 
 [sources]
 unknown-registry = "deny"
