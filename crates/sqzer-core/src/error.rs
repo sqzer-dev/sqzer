@@ -22,6 +22,21 @@ pub enum Error {
         /// Configured limit.
         limit: u64,
     },
+    /// An image or buffer that does not describe a valid picture: zero
+    /// dimensions, a sample buffer of the wrong length, and so on.
+    InvalidInput(String),
+    /// The parameters cannot be honoured as given, for example a perceptual
+    /// target that reached an encoder unresolved, or a bad codec option.
+    InvalidParams(String),
+    /// The encoder exists but cannot do what was asked of it, for example
+    /// lossless JPEG or float samples into an 8-bit codec. Never a silent
+    /// fallback.
+    Unsupported {
+        /// Encoder format.
+        format: Format,
+        /// What was asked for.
+        what: String,
+    },
     /// A backend failed. The string is the backend's own message.
     Codec(String),
 }
@@ -33,13 +48,24 @@ impl core::fmt::Display for Error {
             Self::EncoderUnavailable {
                 format,
                 available_in,
-            } => write!(
-                f,
-                "no encoder for {format:?} in this build (enable one of: {})",
-                available_in.join(", ")
-            ),
+            } => {
+                if available_in.is_empty() {
+                    write!(f, "no encoder exists for {format}")
+                } else {
+                    write!(
+                        f,
+                        "no encoder for {format} in this build (enable one of: {})",
+                        available_in.join(", ")
+                    )
+                }
+            }
             Self::TooLarge { pixels, limit } => {
                 write!(f, "image has {pixels} pixels, limit is {limit}")
+            }
+            Self::InvalidInput(msg) => write!(f, "invalid input: {msg}"),
+            Self::InvalidParams(msg) => write!(f, "invalid parameters: {msg}"),
+            Self::Unsupported { format, what } => {
+                write!(f, "{format} encoder does not support {what}")
             }
             Self::Codec(msg) => write!(f, "codec error: {msg}"),
         }
