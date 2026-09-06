@@ -1,0 +1,23 @@
+[package]
+name = "sqzer"
+description = "Multi-format image optimizer with best-in-class defaults. Library facade."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+
+[features]
+default = ["portable"]
+portable = ["sqzer-codecs/portable"]
+native = ["sqzer-codecs/native"]
+
+[dependencies]
+sqzer-core.workspace = true
+sqzer-codecs.workspace = true
+sqzer-metrics.workspace = true
+
+[lints]
+workspace = true

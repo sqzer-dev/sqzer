@@ -1,0 +1,19 @@
+[package]
+name = "sqzer-wasm"
+description = "Browser build of sqzer. Portable tier only."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+sqzer = { workspace = true, features = ["portable"] }
+
+[lints]
+workspace = true

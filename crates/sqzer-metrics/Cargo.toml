@@ -1,0 +1,15 @@
+[package]
+name = "sqzer-metrics"
+description = "Perceptual metrics and the target-quality search for sqzer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+sqzer-core.workspace = true
+
+[lints]
+workspace = true

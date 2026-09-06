@@ -1,0 +1,36 @@
+[package]
+name = "sqzer-codecs"
+description = "Codec backends for sqzer, every one behind a feature flag."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+default = ["portable"]
+
+# Tier 1: pure Rust, permissive. Must build on wasm32.
+portable = ["png", "jpeg", "webp-lossless", "avif", "jxl-decode", "gif", "tiff", "svg"]
+png = []
+jpeg = []
+webp-lossless = []
+avif = []
+jxl-decode = []
+gif = []
+tiff = []
+svg = []
+
+# Tier 2: C bindings. Opt-in, desktop targets only.
+native = ["native-webp", "native-jxl", "native-avif", "native-heif"]
+native-webp = []
+native-jxl = []
+native-avif = []
+native-heif = []
+
+[dependencies]
+sqzer-core.workspace = true
+
+[lints]
+workspace = true
