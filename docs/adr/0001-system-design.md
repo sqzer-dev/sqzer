@@ -278,7 +278,7 @@ What to revisit:
 1. [x] Scaffold the workspace (D1) with `cargo deny` license allow-list and the empty `sqzer-codecs-agpl` crate.
 2. [x] Implement `Image`, the three traits, and the registry with `png` + `mozjpeg-rs` as the first pair to prove the shape.
 3. [x] Add portable decoders: `zune-jpeg`, `image-webp`, `jxl-oxide`, `rav1d` (verify wasm32 build in the same PR).
-4. [ ] Add portable encoders: `oxipng`, `ravif`, `image-webp` lossless.
+4. [x] Add portable encoders: `oxipng`, `ravif`, `image-webp` lossless. (`oxipng` is desktop only, see ADR-0002.)
 5. [ ] Add `sqzer-metrics` with `fast-ssim2` and the bisection loop; write the failure-mode tests (tiny image, flat image, noise).
 6. [ ] Build the calibration harness on `codec-eval`; commit seed tables for JPEG, AVIF, WebP.
 7. [ ] CLI with the six command shapes from D5, JSON output, exit codes.

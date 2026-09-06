@@ -23,11 +23,18 @@ jobs:
           - { os: macos-latest,   target: aarch64-apple-darwin }
           - { os: macos-15-intel,       target: x86_64-apple-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    env:
+      # `oxipng` builds `libdeflate` (C) with `cc`, which on the musl
+      # target wants a musl-targeting compiler. `musl-tools` provides
+      # `musl-gcc`; the variable is ignored on every other target.
+      CC_x86_64_unknown_linux_musl: musl-gcc
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --target ${{ matrix.target }}
       - run: cargo test --workspace --target ${{ matrix.target }}

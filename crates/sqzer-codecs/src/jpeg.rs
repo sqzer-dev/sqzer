@@ -10,6 +10,8 @@ use zune_jpeg::zune_core::bytestream::ZCursor;
 use zune_jpeg::zune_core::colorspace::ColorSpace;
 use zune_jpeg::zune_core::options::DecoderOptions;
 
+use crate::opts::{parse_bool, parse_u8, unknown};
+
 /// JPEG decoder: baseline and progressive, 8-bit. Grayscale files decode to
 /// [`ColorType::Gray`]; YCbCr, RGB, CMYK and YCCK all come out as
 /// [`ColorType::Rgb`], the backend does the conversion. EXIF orientation is
@@ -127,12 +129,10 @@ impl Encoder for MozjpegEncoder {
 
         for (key, value) in params.codec_opts("jpeg") {
             encoder = match key {
-                "progressive" => encoder.progressive(parse_bool(key, value)?),
-                "optimize_scans" => encoder.optimize_scans(parse_bool(key, value)?),
-                "smoothing" => encoder.smoothing(parse_u8(key, value)?),
-                _ => {
-                    return Err(Error::InvalidParams(format!("unknown jpeg option `{key}`")));
-                }
+                "progressive" => encoder.progressive(parse_bool("jpeg", key, value)?),
+                "optimize_scans" => encoder.optimize_scans(parse_bool("jpeg", key, value)?),
+                "smoothing" => encoder.smoothing(parse_u8("jpeg", key, value)?),
+                _ => return Err(unknown("jpeg", key)),
             };
         }
 
@@ -181,24 +181,6 @@ fn map_subsampling(s: Subsampling, quality: u8) -> mozjpeg_rs::Subsampling {
     }
 }
 
-fn parse_bool(key: &str, value: &str) -> Result<bool> {
-    match value {
-        "true" | "1" | "yes" | "on" => Ok(true),
-        "false" | "0" | "no" | "off" => Ok(false),
-        _ => Err(Error::InvalidParams(format!(
-            "jpeg:{key} expects a boolean, got `{value}`"
-        ))),
-    }
-}
-
-fn parse_u8(key: &str, value: &str) -> Result<u8> {
-    value.parse().map_err(|_| {
-        Error::InvalidParams(format!(
-            "jpeg:{key} expects an integer 0..=255, got `{value}`"
-        ))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,12 +213,5 @@ mod tests {
         assert!(JpegDecoder.probe(&[0xFF, 0xD8, 0xFF, 0xE0]).is_some());
         assert!(JpegDecoder.probe(&[0xFF, 0xD8]).is_none());
         assert!(JpegDecoder.probe(b"\x89PNG").is_none());
-    }
-
-    #[test]
-    fn bad_options_are_rejected() {
-        assert!(parse_bool("progressive", "maybe").is_err());
-        assert!(parse_u8("smoothing", "x").is_err());
-        assert!(!parse_bool("progressive", "off").unwrap());
     }
 }

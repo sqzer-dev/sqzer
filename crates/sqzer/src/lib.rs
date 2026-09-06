@@ -151,7 +151,7 @@ impl Sqzer {
         let decoded = self.registry.decode(input, &self.decode)?;
         let format = self
             .format
-            .unwrap_or_else(|| default_format(&decoded.image));
+            .unwrap_or_else(|| default_format(&decoded.image, &self.params.target, &self.registry));
         let encoder = self.registry.encoder(format)?;
 
         let target = match self.params.target {
@@ -175,14 +175,18 @@ impl Sqzer {
     }
 }
 
-/// Placeholder for the content-aware choice in ADR-0001 D5: transparency
-/// keeps PNG, everything else goes to JPEG. Becomes AVIF for photographic
-/// input once an AVIF encoder exists (item 4).
-fn default_format(img: &Image) -> Format {
-    if img.has_alpha() {
-        Format::Png
-    } else {
-        Format::Jpeg
+/// Output format when the caller names none. A lossless target keeps PNG,
+/// which every build writes. A lossy target goes to AVIF when this build
+/// has an encoder for it, else PNG for transparent input and JPEG for the
+/// rest. The content heuristic of ADR-0001 D5 (few colours or hard edges
+/// to lossless WebP or PNG, animation to animated WebP or AVIF) comes with
+/// the CLI, item 7.
+fn default_format(img: &Image, target: &Target, registry: &Registry) -> Format {
+    match target {
+        Target::Lossless => Format::Png,
+        _ if registry.has_encoder(Format::Avif) => Format::Avif,
+        _ if img.has_alpha() => Format::Png,
+        _ => Format::Jpeg,
     }
 }
 
@@ -213,16 +217,44 @@ mod tests {
     }
 
     #[test]
-    fn explicit_quality_converts_png_to_jpeg() {
+    fn explicit_quality_defaults_to_avif() {
         let out = Sqzer::new()
             .target(Target::Quality(80.0))
             .run(&png_bytes(ColorType::Rgb))
             .unwrap();
-        assert_eq!(out.format, Format::Jpeg);
+        assert_eq!(out.format, Format::Avif);
         assert_eq!(out.input.format, Format::Png);
         assert_eq!((out.width, out.height), (4, 4));
         assert_eq!(out.target, Resolved::Quality(80.0));
-        assert_eq!(&out.bytes[..2], &[0xFF, 0xD8]);
+        assert_eq!(&out.bytes[4..8], b"ftyp");
+    }
+
+    #[test]
+    fn without_avif_a_lossy_target_falls_back_by_alpha() {
+        let mut narrow = Registry::new();
+        narrow.register_decoder(sqzer_codecs::png::PngDecoder);
+        narrow.register_encoder(sqzer_codecs::png::PngEncoder);
+        narrow.register_encoder(sqzer_codecs::jpeg::MozjpegEncoder);
+        let sqzer = Sqzer::with_registry(narrow).target(Target::Quality(80.0));
+        assert_eq!(
+            sqzer.run(&png_bytes(ColorType::Rgb)).unwrap().format,
+            Format::Jpeg
+        );
+        assert_eq!(
+            sqzer.run(&png_bytes(ColorType::Rgba)).unwrap().format,
+            Format::Png
+        );
+    }
+
+    #[test]
+    fn explicit_format_is_honoured() {
+        let out = Sqzer::new()
+            .format(Format::WebP)
+            .target(Target::Lossless)
+            .run(&png_bytes(ColorType::Rgba))
+            .unwrap();
+        assert_eq!(out.format, Format::WebP);
+        assert_eq!(&out.bytes[8..12], b"WEBP");
     }
 
     #[test]
@@ -238,14 +270,14 @@ mod tests {
     #[test]
     fn missing_encoder_is_an_error_not_a_fallback() {
         let err = Sqzer::new()
-            .format(Format::Avif)
+            .format(Format::Jxl)
             .target(Target::Quality(50.0))
             .run(&png_bytes(ColorType::Rgb))
             .unwrap_err();
         assert!(matches!(
             err,
             Error::EncoderUnavailable {
-                format: Format::Avif,
+                format: Format::Jxl,
                 ..
             }
         ));
