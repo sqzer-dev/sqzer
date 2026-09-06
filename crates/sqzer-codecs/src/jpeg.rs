@@ -1,11 +1,89 @@
-//! JPEG via `mozjpeg-rs` (BSD-3): a pure-Rust port of mozjpeg with
-//! byte-identical baseline and progressive output and trellis quantisation.
-//! Encoder only; JPEG decoding is `zune-jpeg` (ADR-0001 item 3).
+//! JPEG. Decoding via `zune-jpeg` (MIT/Apache/Zlib), encoding via
+//! `mozjpeg-rs` (BSD-3): a pure-Rust port of mozjpeg with byte-identical
+//! baseline and progressive output and trellis quantisation.
 
-use sqzer_core::codec::{Encoder, EncoderCaps, Format, Tier};
-use sqzer_core::image::{ColorType, Image};
-use sqzer_core::params::{EncodeParams, Resolved, Subsampling};
+use sqzer_core::codec::{Decoder, DecoderCaps, Encoder, EncoderCaps, Format, FormatInfo, Tier};
+use sqzer_core::image::{ColorType, Image, Orientation};
+use sqzer_core::params::{DecodeOpts, EncodeParams, Resolved, Subsampling};
 use sqzer_core::{Error, Result};
+use zune_jpeg::zune_core::bytestream::ZCursor;
+use zune_jpeg::zune_core::colorspace::ColorSpace;
+use zune_jpeg::zune_core::options::DecoderOptions;
+
+/// JPEG decoder: baseline and progressive, 8-bit. Grayscale files decode to
+/// [`ColorType::Gray`]; YCbCr, RGB, CMYK and YCCK all come out as
+/// [`ColorType::Rgb`], the backend does the conversion. EXIF orientation is
+/// applied, the ICC profile is kept on the image.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct JpegDecoder;
+
+static DECODER_CAPS: DecoderCaps = DecoderCaps {
+    format: Format::Jpeg,
+    animation: false,
+    tier: Tier::Portable,
+};
+
+const SOI: [u8; 3] = [0xFF, 0xD8, 0xFF];
+
+impl Decoder for JpegDecoder {
+    fn caps(&self) -> &DecoderCaps {
+        &DECODER_CAPS
+    }
+
+    fn probe(&self, bytes: &[u8]) -> Option<FormatInfo> {
+        bytes.starts_with(&SOI).then_some(FormatInfo {
+            format: Format::Jpeg,
+            animated: false,
+        })
+    }
+
+    fn decode(&self, bytes: &[u8], opts: &DecodeOpts) -> Result<Image> {
+        // The crate's own dimension limits default to 16384 a side; the
+        // pixel budget is ours to enforce, so lift them.
+        let options = DecoderOptions::default()
+            .set_max_width(usize::MAX)
+            .set_max_height(usize::MAX);
+
+        // Headers first, so the pixel limit is checked before any pixel
+        // buffer exists and the output layout can follow the input.
+        let mut probe = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(bytes), options);
+        probe.decode_headers().map_err(codec_err)?;
+        let info = probe
+            .info()
+            .ok_or_else(|| Error::Codec("jpeg headers missing after decode".into()))?;
+        let (width, height) = (u32::from(info.width), u32::from(info.height));
+        opts.check_pixels(width, height)?;
+        let gray = probe.input_colorspace() == Some(ColorSpace::Luma);
+
+        let (color, options) = if gray {
+            (
+                ColorType::Gray,
+                options.jpeg_set_out_colorspace(ColorSpace::Luma),
+            )
+        } else {
+            (ColorType::Rgb, options)
+        };
+        let mut decoder = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(bytes), options);
+        let pixels = decoder.decode().map_err(codec_err)?;
+        let icc = decoder.icc_profile();
+        let orientation = if opts.apply_orientation {
+            decoder
+                .exif()
+                .and_then(|raw| crate::exif::orientation(raw))
+                .unwrap_or_default()
+        } else {
+            Orientation::default()
+        };
+
+        Ok(Image::from_u8(width, height, color, pixels)?
+            .with_icc(icc)
+            .apply_orientation(orientation))
+    }
+}
+
+fn codec_err(e: impl std::fmt::Display) -> Error {
+    Error::Codec(e.to_string())
+}
 
 /// Above this abstract quality `Subsampling::Auto` stops subsampling chroma.
 const AUTO_444_THRESHOLD: u8 = 90;
@@ -146,6 +224,13 @@ mod tests {
             map_subsampling(Subsampling::S422, 10),
             mozjpeg_rs::Subsampling::S422
         );
+    }
+
+    #[test]
+    fn probe_needs_soi_and_a_marker() {
+        assert!(JpegDecoder.probe(&[0xFF, 0xD8, 0xFF, 0xE0]).is_some());
+        assert!(JpegDecoder.probe(&[0xFF, 0xD8]).is_none());
+        assert!(JpegDecoder.probe(b"\x89PNG").is_none());
     }
 
     #[test]

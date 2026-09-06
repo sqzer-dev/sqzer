@@ -1,57 +1,39 @@
-//! End-to-end checks over the first backend pair: PNG in, PNG or JPEG out.
+//! End-to-end checks over the encoders: PNG in, PNG or JPEG out, decoded
+//! back through the registry.
 
 #![cfg(all(feature = "png", feature = "jpeg"))]
 // Synthetic pixel data: the truncating casts are the point.
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 
+mod common;
+
+use common::{H, IntoParams, W, assert_close, quality, test_image};
 use sqzer_codecs::registry;
 use sqzer_core::Error;
 use sqzer_core::codec::{Format, Tier};
 use sqzer_core::image::{ColorType, Image, Samples};
 use sqzer_core::params::{DecodeOpts, EncodeParams, Target};
 
-const W: u32 = 48;
-const H: u32 = 32;
-
-/// A smooth gradient with a hard edge, so subsampling and DCT both matter.
-fn test_image(color: ColorType) -> Image {
-    let ch = color.channels();
-    let mut samples = Vec::with_capacity(W as usize * H as usize * ch);
-    for y in 0..H {
-        for x in 0..W {
-            let r = (x * 255 / (W - 1)) as u8;
-            let g = (y * 255 / (H - 1)) as u8;
-            let b = if x < W / 2 { 40 } else { 220 };
-            let a = if y % 2 == 0 { 255 } else { 128 };
-            let gray = ((u16::from(r) + u16::from(g) + u16::from(b)) / 3) as u8;
-            match color {
-                ColorType::Gray => samples.push(gray),
-                ColorType::GrayAlpha => samples.extend([gray, a]),
-                ColorType::Rgb => samples.extend([r, g, b]),
-                ColorType::Rgba => samples.extend([r, g, b, a]),
-            }
-        }
-    }
-    Image::from_u8(W, H, color, samples).unwrap()
-}
-
-fn quality(q: f32) -> EncodeParams {
-    EncodeParams {
-        target: Target::Quality(q),
-        ..Default::default()
-    }
-}
-
 #[test]
-fn feature_registry_has_the_first_pair() {
+fn feature_registry_lists_the_portable_backends() {
     let reg = registry();
     let enc: Vec<_> = reg.encoders().map(|e| e.caps().format).collect();
-    assert_eq!(enc, vec![Format::Png, Format::Jpeg]);
+    assert_eq!(enc, vec![Format::Jpeg, Format::Png]);
     assert!(reg.encoders().all(|e| e.caps().tier == Tier::Portable));
-    assert_eq!(
-        reg.decoders().map(|d| d.caps().format).collect::<Vec<_>>(),
-        vec![Format::Png]
-    );
+    assert!(reg.decoders().all(|d| d.caps().tier == Tier::Portable));
+
+    let dec: Vec<_> = reg.decoders().map(|d| d.caps().format).collect();
+    let mut expected = vec![Format::Jpeg, Format::Png];
+    if cfg!(feature = "webp-lossless") {
+        expected.push(Format::WebP);
+    }
+    if cfg!(all(feature = "avif", not(target_arch = "wasm32"))) {
+        expected.push(Format::Avif);
+    }
+    if cfg!(feature = "jxl-decode") {
+        expected.push(Format::Jxl);
+    }
+    assert_eq!(dec, expected);
 }
 
 #[test]
@@ -208,7 +190,7 @@ fn unknown_bytes_are_unknown_format() {
 }
 
 #[test]
-fn jpeg_output_decodes_close_to_the_source() {
+fn jpeg_round_trips_close_to_the_source() {
     let reg = registry();
     let src = test_image(ColorType::Rgb);
     let jpeg = reg.encoder(Format::Jpeg).unwrap();
@@ -217,20 +199,10 @@ fn jpeg_output_decodes_close_to_the_source() {
     assert_eq!(&bytes[..2], &[0xFF, 0xD8]);
     assert_eq!(&bytes[bytes.len() - 2..], &[0xFF, 0xD9]);
 
-    let mut dec = zune_jpeg::JpegDecoder::new(std::io::Cursor::new(&bytes));
-    let pixels = dec.decode().unwrap();
-    let info = dec.info().unwrap();
-    assert_eq!((u32::from(info.width), u32::from(info.height)), (W, H));
-    assert_eq!(pixels.len(), src.samples().len());
-
-    let src_px = src.samples().as_u8().unwrap();
-    let mae = pixels
-        .iter()
-        .zip(src_px)
-        .map(|(&a, &b)| f64::from(a.abs_diff(b)))
-        .sum::<f64>()
-        / pixels.len() as f64;
-    assert!(mae < 4.0, "mean absolute error {mae} too high for q90");
+    let decoded = reg.decode(&bytes, &DecodeOpts::default()).unwrap();
+    assert_eq!(decoded.info.format, Format::Jpeg);
+    assert_eq!(decoded.image.color(), ColorType::Rgb);
+    assert_close(&decoded.image, &src, 4.0, "q90 round trip");
 }
 
 #[test]
@@ -252,10 +224,9 @@ fn jpeg_accepts_alpha_and_16_bit_by_conversion() {
     let jpeg = reg.encoder(Format::Jpeg).unwrap();
     for color in [ColorType::Rgba, ColorType::GrayAlpha, ColorType::Gray] {
         let bytes = jpeg.encode(&test_image(color), &quality(75.0)).unwrap();
-        let mut dec = zune_jpeg::JpegDecoder::new(std::io::Cursor::new(&bytes));
-        dec.decode().unwrap();
-        let info = dec.info().unwrap();
-        assert_eq!((u32::from(info.width), u32::from(info.height)), (W, H));
+        let back = reg.decode(&bytes, &DecodeOpts::default()).unwrap().image;
+        assert_eq!((back.width(), back.height()), (W, H));
+        assert_eq!(back.color(), color.without_alpha(), "{color:?}");
     }
     let wide = Image::from_u16(2, 2, ColorType::Rgb, vec![0xFFFF; 12]).unwrap();
     assert!(jpeg.encode(&wide, &quality(75.0)).is_ok());
@@ -314,17 +285,24 @@ fn jpeg_codec_options_take_effect() {
     assert!(progressive.windows(2).any(|w| w == [0xFF, 0xC2]));
     assert!(baseline.windows(2).any(|w| w == [0xFF, 0xC0]));
     assert!(!baseline.windows(2).any(|w| w == [0xFF, 0xC2]));
+    // Both decode to the same picture.
+    let a = reg
+        .decode(&progressive, &DecodeOpts::default())
+        .unwrap()
+        .image;
+    let b = reg.decode(&baseline, &DecodeOpts::default()).unwrap().image;
+    assert_close(&a, &b, 2.0, "progressive vs baseline");
 }
 
-trait IntoParams {
-    fn into_params(self) -> EncodeParams;
-}
-
-impl IntoParams for Target {
-    fn into_params(self) -> EncodeParams {
-        EncodeParams {
-            target: self,
-            ..Default::default()
-        }
-    }
+#[test]
+fn jpeg_icc_survives_a_round_trip() {
+    let reg = registry();
+    let src = test_image(ColorType::Rgb).with_icc(Some(b"fake profile bytes".to_vec()));
+    let bytes = reg
+        .encoder(Format::Jpeg)
+        .unwrap()
+        .encode(&src, &quality(80.0))
+        .unwrap();
+    let back = reg.decode(&bytes, &DecodeOpts::default()).unwrap().image;
+    assert_eq!(back.icc(), src.icc());
 }

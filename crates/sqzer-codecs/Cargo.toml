@@ -14,10 +14,12 @@ default = ["portable"]
 # Tier 1: pure Rust, permissive. Must build on wasm32.
 portable = ["png", "jpeg", "webp-lossless", "avif", "jxl-decode", "gif", "tiff", "svg"]
 png = ["dep:png"]
-jpeg = ["dep:mozjpeg-rs"]
-webp-lossless = []
-avif = []
-jxl-decode = []
+jpeg = ["dep:mozjpeg-rs", "dep:zune-jpeg", "dep:kamadak-exif"]
+webp-lossless = ["dep:image-webp", "dep:kamadak-exif"]
+# The AVIF decoder is desktop only: `rav1d` does not compile for wasm32, so
+# on that target this feature enables nothing until the encoder lands.
+avif = ["dep:avif-parse", "dep:re_rav1d", "dep:yuv"]
+jxl-decode = ["dep:jxl-oxide"]
 gif = []
 tiff = []
 svg = []
@@ -35,10 +37,25 @@ png = { version = "0.18.1", optional = true }
 # Default features pull in `imgref` and the zenyuv fast colour path; neither
 # is needed for the byte-slice API, and fewer crates is fewer licences.
 mozjpeg-rs = { version = "0.9.2", optional = true, default-features = false }
+# `x86` / `neon` default features are runtime-detected SIMD paths and only
+# matter for speed. `std` is needed for the reader.
+zune-jpeg = { version = "0.5.15", optional = true, default-features = false, features = ["std"] }
+image-webp = { version = "0.2.4", optional = true }
+# Decoding stays single-threaded (ADR-0001 D3), so the rayon pool is off.
+jxl-oxide = { version = "0.12.6", optional = true, default-features = false }
+# Only the orientation tag is read. BSD-2-Clause.
+kamadak-exif = { version = "0.6.1", optional = true }
 
-[dev-dependencies]
-# Independent JPEG decoder so the encoder test does not grade its own work.
-zune-jpeg = "0.5.15"
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# ISOBMFF demuxer. MPL-2.0, file-level copyleft, on the allow-list.
+avif-parse = { version = "2.1.0", optional = true }
+# rerun's fork of rav1d (BSD-2-Clause) with a safe Rust API; upstream rav1d
+# 1.1 exposes only the C ABI, which this workspace's `forbid(unsafe_code)`
+# cannot call. Assembly is off so no nasm is needed to build; the Rust
+# fallback paths are used everywhere.
+re_rav1d = { version = "0.1.3", optional = true, default-features = false, features = ["bitdepth_8", "bitdepth_16"] }
+# YUV to RGB, 8 to 16 bit. BSD-3-Clause OR Apache-2.0.
+yuv = { version = "0.8.17", optional = true }
 
 [lints]
 workspace = true
