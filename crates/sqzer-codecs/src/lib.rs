@@ -3,42 +3,44 @@
 //!
 //! Rule: nothing in this crate may pull in an AGPL dependency. `cargo deny`
 //! enforces it. AGPL backends belong in a separate `sqzer-codecs-agpl` crate.
+//!
+//! Registration order matters: [`register_portable`] runs before
+//! [`register_native`], so a native backend takes over a format when both
+//! are compiled in. See [`Registry`] for the precedence rule.
 
-use sqzer_core::codec::{Decoder, Encoder};
+pub use sqzer_core::Registry;
 
-/// Registry of every backend compiled into this build.
-#[derive(Default)]
-pub struct Registry {
-    decoders: Vec<Box<dyn Decoder>>,
-    encoders: Vec<Box<dyn Encoder>>,
+#[cfg(feature = "jpeg")]
+pub mod jpeg;
+#[cfg(feature = "png")]
+pub mod png;
+
+/// Every backend enabled by the active feature set, portable tier first.
+#[must_use]
+pub fn registry() -> Registry {
+    let mut reg = Registry::new();
+    register_portable(&mut reg);
+    register_native(&mut reg);
+    reg
 }
 
-impl Registry {
-    /// Registry with every backend enabled by the active feature set.
-    #[must_use]
-    pub fn from_features() -> Self {
-        Self::default()
+/// Add the compiled-in portable (pure Rust, permissive) backends.
+pub fn register_portable(reg: &mut Registry) {
+    #[cfg(feature = "png")]
+    {
+        reg.register_decoder(png::PngDecoder);
+        reg.register_encoder(png::PngEncoder);
     }
+    #[cfg(feature = "jpeg")]
+    {
+        reg.register_encoder(jpeg::MozjpegEncoder);
+    }
+    // Silence the unused-variable lint when no portable feature is on.
+    let _ = reg;
+}
 
-    /// Add a decoder.
-    pub fn register_decoder(&mut self, d: Box<dyn Decoder>) {
-        self.decoders.push(d);
-    }
-
-    /// Add an encoder.
-    pub fn register_encoder(&mut self, e: Box<dyn Encoder>) {
-        self.encoders.push(e);
-    }
-
-    /// Compiled-in decoders.
-    #[must_use]
-    pub fn decoders(&self) -> &[Box<dyn Decoder>] {
-        &self.decoders
-    }
-
-    /// Compiled-in encoders.
-    #[must_use]
-    pub fn encoders(&self) -> &[Box<dyn Encoder>] {
-        &self.encoders
-    }
+/// Add the compiled-in native (C binding) backends. Empty until ADR-0001
+/// item 8.
+pub fn register_native(reg: &mut Registry) {
+    let _ = reg;
 }
