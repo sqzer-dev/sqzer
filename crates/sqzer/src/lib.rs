@@ -5,12 +5,15 @@
 //! use sqzer::core::codec::Format;
 //! use sqzer::core::params::Target;
 //!
+//! // Search JPEG quality for a SSIMULACRA2 score of 70.
 //! let out = Sqzer::new()
 //!     .format(Format::Jpeg)
-//!     .target(Target::Quality(80.0))
+//!     .target(Target::Ssimulacra2(70.0))
 //!     .run(&std::fs::read("photo.png").unwrap())
 //!     .unwrap();
 //! std::fs::write("photo.jpg", &out.bytes).unwrap();
+//! let report = out.report.expect("a perceptual target always reports");
+//! println!("quality {} scored {}", report.quality, report.score);
 //! ```
 
 pub use sqzer_codecs as codecs;
@@ -20,10 +23,11 @@ pub use sqzer_metrics as metrics;
 use std::sync::Arc;
 
 use sqzer_core::Registry;
+use sqzer_core::Result;
 use sqzer_core::codec::{Format, FormatInfo};
 use sqzer_core::image::Image;
 use sqzer_core::params::{DecodeOpts, EncodeParams, Resolved, Subsampling, Target};
-use sqzer_core::{Error, Result};
+use sqzer_metrics::{Reference, Search, SearchReport};
 
 /// One-shot builder. Cheap to create; holds no image data.
 #[derive(Clone)]
@@ -49,6 +53,10 @@ pub struct Output {
     pub height: u32,
     /// The target the encoder actually ran with.
     pub target: Resolved,
+    /// How the quality was found. `Some` when a perceptual target was
+    /// searched, `None` for an explicit quality, lossless, or an encoder
+    /// that only writes lossless and so met the target trivially.
+    pub report: Option<SearchReport>,
 }
 
 impl Default for Sqzer {
@@ -137,54 +145,82 @@ impl Sqzer {
 
     /// Decode, transform, encode. No resize or colour management yet.
     ///
-    /// > **Note**: the SSIMULACRA2 search is not built yet (ADR-0001 item
-    /// > 5), so the default perceptual target cannot be honoured. Until it
-    /// > lands, pass an explicit [`Target::Quality`] or [`Target::Lossless`];
-    /// > a perceptual target returns [`Error::InvalidParams`] rather than
-    /// > quietly picking a number.
+    /// A perceptual target runs the SSIMULACRA2 search of `sqzer-metrics`
+    /// over the chosen encoder: up to six encodes, each decoded and scored
+    /// against the input. A target the encoder cannot reach is not an
+    /// error; the best candidate is returned and [`Output::report`] says
+    /// the target was missed. An encoder that only writes lossless meets
+    /// any target with its one mode and skips the search.
+    ///
+    /// > **Note**: scoring needs the output format decodable in this
+    /// > build. On `wasm32` AVIF is encode-only, so a perceptual target
+    /// > for AVIF there returns [`sqzer_core::Error::Unsupported`], and
+    /// > the default format falls back to JPEG.
     ///
     /// # Errors
     /// Unknown input, an image over the pixel limit, a decoder failure,
-    /// [`Error::EncoderUnavailable`] for the chosen format, or
-    /// [`Error::InvalidParams`] for a perceptual target.
+    /// [`sqzer_core::Error::EncoderUnavailable`] for the chosen format, or
+    /// [`sqzer_core::Error::Unsupported`] for a perceptual target whose
+    /// output this build cannot decode.
     pub fn run(&self, input: &[u8]) -> Result<Output> {
         let decoded = self.registry.decode(input, &self.decode)?;
+        let image = &decoded.image;
         let format = self
             .format
-            .unwrap_or_else(|| default_format(&decoded.image, &self.params.target, &self.registry));
+            .unwrap_or_else(|| default_format(image, &self.params.target, &self.registry));
         let encoder = self.registry.encoder(format)?;
 
-        let target = match self.params.target {
-            Target::Ssimulacra2(t) => {
-                return Err(Error::InvalidParams(format!(
-                    "perceptual target {t} needs the SSIMULACRA2 search, which is not in \
-                     this build yet; pass Target::Quality or Target::Lossless"
-                )));
+        let (bytes, target, report) = match self.params.target {
+            Target::Ssimulacra2(_) if !encoder.caps().lossy => {
+                let params = EncodeParams {
+                    target: Target::Lossless,
+                    ..self.params.clone()
+                };
+                (encoder.encode(image, &params)?, Resolved::Lossless, None)
             }
-            _ => self.params.resolved()?,
+            Target::Ssimulacra2(t) => {
+                let mut reference = Reference::new(image)?;
+                let found = Search::new(t).encode(
+                    encoder,
+                    image,
+                    &self.params,
+                    &self.registry,
+                    |candidate| reference.score(candidate),
+                )?;
+                let quality = Resolved::Quality(found.report.quality);
+                (found.output, quality, Some(found.report))
+            }
+            _ => (
+                encoder.encode(image, &self.params)?,
+                self.params.resolved()?,
+                None,
+            ),
         };
-        let bytes = encoder.encode(&decoded.image, &self.params)?;
         Ok(Output {
             bytes,
             format,
             input: decoded.info,
-            width: decoded.image.width(),
-            height: decoded.image.height(),
+            width: image.width(),
+            height: image.height(),
             target,
+            report,
         })
     }
 }
 
 /// Output format when the caller names none. A lossless target keeps PNG,
 /// which every build writes. A lossy target goes to AVIF when this build
-/// has an encoder for it, else PNG for transparent input and JPEG for the
-/// rest. The content heuristic of ADR-0001 D5 (few colours or hard edges
-/// to lossless WebP or PNG, animation to animated WebP or AVIF) comes with
+/// has an encoder for it and, for a perceptual target, a decoder to score
+/// its output with; else PNG for transparent input and JPEG for the rest.
+/// The content heuristic of ADR-0001 D5 (few colours or hard edges to
+/// lossless WebP or PNG, animation to animated WebP or AVIF) comes with
 /// the CLI, item 7.
 fn default_format(img: &Image, target: &Target, registry: &Registry) -> Format {
+    let avif = registry.has_encoder(Format::Avif)
+        && (!matches!(target, Target::Ssimulacra2(_)) || registry.has_decoder(Format::Avif));
     match target {
         Target::Lossless => Format::Png,
-        _ if registry.has_encoder(Format::Avif) => Format::Avif,
+        _ if avif => Format::Avif,
         _ if img.has_alpha() => Format::Png,
         _ => Format::Jpeg,
     }
@@ -193,6 +229,7 @@ fn default_format(img: &Image, target: &Target, registry: &Registry) -> Format {
 #[cfg(all(test, feature = "portable"))]
 mod tests {
     use super::*;
+    use sqzer_core::Error;
     use sqzer_core::image::ColorType;
 
     fn png_bytes(color: ColorType) -> Vec<u8> {
@@ -211,9 +248,77 @@ mod tests {
     }
 
     #[test]
-    fn perceptual_default_is_refused_until_the_search_exists() {
-        let err = Sqzer::new().run(&png_bytes(ColorType::Rgb)).unwrap_err();
-        assert!(matches!(err, Error::InvalidParams(_)), "{err}");
+    fn perceptual_default_runs_the_search() {
+        let out = Sqzer::new().run(&png_bytes(ColorType::Rgb)).unwrap();
+        assert_eq!(out.format, Format::Avif);
+        let report = out.report.expect("a perceptual target reports");
+        assert!(
+            report.iterations >= 1 && report.iterations <= 6,
+            "{report:?}"
+        );
+        assert!(report.reached, "a flat image is reachable: {report:?}");
+        assert_eq!(out.target, Resolved::Quality(report.quality));
+        assert_eq!(&out.bytes[4..8], b"ftyp");
+    }
+
+    #[test]
+    fn explicit_quality_and_lossless_do_not_report() {
+        let out = Sqzer::new()
+            .target(Target::Quality(80.0))
+            .run(&png_bytes(ColorType::Rgb))
+            .unwrap();
+        assert!(out.report.is_none());
+        let out = Sqzer::new()
+            .target(Target::Lossless)
+            .run(&png_bytes(ColorType::Rgb))
+            .unwrap();
+        assert!(out.report.is_none());
+    }
+
+    #[test]
+    fn lossless_only_encoder_meets_a_perceptual_target_without_a_search() {
+        let out = Sqzer::new()
+            .format(Format::WebP)
+            .run(&png_bytes(ColorType::Rgb))
+            .unwrap();
+        assert_eq!(out.target, Resolved::Lossless);
+        assert!(out.report.is_none());
+        assert_eq!(&out.bytes[8..12], b"WEBP");
+    }
+
+    /// The wasm32 shape: an AVIF encoder with no AVIF decoder.
+    fn encode_only_avif() -> Registry {
+        let mut narrow = Registry::new();
+        narrow.register_decoder(sqzer_codecs::png::PngDecoder);
+        narrow.register_decoder(sqzer_codecs::jpeg::JpegDecoder);
+        narrow.register_encoder(sqzer_codecs::jpeg::MozjpegEncoder);
+        narrow.register_encoder(sqzer_codecs::avif::RavifEncoder);
+        narrow
+    }
+
+    #[test]
+    fn encode_only_format_cannot_take_a_perceptual_target() {
+        // Default format steps around it.
+        let out = Sqzer::with_registry(encode_only_avif())
+            .run(&png_bytes(ColorType::Rgb))
+            .unwrap();
+        assert_eq!(out.format, Format::Jpeg);
+        assert!(out.report.is_some());
+        // Asking for it by name is refused with the reason.
+        let err = Sqzer::with_registry(encode_only_avif())
+            .format(Format::Avif)
+            .run(&png_bytes(ColorType::Rgb))
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::Unsupported {
+                    format: Format::Avif,
+                    ..
+                }
+            ),
+            "{err}"
+        );
     }
 
     #[test]

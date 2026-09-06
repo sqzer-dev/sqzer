@@ -25,5 +25,9 @@
 * **codecs:** `DecodeOpts::apply_orientation` is honoured by the JPEG and WebP decoders; JPEG XL applies its own orientation field unconditionally
 * **codecs:** `registry()` builds the registry from the active features, portable tier first
 * **sqzer:** `Sqzer::run` decodes, picks an encoder and encodes, returning `Output`
-* **sqzer:** a perceptual target is refused with `InvalidParams` until the SSIMULACRA2 search exists; pass `Target::Quality` or `Target::Lossless`
+* **metrics:** SSIMULACRA2 over `fast-ssim2` (BSD-2-Clause) behind the core `Metric` trait, plus `Reference`, the reference side precomputed once for repeated scoring. `u8` and `u16` samples are taken as sRGB, `f32` as linear light, gray is replicated, alpha is ignored
+* **metrics:** `Search`, the target-quality bisection: whole-number qualities, a tolerance around the target, a hard cap of six encodes, an optional seed, and a report listing every trial. A target the encoder cannot reach returns the best candidate with `reached: false` and `capped: true`, never an error
+* **core:** `Registry::has_decoder`
+* **sqzer:** the default perceptual target is honoured: `Sqzer::run` searches the chosen encoder and returns the search report in `Output::report`. A lossless-only encoder meets any target without a search. A format this build cannot decode back is refused with `Unsupported`, and the default format steps around it (AVIF on `wasm32`)
+* **sqzer:** golden SSIMULACRA2 tests for every encoder, so a dependency bump that degrades output fails CI
 * **workspace:** scaffold, feature tiers, CI and the licence allow-list
