@@ -2,7 +2,7 @@
 
 Multi-format image optimizer with best-in-class defaults. A library and a CLI, pure Rust by default, C codecs when you want the last few percent.
 
-> **Note**: Private, pre-alpha. Nothing works yet. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md).
+> **Note**: Private, pre-alpha. The library decodes PNG and writes PNG and JPEG; everything else below is the plan. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md).
 
 ## What it is for
 
