@@ -1,9 +1,10 @@
 //! End-to-end checks over the encoders: the synthetic pattern in, every
 //! encoder out, decoded back through the registry.
 //!
-//! Golden SSIMULACRA2 scores per encoder come with `sqzer-metrics`
-//! (ADR-0001 item 5); until then the lossy encoders are checked for a
-//! bounded mean absolute error and for size ordering by quality.
+//! Golden SSIMULACRA2 scores per encoder live in `crates/sqzer/tests/golden.rs`,
+//! where both the codecs and the metric are in scope. Here the lossy
+//! encoders are checked for a bounded mean absolute error and for size
+//! ordering by quality.
 
 #![cfg(all(feature = "png", feature = "jpeg"))]
 // Synthetic pixel data: the truncating casts are the point.

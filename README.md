@@ -50,7 +50,7 @@ agpl       reserved. Never a default dependency, never in the library.
 
 > **Note**: The portable tier cannot write lossy WebP or JPEG XL. No permissive pure-Rust encoder exists for either as of September 2026. Requesting one in a portable build returns `EncoderUnavailable` with the feature that would provide it, it never silently falls back.
 
-> **Note**: AVIF decoding is desktop only. `rav1d` does not compile for `wasm32`, so the WASM build recognises AVIF input but has no decoder for it. AVIF encoding builds everywhere.
+> **Note**: AVIF decoding is desktop only. `rav1d` does not compile for `wasm32`, so the WASM build recognises AVIF input but has no decoder for it. AVIF encoding builds everywhere, but a perceptual target needs the output decoded to score it, so on `wasm32` AVIF takes an explicit quality only and the default output format there is JPEG.
 
 > **Note**: `oxipng` is the one portable backend that is not pure Rust: its DEFLATE step is `libdeflate`, a vendored C library compiled by `cc` with no system package to install. It is compiled out on `wasm32`, where the plain `png` writer takes its place, so the WASM build stays C-free. [`docs/adr/0002-libdeflate-in-the-portable-tier.md`](docs/adr/0002-libdeflate-in-the-portable-tier.md) has the reasoning.
 

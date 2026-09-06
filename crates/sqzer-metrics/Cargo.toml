@@ -10,6 +10,10 @@ repository.workspace = true
 
 [dependencies]
 sqzer-core.workspace = true
+# SSIMULACRA2 with runtime-detected SIMD. BSD-2-Clause. `rayon` is off:
+# parallelism is per file in the CLI (ADR-0001 D3). `imgref` is off: the
+# conversion from `Image` to linear RGB is done here.
+fast-ssim2 = { version = "0.8.2", default-features = false }
 
 [lints]
 workspace = true

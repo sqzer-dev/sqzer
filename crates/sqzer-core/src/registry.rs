@@ -93,6 +93,14 @@ impl Registry {
     pub fn has_encoder(&self, format: Format) -> bool {
         self.encoders().any(|e| e.caps().format == format)
     }
+
+    /// Whether any decoder claims `format`. A perceptual target needs the
+    /// output format decodable to score it, and not every build that can
+    /// write a format can read it back.
+    #[must_use]
+    pub fn has_decoder(&self, format: Format) -> bool {
+        self.decoders().any(|d| d.caps().format == format)
+    }
 }
 
 impl core::fmt::Debug for Registry {
@@ -199,5 +207,7 @@ mod tests {
         let out = reg.decode(b"FAKE!", &DecodeOpts::default()).unwrap();
         assert_eq!(out.info.format, Format::Gif);
         assert_eq!(out.image.pixels(), 1);
+        assert!(reg.has_decoder(Format::Gif));
+        assert!(!reg.has_decoder(Format::Png));
     }
 }
