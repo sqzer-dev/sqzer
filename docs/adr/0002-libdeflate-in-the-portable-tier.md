@@ -34,7 +34,7 @@ The plain `PngEncoder` stays public in `sqzer_codecs::png` for callers who want 
 
 - The desktop portable build now needs a C compiler. It needed one before for nothing; every supported target's CI runner has one, and `cargo` users on Windows with the MSVC toolchain have `cl.exe`.
 - The wasm32 build writes larger PNGs than the desktop build from the same input. The browser package is a demo surface, not the batch tool, so the gap is acceptable and documented in the README.
-- Cross-compiling the portable tier to a desktop target now needs a cross C compiler. CI does not cross-compile, it runs on native runners per target, so nothing in the repository changes; anyone using `cross` or a musl toolchain is already set up for this.
+- Building for a target whose C ABI differs from the host now needs a matching C compiler. The musl job is the one case in CI: it runs on a glibc runner, `cc` looks for `x86_64-linux-musl-gcc` there and finds nothing, so the job installs `musl-tools` and points `CC_x86_64_unknown_linux_musl` at `musl-gcc`. The same applies to anyone building `x86_64-unknown-linux-musl` locally, and to the `cargo-dist` matrix when it lands (ADR-0001 item 9). The other five desktop targets build on native runners with their own toolchain and need nothing.
 
 ## Consequences
 
