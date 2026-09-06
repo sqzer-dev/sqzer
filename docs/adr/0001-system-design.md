@@ -275,7 +275,7 @@ What to revisit:
 
 ## 6. Action items
 
-1. [ ] Scaffold the workspace (D1) with `cargo deny` license allow-list and the empty `sqzer-codecs-agpl` crate.
+1. [x] Scaffold the workspace (D1) with `cargo deny` license allow-list and the empty `sqzer-codecs-agpl` crate.
 2. [ ] Implement `Image`, the three traits, and the registry with `png` + `mozjpeg-rs` as the first pair to prove the shape.
 3. [ ] Add portable decoders: `zune-jpeg`, `image-webp`, `jxl-oxide`, `rav1d` (verify wasm32 build in the same PR).
 4. [ ] Add portable encoders: `oxipng`, `ravif`, `image-webp` lossless.

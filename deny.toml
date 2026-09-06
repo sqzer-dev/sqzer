@@ -1,6 +1,7 @@
 # cargo-deny configuration. The licence allow-list is the mechanism that keeps
-# the AGPL tier out of the permissive crates. Do not add AGPL here; put those
-# backends in `sqzer-codecs-agpl` when that crate exists.
+# the AGPL tier out of the permissive crates. Do not add AGPL here; those
+# backends belong in `sqzer-codecs-agpl`, which carries its own exception
+# below and must never become a dependency of any other crate here.
 
 [graph]
 all-features = true
@@ -20,6 +21,13 @@ allow = [
     "CC0-1.0",
 ]
 confidence-threshold = 0.9
+
+# sqzer-codecs-agpl is deliberately AGPL-3.0 and deliberately never a
+# dependency of any other crate in this workspace. It gets its own
+# allowance instead of widening the allow-list above.
+exceptions = [
+    { allow = ["AGPL-3.0-only"], name = "sqzer-codecs-agpl" },
+]
 
 [bans]
 multiple-versions = "warn"

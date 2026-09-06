@@ -26,6 +26,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqzer-codecs-agpl"
+version = "0.0.1"
+dependencies = [
+ "sqzer-core",
+]
+
+[[package]]
 name = "sqzer-core"
 version = "0.0.1"
 

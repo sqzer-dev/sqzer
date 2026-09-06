@@ -1,0 +1,19 @@
+[package]
+name = "sqzer-codecs-agpl"
+description = "AGPL-licensed codec backends for sqzer (zen* family). Never a default dependency; opt in explicitly."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+# Empty in v1, reserved. See docs/adr/0001-system-design.md, D2.
+default = []
+
+[dependencies]
+sqzer-core.workspace = true
+
+[lints]
+workspace = true
