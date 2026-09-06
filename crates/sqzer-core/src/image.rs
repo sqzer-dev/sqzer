@@ -3,9 +3,10 @@
 //!
 //! [`Image`] is deliberately plain: interleaved samples, one of three sample
 //! widths, four channel layouts, an optional ICC profile. Orientation is
-//! already applied by the decoder. Animation is not modelled yet; it lands
-//! with the first animated decoder (GIF, ADR-0001 item 3) so the shape is
-//! driven by a real backend rather than guessed.
+//! already applied by the decoder; [`Image::apply_orientation`] is the shared
+//! implementation decoders use for that. Animation is not modelled yet; it
+//! lands with the first animated decoder (GIF) so the shape is driven by a
+//! real backend rather than guessed.
 
 use std::borrow::Cow;
 
@@ -73,6 +74,56 @@ impl SampleFormat {
             Self::U16 => 16,
             Self::F32 => 32,
         }
+    }
+}
+
+/// EXIF / TIFF orientation, the transform that maps stored samples to the
+/// picture the author intended. Numbering follows TIFF tag 0x0112.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Orientation {
+    /// Stored as displayed.
+    #[default]
+    Normal = 1,
+    /// Mirrored left to right.
+    FlipHorizontal = 2,
+    /// Rotated 180 degrees.
+    Rotate180 = 3,
+    /// Mirrored top to bottom.
+    FlipVertical = 4,
+    /// Mirrored along the top-left to bottom-right diagonal.
+    Transpose = 5,
+    /// Rotated 90 degrees clockwise.
+    Rotate90 = 6,
+    /// Mirrored along the top-right to bottom-left diagonal.
+    Transverse = 7,
+    /// Rotated 270 degrees clockwise.
+    Rotate270 = 8,
+}
+
+impl Orientation {
+    /// From the raw EXIF tag value. `None` for anything outside `1..=8`.
+    #[must_use]
+    pub const fn from_exif(value: u32) -> Option<Self> {
+        Some(match value {
+            1 => Self::Normal,
+            2 => Self::FlipHorizontal,
+            3 => Self::Rotate180,
+            4 => Self::FlipVertical,
+            5 => Self::Transpose,
+            6 => Self::Rotate90,
+            7 => Self::Transverse,
+            8 => Self::Rotate270,
+            _ => return None,
+        })
+    }
+
+    /// Whether applying this swaps width and height.
+    #[must_use]
+    pub const fn swaps_axes(self) -> bool {
+        matches!(
+            self,
+            Self::Transpose | Self::Rotate90 | Self::Transverse | Self::Rotate270
+        )
     }
 }
 
@@ -271,6 +322,48 @@ impl Image {
         self.color.has_alpha()
     }
 
+    /// The image with `orientation` applied, so that it displays upright
+    /// with no further metadata. Returns `self` untouched for
+    /// [`Orientation::Normal`].
+    #[must_use]
+    pub fn apply_orientation(self, orientation: Orientation) -> Self {
+        if orientation == Orientation::Normal {
+            return self;
+        }
+        let (width, height) = if orientation.swaps_axes() {
+            (self.height, self.width)
+        } else {
+            (self.width, self.height)
+        };
+        let (w, h) = (self.width as usize, self.height as usize);
+        // For every output pixel, where in the stored image it comes from.
+        let source = |x: usize, y: usize| -> (usize, usize) {
+            match orientation {
+                Orientation::Normal => (x, y),
+                Orientation::FlipHorizontal => (w - 1 - x, y),
+                Orientation::Rotate180 => (w - 1 - x, h - 1 - y),
+                Orientation::FlipVertical => (x, h - 1 - y),
+                Orientation::Transpose => (y, x),
+                Orientation::Rotate90 => (y, h - 1 - x),
+                Orientation::Transverse => (w - 1 - y, h - 1 - x),
+                Orientation::Rotate270 => (w - 1 - y, x),
+            }
+        };
+        let out = (width as usize, height as usize, self.channels(), w);
+        let samples = match &self.samples {
+            Samples::U8(v) => Samples::U8(remap(v, out, source)),
+            Samples::U16(v) => Samples::U16(remap(v, out, source)),
+            Samples::F32(v) => Samples::F32(remap(v, out, source)),
+        };
+        Self {
+            width,
+            height,
+            color: self.color,
+            samples,
+            icc: self.icc,
+        }
+    }
+
     /// Take the image apart.
     #[must_use]
     pub fn into_parts(self) -> (u32, u32, ColorType, Samples, Option<Vec<u8>>) {
@@ -327,6 +420,24 @@ impl Image {
             icc: self.icc.clone(),
         })
     }
+}
+
+/// Gather pixels of a `(width, height, channels, source_width)` output from
+/// an interleaved buffer, `source` mapping output to source coordinates.
+fn remap<T: Copy>(
+    v: &[T],
+    (width, height, channels, source_width): (usize, usize, usize, usize),
+    source: impl Fn(usize, usize) -> (usize, usize),
+) -> Vec<T> {
+    let mut out = Vec::with_capacity(v.len());
+    for y in 0..height {
+        for x in 0..width {
+            let (sx, sy) = source(x, y);
+            let at = (sy * source_width + sx) * channels;
+            out.extend_from_slice(&v[at..at + channels]);
+        }
+    }
+    out
 }
 
 /// Round-to-nearest 16-bit to 8-bit, so that 0xFFFF maps to 0xFF exactly.
@@ -410,5 +521,62 @@ mod tests {
 
         let opaque = Image::from_u8(1, 1, ColorType::Rgb, vec![1, 2, 3]).unwrap();
         assert!(matches!(opaque.without_alpha(), Cow::Borrowed(_)));
+    }
+    #[test]
+    fn orientation_from_exif_bounds() {
+        assert_eq!(Orientation::from_exif(1), Some(Orientation::Normal));
+        assert_eq!(Orientation::from_exif(8), Some(Orientation::Rotate270));
+        assert_eq!(Orientation::from_exif(0), None);
+        assert_eq!(Orientation::from_exif(9), None);
+    }
+
+    /// 3x2 gray image, one distinct value per pixel:
+    /// ```text
+    /// 1 2 3
+    /// 4 5 6
+    /// ```
+    fn six() -> Image {
+        Image::from_u8(3, 2, ColorType::Gray, vec![1, 2, 3, 4, 5, 6]).unwrap()
+    }
+
+    #[test]
+    fn orientation_normal_is_identity() {
+        assert_eq!(six().apply_orientation(Orientation::Normal), six());
+    }
+
+    #[test]
+    fn orientation_flips_and_rotations() {
+        let cases: [(Orientation, (u32, u32), &[u8]); 7] = [
+            (Orientation::FlipHorizontal, (3, 2), &[3, 2, 1, 6, 5, 4]),
+            (Orientation::Rotate180, (3, 2), &[6, 5, 4, 3, 2, 1]),
+            (Orientation::FlipVertical, (3, 2), &[4, 5, 6, 1, 2, 3]),
+            (Orientation::Transpose, (2, 3), &[1, 4, 2, 5, 3, 6]),
+            (Orientation::Rotate90, (2, 3), &[4, 1, 5, 2, 6, 3]),
+            (Orientation::Transverse, (2, 3), &[6, 3, 5, 2, 4, 1]),
+            (Orientation::Rotate270, (2, 3), &[3, 6, 2, 5, 1, 4]),
+        ];
+        for (o, (w, h), expected) in cases {
+            let out = six().apply_orientation(o);
+            assert_eq!((out.width(), out.height()), (w, h), "{o:?} size");
+            assert_eq!(out.samples().as_u8(), Some(expected), "{o:?} samples");
+        }
+    }
+
+    #[test]
+    fn orientation_keeps_channels_together_and_icc() {
+        let img = Image::from_u16(2, 1, ColorType::Rgb, vec![1, 2, 3, 4, 5, 6])
+            .unwrap()
+            .with_icc(Some(vec![9]));
+        let out = img.apply_orientation(Orientation::Rotate90);
+        assert_eq!((out.width(), out.height()), (1, 2));
+        assert_eq!(out.samples().as_u16(), Some(&[1, 2, 3, 4, 5, 6][..]));
+        assert_eq!(out.icc(), Some(&[9][..]));
+        let f = Image::new(2, 1, ColorType::Gray, Samples::F32(vec![0.25, 0.75])).unwrap();
+        assert_eq!(
+            f.apply_orientation(Orientation::FlipHorizontal)
+                .samples()
+                .as_f32(),
+            Some(&[0.75, 0.25][..])
+        );
     }
 }
