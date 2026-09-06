@@ -27,6 +27,11 @@ confidence-threshold = 0.9
 # allowance instead of widening the allow-list above.
 exceptions = [
     { allow = ["AGPL-3.0-only"], name = "sqzer-codecs-agpl" },
+    # `rav1e` lists `libfuzzer-sys` under `cfg(fuzzing)`, which no build
+    # of this workspace sets, so it is never compiled or linked. NCSA is a
+    # permissive BSD-style licence; it is allowed for this one crate rather
+    # than globally because nothing that ships needs it.
+    { allow = ["NCSA"], name = "libfuzzer-sys" },
 ]
 
 [bans]
@@ -48,9 +53,9 @@ deny = [
 yanked = "deny"
 ignore = [
     # `paste` is archived, not vulnerable: a proc macro that only runs at
-    # build time. It reaches us through `re_rav1d`. Drop this entry when
-    # the AVIF decoder moves to a rav1d release without it.
-    { id = "RUSTSEC-2024-0436", reason = "unmaintained proc macro, build-time only, via re_rav1d" },
+    # build time. It reaches us through `re_rav1d` and `rav1e`. Drop this
+    # entry when both have moved to a release without it.
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained proc macro, build-time only, via re_rav1d and rav1e" },
 ]
 
 [sources]

@@ -1,10 +1,9 @@
 //! AVIF decoding: `avif-parse` (MPL-2.0) splits the container, `re_rav1d`
 //! (BSD-2) decodes the AV1 payloads, `yuv` (BSD-3/Apache) converts to RGB.
-//! The `ravif` encoder lands with ADR-0001 item 4.
 //!
 //! Desktop only. Upstream `rav1d` does not compile for wasm32, so this
-//! module is `cfg`'d out there and the `avif` feature adds no decoder to the
-//! WASM build (ADR-0001 D6 names this as the accepted gap).
+//! module is `cfg`'d out there and the `avif` feature adds only the encoder
+//! to the WASM build (ADR-0001 D6 names this as the accepted gap).
 //!
 //! Known limits of this backend:
 //! - `avif-parse` does not surface the `colr` box, `irot`/`imir` or the
