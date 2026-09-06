@@ -13,12 +13,15 @@ default = ["portable"]
 
 # Tier 1: pure Rust, permissive. Must build on wasm32.
 portable = ["png", "jpeg", "webp-lossless", "avif", "jxl-decode", "gif", "tiff", "svg"]
-png = ["dep:png"]
+# `oxipng` is the PNG writer on desktop targets; on wasm32 it is compiled
+# out (see below) and the plain `png` writer takes its place.
+png = ["dep:png", "dep:oxipng"]
 jpeg = ["dep:mozjpeg-rs", "dep:zune-jpeg", "dep:kamadak-exif"]
 webp-lossless = ["dep:image-webp", "dep:kamadak-exif"]
-# The AVIF decoder is desktop only: `rav1d` does not compile for wasm32, so
-# on that target this feature enables nothing until the encoder lands.
-avif = ["dep:avif-parse", "dep:re_rav1d", "dep:yuv"]
+# The AVIF encoder builds everywhere. The decoder is desktop only: `rav1d`
+# does not compile for wasm32, so on that target this feature adds the
+# encoder and nothing else.
+avif = ["dep:avif-parse", "dep:re_rav1d", "dep:yuv", "dep:ravif", "dep:rgb"]
 jxl-decode = ["dep:jxl-oxide"]
 gif = []
 tiff = []
@@ -41,12 +44,23 @@ mozjpeg-rs = { version = "0.9.2", optional = true, default-features = false }
 # matter for speed. `std` is needed for the reader.
 zune-jpeg = { version = "0.5.15", optional = true, default-features = false, features = ["std"] }
 image-webp = { version = "0.2.4", optional = true }
+# AVIF encoder over rav1e. BSD-3-Clause. `asm` is off so no nasm is needed
+# and the build stays pure Rust; `threading` is off because encoders are
+# single-threaded until the thread budget lands (ADR-0001 D3).
+ravif = { version = "0.13.0", optional = true, default-features = false }
+# Pixel slice casts for `ravif`'s API. MIT. Already in the tree via `ravif`.
+rgb = { version = "0.8.53", optional = true, default-features = false }
 # Decoding stays single-threaded (ADR-0001 D3), so the rayon pool is off.
 jxl-oxide = { version = "0.12.6", optional = true, default-features = false }
 # Only the orientation tag is read. BSD-2-Clause.
 kamadak-exif = { version = "0.6.1", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# PNG optimiser. MIT. Its DEFLATE step is `libdeflate`, a vendored C
+# library built by `cc`, which is why it is desktop only: see ADR-0002.
+# `parallel` is off (single-threaded encoders, ADR-0001 D3), `zopfli`
+# (Apache-2.0, pure Rust) backs the top effort level.
+oxipng = { version = "10.2.1", optional = true, default-features = false, features = ["zopfli"] }
 # ISOBMFF demuxer. MPL-2.0, file-level copyleft, on the allow-list.
 avif-parse = { version = "2.1.0", optional = true }
 # rerun's fork of rav1d (BSD-2-Clause) with a safe Rust API; upstream rav1d

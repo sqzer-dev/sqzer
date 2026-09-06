@@ -10,7 +10,7 @@
 
 pub use sqzer_core::Registry;
 
-#[cfg(all(feature = "avif", not(target_arch = "wasm32")))]
+#[cfg(feature = "avif")]
 pub mod avif;
 #[cfg(any(feature = "jpeg", feature = "webp-lossless"))]
 mod exif;
@@ -18,6 +18,15 @@ mod exif;
 pub mod jpeg;
 #[cfg(feature = "jxl-decode")]
 pub mod jxl;
+#[cfg(any(
+    feature = "jpeg",
+    feature = "webp-lossless",
+    feature = "avif",
+    all(feature = "png", not(target_arch = "wasm32"))
+))]
+mod opts;
+#[cfg(all(feature = "png", not(target_arch = "wasm32")))]
+pub mod oxipng;
 #[cfg(feature = "png")]
 pub mod png;
 #[cfg(feature = "webp-lossless")]
@@ -42,15 +51,23 @@ pub fn register_portable(reg: &mut Registry) {
     #[cfg(feature = "png")]
     {
         reg.register_decoder(png::PngDecoder);
+        // `oxipng` carries C (`libdeflate`), so wasm32 gets the plain
+        // `png` writer instead. ADR-0002.
+        #[cfg(not(target_arch = "wasm32"))]
+        reg.register_encoder(oxipng::OxipngEncoder);
+        #[cfg(target_arch = "wasm32")]
         reg.register_encoder(png::PngEncoder);
     }
     #[cfg(feature = "webp-lossless")]
     {
         reg.register_decoder(webp::WebPDecoder);
+        reg.register_encoder(webp::WebPLosslessEncoder);
     }
-    #[cfg(all(feature = "avif", not(target_arch = "wasm32")))]
+    #[cfg(feature = "avif")]
     {
+        #[cfg(not(target_arch = "wasm32"))]
         reg.register_decoder(avif::AvifDecoder);
+        reg.register_encoder(avif::RavifEncoder);
     }
     #[cfg(feature = "jxl-decode")]
     {

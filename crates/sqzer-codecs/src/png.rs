@@ -1,8 +1,10 @@
 //! PNG via the `png` crate (MIT/Apache). Decoder and a baseline encoder.
 //!
 //! The encoder here is the plain `png` writer with adaptive filtering. It is
-//! correct and fast but not small; `oxipng` replaces it for the
-//! size-optimised path in ADR-0001 item 4.
+//! correct and fast but not small. On desktop targets the registry uses
+//! [`crate::oxipng`] instead; this one is registered on wasm32, where
+//! `oxipng`'s C dependency cannot go (ADR-0002), and stays public for
+//! callers who want the fast path.
 
 use std::borrow::Cow;
 
@@ -112,7 +114,8 @@ fn has_actl_chunk(bytes: &[u8]) -> bool {
     false
 }
 
-/// PNG encoder: lossless, 8 or 16 bit, any channel layout.
+/// PNG encoder: lossless, 8 or 16 bit, any channel layout. Fast, not
+/// small; see the module docs.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PngEncoder;
 
