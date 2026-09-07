@@ -1,6 +1,10 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# The calibration harness is its own package: `codec-eval` pulls in an AGPL
+# dependency that must never enter this workspace's dependency graph. See
+# `tools/calibrate/Cargo.toml`.
+exclude = ["tools/calibrate"]
 
 [workspace.package]
 version = "0.0.1"

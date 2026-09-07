@@ -1,0 +1,38 @@
+# Offline calibration harness. Not a workspace member on purpose:
+# `codec-eval` depends on `dssim-core`, which is AGPL-3.0, and the licence
+# allow-list in `deny.toml` must keep that out of everything that ships.
+# This tool is run by hand, its output is data, and it is never linked into
+# a crate. The root `Cargo.toml` lists this directory under `exclude`.
+[package]
+name = "sqzer-calibrate"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Sweeps sqzer's encoders over a corpus and writes the seed tables for the target search."
+
+[workspace]
+
+[dependencies]
+sqzer = { path = "../../crates/sqzer" }
+# Corpus download and caching, quality sweeps, per-image JSON reports.
+# MIT OR Apache-2.0 itself; pulls dssim-core (AGPL-3.0) and butteraugli
+# (BSD-3-Clause). The `icc` and `jpeg-decode` features are off: sources
+# are decoded through sqzer's own registry.
+codec-eval = { version = "0.3.3", default-features = false, features = ["corpus"] }
+# Lossy WebP for the table the native tier will use. `libwebp` via
+# `libwebp-sys` (MIT, vendored C source built by `cc`). The `img` feature
+# would pull in the `image` crate, which nothing here needs.
+webp = { version = "0.3.1", default-features = false }
+clap = { version = "4.5", features = ["derive"] }
+rayon = "1.10"
+# Already in the tree through codec-eval; used for the date in the header.
+chrono = "0.4"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

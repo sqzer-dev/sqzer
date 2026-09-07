@@ -30,4 +30,8 @@
 * **core:** `Registry::has_decoder`
 * **sqzer:** the default perceptual target is honoured: `Sqzer::run` searches the chosen encoder and returns the search report in `Output::report`. A lossless-only encoder meets any target without a search. A format this build cannot decode back is refused with `Unsupported`, and the default format steps around it (AVIF on `wasm32`)
 * **sqzer:** golden SSIMULACRA2 tests for every encoder, so a dependency bump that degrades output fails CI
+* **metrics:** `Search::seed_step`: a seed that misses now steps away by a caller-given distance, doubling until the target is bracketed, instead of bisecting toward the range end
+* **metrics:** `seeds`, calibrated seed tables per backend and target, generated offline by `tools/calibrate` from CID22, GB82-SC and CLIC 2025 and committed as data. Tables for JPEG (`mozjpeg-rs`), AVIF (`ravif`) and lossy WebP (`libwebp`, for the native tier)
+* **sqzer:** a perceptual target starts its search from the backend's seed table when there is one
+* **tools:** `tools/calibrate`, the calibration harness on `codec-eval`: `sweep` writes the seed tables, `verify` measures the seeded search against the unseeded one on a held-out split. A standalone package, excluded from the workspace because `codec-eval` depends on the AGPL `dssim-core`
 * **workspace:** scaffold, feature tiers, CI and the licence allow-list

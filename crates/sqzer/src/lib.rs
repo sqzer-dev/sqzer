@@ -24,10 +24,10 @@ use std::sync::Arc;
 
 use sqzer_core::Registry;
 use sqzer_core::Result;
-use sqzer_core::codec::{Format, FormatInfo};
+use sqzer_core::codec::{Encoder, Format, FormatInfo};
 use sqzer_core::image::Image;
 use sqzer_core::params::{DecodeOpts, EncodeParams, Resolved, Subsampling, Target};
-use sqzer_metrics::{Reference, Search, SearchReport};
+use sqzer_metrics::{Reference, Search, SearchReport, seeds};
 
 /// One-shot builder. Cheap to create; holds no image data.
 #[derive(Clone)]
@@ -147,10 +147,12 @@ impl Sqzer {
     ///
     /// A perceptual target runs the SSIMULACRA2 search of `sqzer-metrics`
     /// over the chosen encoder: up to six encodes, each decoded and scored
-    /// against the input. A target the encoder cannot reach is not an
-    /// error; the best candidate is returned and [`Output::report`] says
-    /// the target was missed. An encoder that only writes lossless meets
-    /// any target with its one mode and skips the search.
+    /// against the input, starting from the calibrated seed in
+    /// [`sqzer_metrics::seeds`] when the backend has one. A target the
+    /// encoder cannot reach is not an error; the best candidate is
+    /// returned and [`Output::report`] says the target was missed. An
+    /// encoder that only writes lossless meets any target with its one
+    /// mode and skips the search.
     ///
     /// > **Note**: scoring needs the output format decodable in this
     /// > build. On `wasm32` AVIF is encode-only, so a perceptual target
@@ -180,7 +182,7 @@ impl Sqzer {
             }
             Target::Ssimulacra2(t) => {
                 let mut reference = Reference::new(image)?;
-                let found = Search::new(t).encode(
+                let found = seeded_search(encoder, t).encode(
                     encoder,
                     image,
                     &self.params,
@@ -206,6 +208,18 @@ impl Sqzer {
             report,
         })
     }
+}
+
+/// The search for `target` on `encoder`, started from its calibrated seed
+/// when there is one and from the midpoint otherwise.
+fn seeded_search(encoder: &dyn Encoder, target: f32) -> Search {
+    let caps = encoder.caps();
+    let mut search = Search::new(target);
+    if let Some(seed) = seeds::seed(caps.format, caps.tier, target) {
+        search.seed = Some(seed.quality);
+        search.seed_step = Some(seed.step);
+    }
+    search
 }
 
 /// Output format when the caller names none. A lossless target keeps PNG,
