@@ -1,0 +1,4 @@
+# Build into the repository's ignored target directory rather than a second
+# one inside this folder.
+[build]
+target-dir = "../../target/calibrate"

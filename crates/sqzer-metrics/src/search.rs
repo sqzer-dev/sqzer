@@ -15,6 +15,14 @@
 //! instead of the midpoint: the midpoint would be within a step or two of
 //! the ceiling anyway, and trying the ceiling settles whether the target is
 //! reachable at all.
+//!
+//! Seeding: a caller with a good guess sets [`Search::seed`] and usually
+//! [`Search::seed_step`]. The first trial is the seed. While every trial so
+//! far sits on the same side of the target, the next one steps away from
+//! the last by the step, doubling each time, until the target is
+//! bracketed; bisection then finishes inside a bracket a few steps wide
+//! instead of the whole range. The calibrated tables in [`crate::seeds`]
+//! supply both numbers.
 
 use sqzer_core::codec::Encoder;
 use sqzer_core::image::Image;
@@ -72,9 +80,14 @@ pub struct Search {
     /// Highest quality to consider.
     pub ceiling: f32,
     /// First quality to try. `None` starts at the midpoint of the range.
-    /// A seed close to the answer lets the tolerance stop the search
-    /// early; a bad seed costs nothing over an unseeded bisection.
     pub seed: Option<f32>,
+    /// Distance of the second trial from the seed when the seed misses.
+    /// Doubles on every further miss on the same side. `None` bisects
+    /// toward the range end instead, which makes a seed cost nothing over
+    /// an unseeded search but also gain little unless it lands within the
+    /// tolerance. With a step, a seed close to the answer saves encodes
+    /// and a seed far from it spends a few on catching up.
+    pub seed_step: Option<f32>,
 }
 
 impl Default for Search {
@@ -87,6 +100,7 @@ impl Default for Search {
             floor: 1.0,
             ceiling: 100.0,
             seed: None,
+            seed_step: None,
         }
     }
 }
@@ -113,8 +127,9 @@ impl Search {
     ///
     /// # Errors
     /// [`Error::InvalidParams`] for a non-finite target, tolerance or seed,
-    /// a negative tolerance, a zero encode budget, or a range that is not
-    /// inside `0..=100` with the floor at or below the ceiling.
+    /// a negative tolerance, a seed step that is not positive, a zero
+    /// encode budget, or a range that is not inside `0..=100` with the
+    /// floor at or below the ceiling.
     pub fn validate(&self) -> Result<()> {
         let bad = |what: &str| Err(Error::InvalidParams(format!("search: {what}")));
         if !self.target.is_finite() {
@@ -137,6 +152,9 @@ impl Search {
         if self.seed.is_some_and(|s| !s.is_finite()) {
             return bad("seed must be a finite number");
         }
+        if self.seed_step.is_some_and(|s| !s.is_finite() || s <= 0.0) {
+            return bad("seed step must be a finite, positive number");
+        }
         Ok(())
     }
 
@@ -155,7 +173,11 @@ impl Search {
         // ends.
         let mut lo = floor;
         let mut hi = ceiling;
-        let mut hi_tried = false;
+        let mut short_seen = false;
+        let mut reach_seen = false;
+        // Expansion step while the target is not bracketed; `None` once
+        // it is, or when the caller asked for plain bisection.
+        let mut step = self.seed.and(self.seed_step);
         let mut best: Option<Candidate<T>> = None;
         let mut trials = Vec::with_capacity(usize::from(self.max_encodes));
 
@@ -165,8 +187,17 @@ impl Search {
         for done in 0..self.max_encodes {
             if done > 0 {
                 let last = self.max_encodes - done == 1;
-                next = if last && !hi_tried {
+                next = if last && !reach_seen {
                     hi
+                } else if let Some(d) = step {
+                    // Every trial so far is on one side of the target:
+                    // step away from the last one, further each time.
+                    step = Some(d * 2.0);
+                    if reach_seen {
+                        (next - d).round().max(lo)
+                    } else {
+                        (next + d).round().min(hi)
+                    }
                 } else {
                     midpoint(lo, hi)
                 };
@@ -199,9 +230,13 @@ impl Search {
             }
             if reaches {
                 hi = next;
-                hi_tried = true;
+                reach_seen = true;
             } else {
                 lo = next;
+                short_seen = true;
+            }
+            if short_seen && reach_seen {
+                step = None;
             }
             if (score - self.target).abs() <= self.tolerance || hi - lo <= 1.0 {
                 break;
@@ -400,6 +435,94 @@ mod tests {
     }
 
     #[test]
+    fn seed_step_brackets_near_the_seed() {
+        // Reaches 69 (target 70, tolerance 1) from quality 77 upward.
+        let curve = |q: f32| q * 0.9;
+        let plain = over(&Search::new(70.0), curve);
+        assert_eq!(plain.report.iterations, 6);
+
+        // A seed just below the answer: one step up brackets it.
+        let from_below = Search {
+            seed: Some(75.0),
+            seed_step: Some(5.0),
+            ..Search::new(70.0)
+        };
+        let found = over(&from_below, curve);
+        let r = &found.report;
+        assert!(r.reached, "{r:?}");
+        assert_eq!(r.iterations, 3, "{r:?}");
+        assert_eq!(r.quality, 78.0);
+        let tried: Vec<f32> = r.trials.iter().map(|t| t.quality).collect();
+        assert_eq!(tried, [75.0, 80.0, 78.0]);
+
+        // A seed above the answer walks down with a doubling step.
+        let from_above = Search {
+            seed: Some(90.0),
+            seed_step: Some(5.0),
+            ..Search::new(70.0)
+        };
+        let found = over(&from_above, curve);
+        let r = &found.report;
+        assert!(r.reached, "{r:?}");
+        assert!(r.iterations <= plain.report.iterations, "{r:?}");
+        assert!(r.quality >= 77.0 && r.quality <= 79.0, "{r:?}");
+        let tried: Vec<f32> = r.trials.iter().map(|t| t.quality).collect();
+        assert_eq!(&tried[..3], [90.0, 85.0, 75.0]);
+    }
+
+    #[test]
+    fn bad_seed_still_reaches_within_budget() {
+        // The step doubles until the target is bracketed, so a seed far
+        // from the answer spends its budget catching up and settles a few
+        // steps above the minimum rather than failing.
+        let search = Search {
+            seed: Some(10.0),
+            seed_step: Some(5.0),
+            ..Search::new(70.0)
+        };
+        let found = over(&search, |q| q * 0.9);
+        let r = &found.report;
+        assert!(r.reached, "{r:?}");
+        assert!(r.iterations <= 6);
+        assert!(r.quality >= 77.0, "{r:?}");
+        let tried: Vec<f32> = r.trials.iter().map(|t| t.quality).collect();
+        assert_eq!(&tried[..5], [10.0, 15.0, 25.0, 45.0, 85.0]);
+    }
+
+    #[test]
+    fn seed_step_stops_at_the_range_ends() {
+        // Nothing reaches: the step runs into the ceiling and the search
+        // reports the cap.
+        let search = Search {
+            seed: Some(98.0),
+            seed_step: Some(5.0),
+            ..Search::new(70.0)
+        };
+        let found = over(&search, |q| q * 0.5);
+        assert!(found.report.capped);
+        assert_eq!(found.report.iterations, 2);
+
+        // Everything reaches: the step runs into the floor.
+        let search = Search {
+            seed: Some(3.0),
+            seed_step: Some(5.0),
+            ..Search::new(70.0)
+        };
+        let found = over(&search, |_| 100.0);
+        assert_eq!(found.report.quality, 1.0);
+        assert_eq!(found.report.iterations, 2);
+
+        // A step without a seed is ignored.
+        let search = Search {
+            seed_step: Some(5.0),
+            ..Search::new(70.0)
+        };
+        let found = over(&search, |q| q * 0.9);
+        assert_eq!(found.report.trials[0].quality, 51.0);
+        assert_eq!(found.report.trials[1].quality, 76.0);
+    }
+
+    #[test]
     fn budget_is_a_hard_cap() {
         for budget in 1..=6 {
             let search = Search {
@@ -506,6 +629,16 @@ mod tests {
         });
         bad(Search {
             seed: Some(f32::INFINITY),
+            ..Search::default()
+        });
+        bad(Search {
+            seed: Some(50.0),
+            seed_step: Some(0.0),
+            ..Search::default()
+        });
+        bad(Search {
+            seed: Some(50.0),
+            seed_step: Some(f32::NAN),
             ..Search::default()
         });
     }
