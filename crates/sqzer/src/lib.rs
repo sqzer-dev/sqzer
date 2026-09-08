@@ -22,11 +22,11 @@ pub use sqzer_metrics as metrics;
 
 use std::sync::Arc;
 
-use sqzer_core::Registry;
-use sqzer_core::Result;
-use sqzer_core::codec::{Encoder, Format, FormatInfo};
+use sqzer_core::codec::{Encoder, Format, FormatInfo, Tier};
+use sqzer_core::content::{self, Content};
 use sqzer_core::image::Image;
-use sqzer_core::params::{DecodeOpts, EncodeParams, Resolved, Subsampling, Target};
+use sqzer_core::params::{DecodeOpts, EncodeParams, Preset, Resolved, Subsampling, Target};
+use sqzer_core::{Decoded, Error, Registry, Result};
 use sqzer_metrics::{Reference, Search, SearchReport, seeds};
 
 /// One-shot builder. Cheap to create; holds no image data.
@@ -35,6 +35,7 @@ pub struct Sqzer {
     format: Option<Format>,
     params: EncodeParams,
     decode: DecodeOpts,
+    fast: bool,
     registry: Arc<Registry>,
 }
 
@@ -45,8 +46,14 @@ pub struct Output {
     pub bytes: Vec<u8>,
     /// Format of `bytes`.
     pub format: Format,
+    /// The backend that wrote `bytes`, by crate name.
+    pub backend: &'static str,
+    /// The tier that backend belongs to.
+    pub tier: Tier,
     /// What the input was detected as.
     pub input: FormatInfo,
+    /// What the input looks like. Decides the default format.
+    pub content: Content,
     /// Output width in pixels.
     pub width: u32,
     /// Output height in pixels.
@@ -71,6 +78,7 @@ impl std::fmt::Debug for Sqzer {
             .field("format", &self.format)
             .field("params", &self.params)
             .field("decode", &self.decode)
+            .field("fast", &self.fast)
             .field("registry", &self.registry)
             .finish()
     }
@@ -91,6 +99,7 @@ impl Sqzer {
             format: None,
             params: EncodeParams::default(),
             decode: DecodeOpts::default(),
+            fast: false,
             registry: Arc::new(registry),
         }
     }
@@ -99,6 +108,58 @@ impl Sqzer {
     #[must_use]
     pub fn registry(&self) -> &Registry {
         &self.registry
+    }
+
+    /// The encode parameters as currently configured.
+    #[must_use]
+    pub fn params(&self) -> &EncodeParams {
+        &self.params
+    }
+
+    /// The decode options as currently configured.
+    #[must_use]
+    pub fn decode_opts(&self) -> &DecodeOpts {
+        &self.decode
+    }
+
+    /// The output format as currently configured. `None` means a
+    /// content-aware default is chosen per image.
+    #[must_use]
+    pub fn format_choice(&self) -> Option<Format> {
+        self.format
+    }
+
+    /// Start from a preset: its target and effort replace the current
+    /// ones, everything else is kept. Call it before the flags that
+    /// should override it.
+    #[must_use]
+    pub fn preset(mut self, preset: Preset) -> Self {
+        let p = preset.params();
+        self.params.target = p.target;
+        self.params.effort = p.effort;
+        self
+    }
+
+    /// Skip the perceptual search: encode once at the calibrated seed
+    /// quality for the target. Needs a seed table for the backend.
+    #[must_use]
+    pub fn fast(mut self, fast: bool) -> Self {
+        self.fast = fast;
+        self
+    }
+
+    /// Keep the ICC profile on the output instead of converting to sRGB.
+    #[must_use]
+    pub fn keep_icc(mut self, keep: bool) -> Self {
+        self.params.keep_icc = keep;
+        self
+    }
+
+    /// Apply EXIF orientation while decoding. On by default.
+    #[must_use]
+    pub fn auto_orient(mut self, apply: bool) -> Self {
+        self.decode.apply_orientation = apply;
+        self
     }
 
     /// Output format. Defaults to a content-aware choice.
@@ -144,6 +205,7 @@ impl Sqzer {
     }
 
     /// Decode, transform, encode. No resize or colour management yet.
+    /// [`Sqzer::decode`] followed by [`Sqzer::encode`].
     ///
     /// A perceptual target runs the SSIMULACRA2 search of `sqzer-metrics`
     /// over the chosen encoder: up to six encodes, each decoded and scored
@@ -165,20 +227,56 @@ impl Sqzer {
     /// [`sqzer_core::Error::Unsupported`] for a perceptual target whose
     /// output this build cannot decode.
     pub fn run(&self, input: &[u8]) -> Result<Output> {
-        let decoded = self.registry.decode(input, &self.decode)?;
+        self.encode(&self.decode(input)?)
+    }
+
+    /// Probe and decode `input` with the configured decode options.
+    ///
+    /// # Errors
+    /// [`sqzer_core::Error::UnknownFormat`], [`sqzer_core::Error::TooLarge`]
+    /// or the decoder's own error.
+    pub fn decode(&self, input: &[u8]) -> Result<Decoded> {
+        self.registry.decode(input, &self.decode)
+    }
+
+    /// Encode an already decoded image. Everything [`Sqzer::run`] says
+    /// about targets and errors applies; a caller that wants several
+    /// output formats from one input decodes once and calls this per
+    /// format.
+    ///
+    /// # Errors
+    /// See [`Sqzer::run`].
+    pub fn encode(&self, decoded: &Decoded) -> Result<Output> {
         let image = &decoded.image;
-        let format = self
-            .format
-            .unwrap_or_else(|| default_format(image, &self.params.target, &self.registry));
+        let (format, content) = self.pick(decoded);
         let encoder = self.registry.encoder(format)?;
+        let caps = encoder.caps();
 
         let (bytes, target, report) = match self.params.target {
-            Target::Ssimulacra2(_) if !encoder.caps().lossy => {
+            Target::Ssimulacra2(_) if !caps.lossy => {
                 let params = EncodeParams {
                     target: Target::Lossless,
                     ..self.params.clone()
                 };
                 (encoder.encode(image, &params)?, Resolved::Lossless, None)
+            }
+            Target::Ssimulacra2(t) if self.fast => {
+                let Some(seed) = seeds::seed(caps.format, caps.tier, t) else {
+                    return Err(Error::InvalidParams(format!(
+                        "fast mode needs a calibrated seed table, and {} ({}) has none; \
+                         use an explicit quality instead",
+                        caps.name, caps.tier
+                    )));
+                };
+                let params = EncodeParams {
+                    target: Target::Quality(seed.quality),
+                    ..self.params.clone()
+                };
+                (
+                    encoder.encode(image, &params)?,
+                    Resolved::Quality(seed.quality),
+                    None,
+                )
             }
             Target::Ssimulacra2(t) => {
                 let mut reference = Reference::new(image)?;
@@ -201,12 +299,34 @@ impl Sqzer {
         Ok(Output {
             bytes,
             format,
+            backend: caps.name,
+            tier: caps.tier,
             input: decoded.info,
+            content,
             width: image.width(),
             height: image.height(),
             target,
             report,
         })
+    }
+}
+
+impl Sqzer {
+    /// The format [`Sqzer::encode`] would write for `decoded`: the one
+    /// set with [`Sqzer::format`], else the content-aware default. Costs a
+    /// pass over a sample of the pixels and no encode, so a dry run can
+    /// name its outputs.
+    #[must_use]
+    pub fn pick_format(&self, decoded: &Decoded) -> Format {
+        self.pick(decoded).0
+    }
+
+    fn pick(&self, decoded: &Decoded) -> (Format, Content) {
+        let content = content::classify(&decoded.image);
+        let format = self.format.unwrap_or_else(|| {
+            default_format(&decoded.image, content, &self.params.target, &self.registry)
+        });
+        (format, content)
     }
 }
 
@@ -222,37 +342,80 @@ fn seeded_search(encoder: &dyn Encoder, target: f32) -> Search {
     search
 }
 
-/// Output format when the caller names none. A lossless target keeps PNG,
-/// which every build writes. A lossy target goes to AVIF when this build
-/// has an encoder for it and, for a perceptual target, a decoder to score
-/// its output with; else PNG for transparent input and JPEG for the rest.
-/// The content heuristic of ADR-0001 D5 (few colours or hard edges to
-/// lossless WebP or PNG, animation to animated WebP or AVIF) comes with
-/// the CLI, item 7.
-fn default_format(img: &Image, target: &Target, registry: &Registry) -> Format {
+/// Output format when the caller names none, ADR-0001 D5.
+///
+/// A lossless target keeps PNG, which every build writes. Otherwise the
+/// content decides: a graphic (few colours or large flat areas, see
+/// [`sqzer_core::content`]) goes to lossless WebP when this build writes
+/// it and to PNG when not, because a lossy codec gains little on such
+/// input. A photograph goes to AVIF when this build has an encoder for it
+/// and, for a perceptual target, a decoder to score its output with; else
+/// PNG for transparent input and JPEG for the rest. Animation is not
+/// modelled on [`Image`] yet, so animated input is treated as its first
+/// frame.
+fn default_format(img: &Image, content: Content, target: &Target, registry: &Registry) -> Format {
+    if matches!(target, Target::Lossless) {
+        return Format::Png;
+    }
+    if content == Content::Graphic {
+        return if registry.has_encoder(Format::WebP) {
+            Format::WebP
+        } else {
+            Format::Png
+        };
+    }
     let avif = registry.has_encoder(Format::Avif)
         && (!matches!(target, Target::Ssimulacra2(_)) || registry.has_decoder(Format::Avif));
-    match target {
-        Target::Lossless => Format::Png,
-        _ if avif => Format::Avif,
-        _ if img.has_alpha() => Format::Png,
-        _ => Format::Jpeg,
+    if avif {
+        Format::Avif
+    } else if img.has_alpha() {
+        Format::Png
+    } else {
+        Format::Jpeg
     }
 }
 
 #[cfg(all(test, feature = "portable"))]
+// Synthetic pixel data: the truncating casts are the point.
+#[allow(clippy::cast_possible_truncation)]
 mod tests {
     use super::*;
-    use sqzer_core::Error;
     use sqzer_core::image::ColorType;
 
+    /// A flat 4 x 4 block: a graphic by the content heuristic.
+    fn flat(color: ColorType) -> Image {
+        Image::from_u8(4, 4, color, vec![200; 16 * color.channels()]).unwrap()
+    }
+
+    /// A 64 x 64 two-axis gradient: a photograph by the content heuristic.
+    fn photo(color: ColorType) -> Image {
+        let ch = color.channels();
+        let mut samples = Vec::with_capacity(64 * 64 * ch);
+        for y in 0..64u32 {
+            for x in 0..64u32 {
+                // Alpha varies so a PNG optimiser cannot drop the channel.
+                let px = [
+                    (x * 4) as u8,
+                    (y * 4) as u8,
+                    ((x + y) * 2) as u8,
+                    64 + (x * 3) as u8,
+                ];
+                samples.extend_from_slice(&px[..ch]);
+            }
+        }
+        Image::from_u8(64, 64, color, samples).unwrap()
+    }
+
     fn png_bytes(color: ColorType) -> Vec<u8> {
-        let img = Image::from_u8(4, 4, color, vec![200; 16 * color.channels()]).unwrap();
+        encode_png(&photo(color))
+    }
+
+    fn encode_png(img: &Image) -> Vec<u8> {
         sqzer_codecs::registry()
             .encoder(Format::Png)
             .unwrap()
             .encode(
-                &img,
+                img,
                 &EncodeParams {
                     target: Target::Lossless,
                     ..Default::default()
@@ -262,15 +425,127 @@ mod tests {
     }
 
     #[test]
+    fn graphics_default_to_lossless_webp() {
+        let out = Sqzer::new()
+            .run(&encode_png(&flat(ColorType::Rgb)))
+            .unwrap();
+        assert_eq!(out.content, Content::Graphic);
+        assert_eq!(out.format, Format::WebP);
+        assert_eq!(out.target, Resolved::Lossless);
+        assert_eq!(out.backend, "image-webp");
+        assert_eq!(out.tier, Tier::Portable);
+        assert!(out.report.is_none());
+        // Without a WebP encoder the graphic goes to PNG.
+        let mut narrow = Registry::new();
+        narrow.register_decoder(sqzer_codecs::png::PngDecoder);
+        narrow.register_encoder(sqzer_codecs::png::PngEncoder);
+        narrow.register_encoder(sqzer_codecs::avif::RavifEncoder);
+        let out = Sqzer::with_registry(narrow)
+            .target(Target::Quality(80.0))
+            .run(&encode_png(&flat(ColorType::Rgb)))
+            .unwrap();
+        assert_eq!(out.format, Format::Png);
+    }
+
+    #[test]
+    fn fast_mode_encodes_once_at_the_seed() {
+        let out = Sqzer::new()
+            .fast(true)
+            .format(Format::Jpeg)
+            .run(&png_bytes(ColorType::Rgb))
+            .unwrap();
+        assert!(out.report.is_none());
+        let seed = seeds::seed(Format::Jpeg, Tier::Portable, 70.0).unwrap();
+        assert_eq!(out.target, Resolved::Quality(seed.quality));
+        // A lossless-only encoder needs no seed.
+        let out = Sqzer::new()
+            .fast(true)
+            .format(Format::Png)
+            .run(&png_bytes(ColorType::Rgb))
+            .unwrap();
+        assert_eq!(out.target, Resolved::Lossless);
+    }
+
+    #[test]
+    fn fast_mode_without_a_seed_table_is_refused() {
+        struct Unseeded;
+        static CAPS: sqzer_core::codec::EncoderCaps = sqzer_core::codec::EncoderCaps {
+            format: Format::Gif,
+            name: "unseeded",
+            lossy: true,
+            lossless: false,
+            alpha: false,
+            animation: false,
+            bit_depth: &[8],
+            hdr: false,
+            quality_range: 0.0..=100.0,
+            effort_range: 0..=0,
+            tier: Tier::Portable,
+            options: &[],
+        };
+        impl Encoder for Unseeded {
+            fn caps(&self) -> &sqzer_core::codec::EncoderCaps {
+                &CAPS
+            }
+            fn encode(&self, _: &Image, _: &EncodeParams) -> Result<Vec<u8>> {
+                Ok(vec![])
+            }
+        }
+        let mut reg = Registry::new();
+        reg.register_decoder(sqzer_codecs::png::PngDecoder);
+        reg.register_encoder(Unseeded);
+        let err = Sqzer::with_registry(reg)
+            .fast(true)
+            .format(Format::Gif)
+            .run(&png_bytes(ColorType::Rgb))
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidParams(_)), "{err}");
+        assert!(err.to_string().contains("seed table"), "{err}");
+    }
+
+    #[test]
+    fn preset_sets_target_and_effort_and_flags_override() {
+        let s = Sqzer::new().preset(Preset::Archive);
+        assert_eq!(s.params().target, Target::Ssimulacra2(85.0));
+        assert_eq!(s.params().effort, 8);
+        let s = s.target(Target::Quality(50.0)).effort(2);
+        assert_eq!(s.params().target, Target::Quality(50.0));
+        assert_eq!(s.params().effort, 2);
+        let s = Sqzer::new()
+            .preset(Preset::Lossless)
+            .keep_icc(true)
+            .auto_orient(false);
+        assert_eq!(s.params().target, Target::Lossless);
+        assert!(s.params().keep_icc);
+        assert!(!s.decode_opts().apply_orientation);
+        assert_eq!(s.format_choice(), None);
+    }
+
+    #[test]
+    fn decode_once_encode_many() {
+        let s = Sqzer::new().target(Target::Quality(80.0));
+        let decoded = s.decode(&png_bytes(ColorType::Rgb)).unwrap();
+        assert_eq!(s.pick_format(&decoded), Format::Avif);
+        let a = s.clone().format(Format::Jpeg).encode(&decoded).unwrap();
+        let b = s.format(Format::Png).encode(&decoded).unwrap();
+        assert_eq!(a.format, Format::Jpeg);
+        assert_eq!(b.format, Format::Png);
+        assert_eq!(a.input.format, Format::Png);
+        assert_eq!((a.width, a.height), (64, 64));
+    }
+
+    #[test]
     fn perceptual_default_runs_the_search() {
         let out = Sqzer::new().run(&png_bytes(ColorType::Rgb)).unwrap();
+        assert_eq!(out.content, Content::Photo);
         assert_eq!(out.format, Format::Avif);
+        assert_eq!(out.backend, "ravif");
         let report = out.report.expect("a perceptual target reports");
         assert!(
             report.iterations >= 1 && report.iterations <= 6,
             "{report:?}"
         );
-        assert!(report.reached, "a flat image is reachable: {report:?}");
+        assert!(report.reached, "a smooth gradient is reachable: {report:?}");
         assert_eq!(out.target, Resolved::Quality(report.quality));
         assert_eq!(&out.bytes[4..8], b"ftyp");
     }
@@ -291,6 +566,7 @@ mod tests {
 
     #[test]
     fn lossless_only_encoder_meets_a_perceptual_target_without_a_search() {
+        // Explicitly asked for, on a photograph.
         let out = Sqzer::new()
             .format(Format::WebP)
             .run(&png_bytes(ColorType::Rgb))
@@ -343,7 +619,7 @@ mod tests {
             .unwrap();
         assert_eq!(out.format, Format::Avif);
         assert_eq!(out.input.format, Format::Png);
-        assert_eq!((out.width, out.height), (4, 4));
+        assert_eq!((out.width, out.height), (64, 64));
         assert_eq!(out.target, Resolved::Quality(80.0));
         assert_eq!(&out.bytes[4..8], b"ftyp");
     }

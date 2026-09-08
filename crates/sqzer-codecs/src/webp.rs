@@ -6,7 +6,9 @@
 use std::io::Cursor;
 
 use image_webp::EncoderParams;
-use sqzer_core::codec::{Decoder, DecoderCaps, Encoder, EncoderCaps, Format, FormatInfo, Tier};
+use sqzer_core::codec::{
+    CodecOption, Decoder, DecoderCaps, Encoder, EncoderCaps, Format, FormatInfo, Tier,
+};
 use sqzer_core::image::{ColorType, Image, Orientation};
 use sqzer_core::params::{DecodeOpts, EncodeParams};
 use sqzer_core::{Error, Result};
@@ -20,6 +22,7 @@ pub struct WebPDecoder;
 
 static DECODER_CAPS: DecoderCaps = DecoderCaps {
     format: Format::WebP,
+    name: "image-webp",
     animation: false,
     tier: Tier::Portable,
 };
@@ -44,6 +47,13 @@ impl Decoder for WebPDecoder {
             format: Format::WebP,
             animated,
         })
+    }
+
+    fn dimensions(&self, bytes: &[u8]) -> Option<(u32, u32)> {
+        self.probe(bytes)?;
+        image_webp::WebPDecoder::new(Cursor::new(bytes))
+            .ok()
+            .map(|d| d.dimensions())
     }
 
     fn decode(&self, bytes: &[u8], opts: &DecodeOpts) -> Result<Image> {
@@ -93,6 +103,7 @@ pub struct WebPLosslessEncoder;
 
 static ENCODER_CAPS: EncoderCaps = EncoderCaps {
     format: Format::WebP,
+    name: "image-webp",
     lossy: false,
     lossless: true,
     alpha: true,
@@ -102,6 +113,11 @@ static ENCODER_CAPS: EncoderCaps = EncoderCaps {
     quality_range: 100.0..=100.0,
     effort_range: 0..=0,
     tier: Tier::Portable,
+    options: &[CodecOption {
+        key: "predictor",
+        default: "true",
+        help: "use the predictor transform; `false` is faster and larger",
+    }],
 };
 
 impl Encoder for WebPLosslessEncoder {

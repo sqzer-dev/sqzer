@@ -35,6 +35,7 @@ struct Quantiser {
 
 static ENC_CAPS: EncoderCaps = EncoderCaps {
     format: Format::Tiff,
+    name: "quantiser",
     lossy: true,
     lossless: false,
     alpha: true,
@@ -44,6 +45,7 @@ static ENC_CAPS: EncoderCaps = EncoderCaps {
     quality_range: 1.0..=100.0,
     effort_range: 0..=0,
     tier: Tier::Portable,
+    options: &[],
 };
 
 impl Quantiser {
@@ -82,6 +84,7 @@ struct Dequantiser;
 
 static DEC_CAPS: DecoderCaps = DecoderCaps {
     format: Format::Tiff,
+    name: "dequantiser",
     animation: false,
     tier: Tier::Portable,
 };
@@ -96,6 +99,10 @@ impl Decoder for Dequantiser {
             format: Format::Tiff,
             animated: false,
         })
+    }
+
+    fn dimensions(&self, _: &[u8]) -> Option<(u32, u32)> {
+        None
     }
 
     fn decode(&self, bytes: &[u8], opts: &DecodeOpts) -> Result<Image> {

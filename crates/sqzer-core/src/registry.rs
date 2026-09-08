@@ -134,6 +134,7 @@ mod tests {
     fn caps(format: Format, tier: Tier) -> EncoderCaps {
         EncoderCaps {
             format,
+            name: "fake",
             lossy: true,
             lossless: false,
             alpha: false,
@@ -143,6 +144,7 @@ mod tests {
             quality_range: 0.0..=100.0,
             effort_range: 0..=10,
             tier,
+            options: &[],
         }
     }
 
@@ -157,6 +159,9 @@ mod tests {
                 format: self.0.format,
                 animated: false,
             })
+        }
+        fn dimensions(&self, _: &[u8]) -> Option<(u32, u32)> {
+            Some((1, 1))
         }
         fn decode(&self, _: &[u8], _: &DecodeOpts) -> Result<Image> {
             Image::from_u8(1, 1, crate::image::ColorType::Gray, vec![0])
@@ -197,6 +202,7 @@ mod tests {
         let mut reg = Registry::new();
         reg.register_decoder(FakeDecoder(DecoderCaps {
             format: Format::Gif,
+            name: "fake",
             animation: false,
             tier: Tier::Portable,
         }));

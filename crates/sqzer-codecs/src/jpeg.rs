@@ -2,7 +2,9 @@
 //! `mozjpeg-rs` (BSD-3): a pure-Rust port of mozjpeg with byte-identical
 //! baseline and progressive output and trellis quantisation.
 
-use sqzer_core::codec::{Decoder, DecoderCaps, Encoder, EncoderCaps, Format, FormatInfo, Tier};
+use sqzer_core::codec::{
+    CodecOption, Decoder, DecoderCaps, Encoder, EncoderCaps, Format, FormatInfo, Tier,
+};
 use sqzer_core::image::{ColorType, Image, Orientation};
 use sqzer_core::params::{DecodeOpts, EncodeParams, Resolved, Subsampling};
 use sqzer_core::{Error, Result};
@@ -21,6 +23,7 @@ pub struct JpegDecoder;
 
 static DECODER_CAPS: DecoderCaps = DecoderCaps {
     format: Format::Jpeg,
+    name: "zune-jpeg",
     animation: false,
     tier: Tier::Portable,
 };
@@ -39,23 +42,17 @@ impl Decoder for JpegDecoder {
         })
     }
 
-    fn decode(&self, bytes: &[u8], opts: &DecodeOpts) -> Result<Image> {
-        // The crate's own dimension limits default to 16384 a side; the
-        // pixel budget is ours to enforce, so lift them.
-        let options = DecoderOptions::default()
-            .set_max_width(usize::MAX)
-            .set_max_height(usize::MAX);
+    fn dimensions(&self, bytes: &[u8]) -> Option<(u32, u32)> {
+        self.probe(bytes)?;
+        read_headers(bytes).ok().map(|(w, h, _)| (w, h))
+    }
 
+    fn decode(&self, bytes: &[u8], opts: &DecodeOpts) -> Result<Image> {
         // Headers first, so the pixel limit is checked before any pixel
         // buffer exists and the output layout can follow the input.
-        let mut probe = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(bytes), options);
-        probe.decode_headers().map_err(codec_err)?;
-        let info = probe
-            .info()
-            .ok_or_else(|| Error::Codec("jpeg headers missing after decode".into()))?;
-        let (width, height) = (u32::from(info.width), u32::from(info.height));
+        let (width, height, gray) = read_headers(bytes)?;
         opts.check_pixels(width, height)?;
-        let gray = probe.input_colorspace() == Some(ColorSpace::Luma);
+        let options = decoder_options();
 
         let (color, options) = if gray {
             (
@@ -83,6 +80,26 @@ impl Decoder for JpegDecoder {
     }
 }
 
+/// The crate's own dimension limits default to 16384 a side; the pixel
+/// budget is ours to enforce, so lift them.
+fn decoder_options() -> DecoderOptions {
+    DecoderOptions::default()
+        .set_max_width(usize::MAX)
+        .set_max_height(usize::MAX)
+}
+
+/// Width, height and whether the file is grayscale, from the headers alone.
+fn read_headers(bytes: &[u8]) -> Result<(u32, u32, bool)> {
+    let mut probe =
+        zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(bytes), decoder_options());
+    probe.decode_headers().map_err(codec_err)?;
+    let info = probe
+        .info()
+        .ok_or_else(|| Error::Codec("jpeg headers missing after decode".into()))?;
+    let gray = probe.input_colorspace() == Some(ColorSpace::Luma);
+    Ok((u32::from(info.width), u32::from(info.height), gray))
+}
+
 fn codec_err(e: impl std::fmt::Display) -> Error {
     Error::Codec(e.to_string())
 }
@@ -96,6 +113,7 @@ pub struct MozjpegEncoder;
 
 static CAPS: EncoderCaps = EncoderCaps {
     format: Format::Jpeg,
+    name: "mozjpeg-rs",
     lossy: true,
     lossless: false,
     alpha: false,
@@ -105,6 +123,23 @@ static CAPS: EncoderCaps = EncoderCaps {
     quality_range: 1.0..=100.0,
     effort_range: 0..=10,
     tier: Tier::Portable,
+    options: &[
+        CodecOption {
+            key: "progressive",
+            default: "true",
+            help: "progressive scan order; `false` writes baseline",
+        },
+        CodecOption {
+            key: "optimize_scans",
+            default: "true",
+            help: "search progressive scan scripts for the smallest file",
+        },
+        CodecOption {
+            key: "smoothing",
+            default: "0",
+            help: "input smoothing `0..=100`, hides dithering noise",
+        },
+    ],
 };
 
 impl Encoder for MozjpegEncoder {

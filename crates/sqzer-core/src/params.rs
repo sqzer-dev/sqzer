@@ -38,6 +38,67 @@ pub enum Subsampling {
     S420,
 }
 
+/// A named bundle of encode settings, ADR-0001 D4. A preset is a target
+/// plus an effort; codec-specific knobs stay in `codec_specific`.
+///
+/// The targets are calibrated guesses on the SSIMULACRA2 scale, where 70
+/// is "high quality, no visible artefacts on a normal display" and 50 is
+/// "artefacts visible on close inspection". Revisit once real feedback
+/// arrives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Preset {
+    /// Target 70, effort 6. The default.
+    #[default]
+    Web,
+    /// Target 60, effort 6. Images that are displayed small.
+    Thumbnail,
+    /// Target 85, effort 8. Keep more than the eye needs, spend the time.
+    Archive,
+    /// Lossless, effort 8.
+    Lossless,
+}
+
+impl Preset {
+    /// Every preset, in a stable order.
+    pub const ALL: &'static [Self] = &[Self::Web, Self::Thumbnail, Self::Archive, Self::Lossless];
+
+    /// The preset's name as the CLI spells it.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Web => "web",
+            Self::Thumbnail => "thumbnail",
+            Self::Archive => "archive",
+            Self::Lossless => "lossless",
+        }
+    }
+
+    /// Parse a preset name, case-insensitively.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|p| p.name().eq_ignore_ascii_case(name))
+    }
+
+    /// The encode parameters this preset stands for.
+    #[must_use]
+    pub fn params(self) -> EncodeParams {
+        let (target, effort) = match self {
+            Self::Web => (Target::Ssimulacra2(70.0), 6),
+            Self::Thumbnail => (Target::Ssimulacra2(60.0), 6),
+            Self::Archive => (Target::Ssimulacra2(85.0), 8),
+            Self::Lossless => (Target::Lossless, 8),
+        };
+        EncodeParams {
+            target,
+            effort,
+            ..EncodeParams::default()
+        }
+    }
+}
+
 /// Parameters passed to an [`crate::codec::Encoder`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct EncodeParams {
@@ -156,6 +217,22 @@ mod tests {
             .with_codec_opt("avif", "tune", "ssim");
         let jpeg: Vec<_> = p.codec_opts("jpeg").collect();
         assert_eq!(jpeg, vec![("progressive", "false")]);
+    }
+
+    #[test]
+    fn web_preset_is_the_default_params() {
+        assert_eq!(Preset::Web.params(), EncodeParams::default());
+        assert_eq!(Preset::default(), Preset::Web);
+    }
+
+    #[test]
+    fn preset_names_round_trip() {
+        for &p in Preset::ALL {
+            assert_eq!(Preset::from_name(p.name()), Some(p));
+            assert_eq!(Preset::from_name(&p.name().to_uppercase()), Some(p));
+        }
+        assert_eq!(Preset::from_name("fast"), None);
+        assert_eq!(Preset::Lossless.params().target, Target::Lossless);
     }
 
     #[test]

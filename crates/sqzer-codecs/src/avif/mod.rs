@@ -9,7 +9,7 @@ pub use decode::AvifDecoder;
 
 use ravif::{AlphaColorMode, BitDepth, ColorModel, Img};
 use rgb::FromSlice;
-use sqzer_core::codec::{Encoder, EncoderCaps, Format, Tier};
+use sqzer_core::codec::{CodecOption, Encoder, EncoderCaps, Format, Tier};
 use sqzer_core::image::{ColorType, Image};
 use sqzer_core::params::{EncodeParams, Resolved, Subsampling};
 use sqzer_core::{Error, Result};
@@ -33,7 +33,8 @@ use crate::opts::unknown;
 /// does not expose it.
 ///
 /// Options, all `avif:` prefixed:
-/// - `alpha_quality`: `1..=100`, defaults to the colour quality.
+/// - `alpha_quality`: `1..=100`, or `auto` (default) to follow the colour
+///   quality.
 /// - `bit_depth`: `8`, `10` or `auto` (default `auto`, which is 10).
 /// - `color_model`: `ycbcr` (default) or `rgb`; `rgb` stores GBR planes
 ///   with an identity matrix, larger but exact in colour.
@@ -42,6 +43,7 @@ pub struct RavifEncoder;
 
 static ENCODER_CAPS: EncoderCaps = EncoderCaps {
     format: Format::Avif,
+    name: "ravif",
     lossy: true,
     lossless: false,
     alpha: true,
@@ -51,6 +53,23 @@ static ENCODER_CAPS: EncoderCaps = EncoderCaps {
     quality_range: 1.0..=100.0,
     effort_range: 0..=10,
     tier: Tier::Portable,
+    options: &[
+        CodecOption {
+            key: "alpha_quality",
+            default: "auto",
+            help: "alpha plane quality `1..=100`; `auto` follows the colour quality",
+        },
+        CodecOption {
+            key: "bit_depth",
+            default: "auto",
+            help: "AV1 payload depth, `8`, `10` or `auto` (10)",
+        },
+        CodecOption {
+            key: "color_model",
+            default: "ycbcr",
+            help: "`ycbcr` or `rgb`; `rgb` is larger but exact in colour",
+        },
+    ],
 };
 
 impl Encoder for RavifEncoder {
@@ -83,6 +102,7 @@ impl Encoder for RavifEncoder {
 
         for (key, value) in params.codec_opts("avif") {
             encoder = match key {
+                "alpha_quality" if value == "auto" => encoder,
                 "alpha_quality" => encoder.with_alpha_quality(parse_quality(key, value)?),
                 "bit_depth" => encoder.with_bit_depth(parse_bit_depth(value)?),
                 "color_model" => encoder.with_internal_color_model(parse_color_model(value)?),

@@ -20,6 +20,43 @@ fn decode(reg: &Registry, name: &str) -> (Image, sqzer_core::codec::FormatInfo) 
     (out.image, out.info)
 }
 
+/// `Decoder::dimensions` reads the header only, so it must agree with the
+/// decoded picture on every fixture, and say nothing about other formats.
+#[test]
+fn header_dimensions_match_the_decode() {
+    let reg = registry();
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|e| e == "md") {
+            continue;
+        }
+        let bytes = std::fs::read(&path).unwrap();
+        let Some((_, decoder)) = reg.probe(&bytes) else {
+            continue;
+        };
+        assert!(!decoder.caps().name.is_empty());
+        let dims = decoder.dimensions(&bytes);
+        let img = decoder.decode(&bytes, &DecodeOpts::default()).unwrap();
+        // Stored dimensions; a rotated fixture comes out with the axes
+        // swapped once orientation is applied.
+        let stored = if path.to_string_lossy().contains("rot90") {
+            (img.height(), img.width())
+        } else {
+            (img.width(), img.height())
+        };
+        assert_eq!(dims, Some(stored), "{}", path.display());
+        for other in reg.decoders() {
+            if other.caps().format != decoder.caps().format {
+                assert_eq!(other.dimensions(&bytes), None, "{}", path.display());
+            }
+        }
+        checked += 1;
+    }
+    assert!(checked > 5, "only {checked} fixtures were decodable");
+}
+
 fn assert_too_large(reg: &Registry, name: &str) {
     let opts = DecodeOpts {
         max_pixels: u64::from(W * H) - 1,
