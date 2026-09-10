@@ -43,6 +43,13 @@ fn main() -> ExitCode {
         ColorChoice::Never => anstream::ColorChoice::Never,
         ColorChoice::Auto => anstream::ColorChoice::Auto,
     });
+    // The progress bars draw through `console`, which decides on its own
+    // from the terminal and `NO_COLOR`; only an explicit choice overrides.
+    match color {
+        ColorChoice::Always => console::set_colors_enabled_stderr(true),
+        ColorChoice::Never => console::set_colors_enabled_stderr(false),
+        ColorChoice::Auto => {}
+    }
 
     // `sqzer mozjpeg -q 75 in.jpg` is rimage syntax; say so before clap
     // complains about the flags that follow.
@@ -86,8 +93,8 @@ fn run(args: Args) -> Result<ExitCode, Failure> {
     let started = std::time::Instant::now();
     let mut cfg = config::build(args, base)?;
     // Errors before the inputs are known go through a printer with the
-    // defaults; the real one is built once the column width is known.
-    let printer = Printer::new(cfg.feedback);
+    // defaults; the real one is built once the inputs are known.
+    let printer = Printer::new(cfg.feedback, 0);
 
     let mut raw = cfg.inputs.clone();
     if let Some(list) = &cfg.files_from {
@@ -117,7 +124,7 @@ fn run(args: Args) -> Result<ExitCode, Failure> {
         return Err(Failure::nothing("no input matched"));
     }
     cfg.finish(&resolved.inputs)?;
-    let printer = Printer::new(cfg.feedback);
+    let printer = Printer::new(cfg.feedback, resolved.inputs.len() as u64);
 
     let jobs = cfg.jobs.min(resolved.inputs.len()).max(1);
     let budget = PixelBudget::for_run(cfg.max_pixels, jobs);
@@ -137,6 +144,7 @@ fn run(args: Args) -> Result<ExitCode, Failure> {
             .map(|input| job::process(input, &ctx))
             .reduce(Tally::default, Tally::merge)
     });
+    printer.finish();
     printer.summary(&tally, started.elapsed());
 
     Ok(if tally.failed > 0 || !resolved.failures.is_empty() {

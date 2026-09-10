@@ -5,6 +5,7 @@ use std::io::Write;
 use std::sync::Mutex;
 
 use anstyle::{AnsiColor, Style};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::Serialize;
 use sqzer::Output;
 use sqzer::core::Registry;
@@ -291,20 +292,166 @@ fn path_cell(path: &str, name_style: Style, width: usize) -> String {
     )
 }
 
+/// Where one file is in the pipeline, for its line in the bar. Each
+/// stage has its own colour: cyan while reading and decoding, magenta
+/// while the encoder runs, green while writing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Stage {
+    /// Reading and probing the file.
+    Read,
+    /// Decoding.
+    Decode,
+    /// Encoding once at a known quality, or about to search.
+    Encode,
+    /// The search scored trial `n` of `max`.
+    Trial {
+        /// Position in the budget.
+        n: u8,
+        /// The budget.
+        max: u8,
+        /// Quality tried.
+        quality: f32,
+        /// Score it reached.
+        score: f32,
+    },
+    /// Writing the output.
+    Write,
+}
+
+impl From<sqzer::Progress> for Stage {
+    fn from(p: sqzer::Progress) -> Self {
+        match p {
+            sqzer::Progress::Trial {
+                n,
+                max,
+                quality,
+                score,
+            } => Self::Trial {
+                n,
+                max,
+                quality,
+                score,
+            },
+            // Stages the facade may add later show as plain encoding.
+            _ => Self::Encode,
+        }
+    }
+}
+
+/// The bars: one overall bar plus one spinner per file in flight,
+/// drawn on stderr and hidden when stderr is not a terminal.
+#[derive(Debug)]
+struct Bars {
+    multi: MultiProgress,
+    overall: ProgressBar,
+}
+
+impl Bars {
+    fn new(total: u64) -> Self {
+        let multi = MultiProgress::new();
+        let overall = multi.add(ProgressBar::new(total));
+        overall.set_style(
+            ProgressStyle::with_template("{bar:48.green/237} {pos}/{len}  {elapsed}")
+                .expect("static template")
+                .progress_chars("━╸━"),
+        );
+        overall.enable_steady_tick(std::time::Duration::from_millis(100));
+        Self { multi, overall }
+    }
+}
+
+/// One file's spinner. Dropping it clears the spinner and advances the
+/// overall bar.
+#[derive(Debug)]
+pub struct Worker<'a> {
+    bars: &'a Bars,
+    bar: ProgressBar,
+}
+
+impl Worker<'_> {
+    /// Move the spinner to `stage`.
+    pub fn stage(&self, stage: Stage) {
+        let (color, message) = match stage {
+            Stage::Read => ("cyan", "read".to_string()),
+            Stage::Decode => ("cyan", "decode".to_string()),
+            Stage::Encode => ("magenta", "encode".to_string()),
+            Stage::Trial {
+                n,
+                max,
+                quality,
+                score,
+            } => (
+                "magenta",
+                format!("search {n}/{max}  q{quality} -> {score:.1}"),
+            ),
+            Stage::Write => ("green", "write".to_string()),
+        };
+        self.bar.set_style(
+            ProgressStyle::with_template(&format!(
+                "{{spinner:.{color}}} {{prefix}}  {{msg:.{color}}}"
+            ))
+            .expect("static template")
+            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ "),
+        );
+        self.bar.set_message(message);
+    }
+}
+
+impl Drop for Worker<'_> {
+    fn drop(&mut self) {
+        self.bar.finish_and_clear();
+        self.bars.multi.remove(&self.bar);
+        self.bars.overall.inc(1);
+    }
+}
+
 /// The stderr and stdout writer shared by every worker.
 #[derive(Debug)]
 pub struct Printer {
     /// The flags.
     pub feedback: Feedback,
+    bars: Option<Bars>,
     lock: Mutex<()>,
 }
 
 impl Printer {
-    /// A printer with the given settings.
-    pub fn new(feedback: Feedback) -> Self {
+    /// A printer with the given settings. With progress on, `total`
+    /// inputs get an overall bar.
+    pub fn new(feedback: Feedback, total: u64) -> Self {
+        let bars = (feedback.progress && total > 0).then(|| Bars::new(total));
         Self {
             feedback,
+            bars,
             lock: Mutex::new(()),
+        }
+    }
+
+    /// A spinner for one file, or `None` when no bars are drawn.
+    pub fn worker(&self, name: &str) -> Option<Worker<'_>> {
+        let bars = self.bars.as_ref()?;
+        let bar = bars
+            .multi
+            .insert_before(&bars.overall, ProgressBar::new_spinner());
+        bar.set_prefix(name.to_string());
+        bar.enable_steady_tick(std::time::Duration::from_millis(80));
+        let worker = Worker { bars, bar };
+        worker.stage(Stage::Read);
+        Some(worker)
+    }
+
+    /// Run `f` with the bars lifted off the screen, so a line printed
+    /// under them stays put.
+    fn suspend<R>(&self, f: impl FnOnce() -> R) -> R {
+        match &self.bars {
+            Some(b) => b.multi.suspend(f),
+            None => f(),
+        }
+    }
+
+    /// Clear the overall bar once the run is over.
+    pub fn finish(&self) {
+        if let Some(b) = &self.bars {
+            b.overall.finish_and_clear();
         }
     }
 
@@ -314,7 +461,7 @@ impl Printer {
             .lock
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        error_line(message);
+        self.suspend(|| error_line(message));
     }
 
     /// One finished output: the JSON line if `--json`, the human line if
@@ -325,6 +472,10 @@ impl Printer {
             .lock
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.suspend(|| self.write_record(r, details));
+    }
+
+    fn write_record(&self, r: &Record, details: &[String]) {
         let fb = self.feedback;
         if fb.json {
             let mut out = std::io::stdout().lock();
@@ -396,6 +547,10 @@ impl Printer {
             .lock
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.suspend(|| Self::write_summary(t, elapsed));
+    }
+
+    fn write_summary(t: &Tally, elapsed: std::time::Duration) {
         let mut counts = Vec::new();
         let mut count = |n: u32, what: &str, style: Option<Style>| {
             if n > 0 {

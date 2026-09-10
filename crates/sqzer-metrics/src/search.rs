@@ -282,7 +282,25 @@ impl Search {
         image: &Image,
         params: &EncodeParams,
         registry: &Registry,
+        score: impl FnMut(&Image) -> Result<f32>,
+    ) -> Result<Found<Vec<u8>>> {
+        self.encode_with(encoder, image, params, registry, score, |_| {})
+    }
+
+    /// [`Search::encode`] that reports each trial to `observe` as soon as
+    /// it is scored, for a caller showing live progress. The trial's
+    /// position in the budget is `trials.len()` at the time of the call.
+    ///
+    /// # Errors
+    /// As [`Search::encode`].
+    pub fn encode_with(
+        &self,
+        encoder: &dyn Encoder,
+        image: &Image,
+        params: &EncodeParams,
+        registry: &Registry,
         mut score: impl FnMut(&Image) -> Result<f32>,
+        mut observe: impl FnMut(Trial),
     ) -> Result<Found<Vec<u8>>> {
         let opts = DecodeOpts {
             max_pixels: image.pixels(),
@@ -307,6 +325,7 @@ impl Search {
                 Err(e) => return Err(e),
             };
             let s = score(&decoded)?;
+            observe(Trial { quality, score: s });
             Ok((bytes, s))
         })
     }
@@ -365,6 +384,27 @@ mod tests {
             );
             assert_eq!(r.trials.len(), usize::from(r.iterations));
         }
+    }
+
+    #[test]
+    fn observer_sees_every_trial_in_order() {
+        let search = Search::new(70.0);
+        let mut seen = Vec::new();
+        let found = search
+            .run(|q| {
+                seen.push(q);
+                Ok((q, q * 0.9))
+            })
+            .unwrap();
+        assert_eq!(
+            seen,
+            found
+                .report
+                .trials
+                .iter()
+                .map(|t| t.quality)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
