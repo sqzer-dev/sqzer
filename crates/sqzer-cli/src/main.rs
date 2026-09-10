@@ -29,7 +29,7 @@ use budget::PixelBudget;
 use cli::{Args, When};
 use config::Failure;
 use inputs::Input;
-use report::Printer;
+use report::{Printer, Tally};
 
 fn main() -> ExitCode {
     let raw_args: Vec<String> = std::env::args_os()
@@ -37,14 +37,20 @@ fn main() -> ExitCode {
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
 
+    let color = color_choice(&raw_args);
+    anstream::ColorChoice::write_global(match color {
+        ColorChoice::Always => anstream::ColorChoice::Always,
+        ColorChoice::Never => anstream::ColorChoice::Never,
+        ColorChoice::Auto => anstream::ColorChoice::Auto,
+    });
+
     // `sqzer mozjpeg -q 75 in.jpg` is rimage syntax; say so before clap
     // complains about the flags that follow.
     if let Some(hint) = inputs::rimage_hint(&raw_args) {
-        eprintln!("error: {hint}");
+        report::error_line(&hint);
         return ExitCode::from(2);
     }
 
-    let color = color_choice(&raw_args);
     let matches = match Args::command()
         .color(color)
         .try_get_matches_from(std::iter::once("sqzer".to_string()).chain(raw_args))
@@ -60,7 +66,7 @@ fn main() -> ExitCode {
     match run(args) {
         Ok(code) => code,
         Err(f) => {
-            eprintln!("error: {}", f.message);
+            report::error_line(&f.message);
             ExitCode::from(f.code)
         }
     }
@@ -77,7 +83,10 @@ fn run(args: Args) -> Result<ExitCode, Failure> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    let started = std::time::Instant::now();
     let mut cfg = config::build(args, base)?;
+    // Errors before the inputs are known go through a printer with the
+    // defaults; the real one is built once the column width is known.
     let printer = Printer::new(cfg.feedback);
 
     let mut raw = cfg.inputs.clone();
@@ -108,6 +117,7 @@ fn run(args: Args) -> Result<ExitCode, Failure> {
         return Err(Failure::nothing("no input matched"));
     }
     cfg.finish(&resolved.inputs)?;
+    let printer = Printer::new(cfg.feedback);
 
     let jobs = cfg.jobs.min(resolved.inputs.len()).max(1);
     let budget = PixelBudget::for_run(cfg.max_pixels, jobs);
@@ -121,14 +131,15 @@ fn run(args: Args) -> Result<ExitCode, Failure> {
         printer: &printer,
     };
     let inputs: &[Input] = &resolved.inputs;
-    let any_failed = pool.install(|| {
+    let tally = pool.install(|| {
         inputs
             .par_iter()
             .map(|input| job::process(input, &ctx))
-            .reduce(|| false, |a, b| a || b)
+            .reduce(Tally::default, Tally::merge)
     });
+    printer.summary(&tally, started.elapsed());
 
-    Ok(if any_failed || !resolved.failures.is_empty() {
+    Ok(if tally.failed > 0 || !resolved.failures.is_empty() {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS

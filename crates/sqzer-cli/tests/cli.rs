@@ -634,6 +634,50 @@ fn progress_quiet_and_verbose_levels() {
     assert!(err.contains("in.jpg -> p.avif"), "{err}");
     assert!(err.contains("trials:"), "{err}");
     assert!(err.contains("params: backend ravif"), "{err}");
+    assert!(
+        !err.contains("written"),
+        "one output, no summary line: {err}"
+    );
+}
+
+#[test]
+fn summary_line_closes_a_batch() {
+    let sb = Sandbox::new("summary");
+    sb.fixture("pattern-rgb.jpg", "a.jpg");
+    sb.fixture("pattern-rgb.jpg", "longer-name.jpg");
+    fs::write(sb.path("bad.jpg"), b"nope").unwrap();
+    let (code, _, err) = run(sb.sqzer().args([
+        "a.jpg",
+        "longer-name.jpg",
+        "bad.jpg",
+        "-f",
+        "jpeg",
+        "-q",
+        "30",
+        "--suffix",
+        "-min",
+        "--force",
+        "--progress",
+        "always",
+    ]));
+    assert_eq!(code, 1);
+    let last = err.trim_end().lines().last().unwrap();
+    assert!(last.starts_with("2 written, 1 failed"), "{err}");
+    assert!(last.contains(" s"), "elapsed time: {err}");
+    // Columns: the short name is padded to the long one.
+    assert!(err.contains("a.jpg           -> a-min.jpg"), "{err}");
+    let (_, _, err) =
+        run(sb
+            .sqzer()
+            .args(["a.jpg", "longer-name.jpg", "-n", "--progress", "always"]));
+    assert!(
+        err.trim_end()
+            .lines()
+            .last()
+            .unwrap()
+            .starts_with("2 planned"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -646,7 +690,19 @@ fn colour_is_off_by_default_here_and_on_when_asked() {
     let (_, _, err) = run(Command::new(env!("CARGO_BIN_EXE_sqzer"))
         .current_dir(&sb.dir)
         .args(["missing.jpg", "--color", "always"]));
-    assert!(err.contains("\x1b[31merror\x1b[0m"), "{err:?}");
+    assert!(
+        err.contains("\x1b[1m\x1b[31merror:\x1b[0m"),
+        "clap's style: {err:?}"
+    );
+    // Errors from argument checks and from the build are styled the same way.
+    let (_, _, err) = run(Command::new(env!("CARGO_BIN_EXE_sqzer"))
+        .current_dir(&sb.dir)
+        .args(["--list-codecs", "--bogus", "--color", "always"]));
+    assert!(err.contains("\x1b[1m\x1b[31merror:\x1b[0m"), "{err:?}");
+    let (_, _, err) = run(Command::new(env!("CARGO_BIN_EXE_sqzer"))
+        .current_dir(&sb.dir)
+        .args(["x.jpg", "-x", "jpeg:nope=1", "--color", "always"]));
+    assert!(err.contains("\x1b[1m\x1b[31merror:\x1b[0m"), "{err:?}");
     let (_, _, err) = run(Command::new(env!("CARGO_BIN_EXE_sqzer"))
         .current_dir(&sb.dir)
         .env("NO_COLOR", "1")

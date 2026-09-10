@@ -15,7 +15,7 @@ use crate::cli::format_name;
 use crate::config::Config;
 use crate::inputs::Input;
 use crate::output::{Naming, stem_of};
-use crate::report::{Printer, Record, Status, content_name};
+use crate::report::{Printer, Record, Status, Tally, content_name};
 
 /// What every job shares.
 pub struct Ctx<'a> {
@@ -28,24 +28,24 @@ pub struct Ctx<'a> {
 }
 
 /// Process one input, printing each output's record as it completes.
-/// Returns whether any output failed.
-pub fn process(input: &Input, ctx: &Ctx<'_>) -> bool {
+/// Returns the counts for the summary.
+pub fn process(input: &Input, ctx: &Ctx<'_>) -> Tally {
+    let mut tally = Tally::default();
     let cfg = ctx.cfg;
     let name = input.display();
+    let mut fail = |rec: Record| {
+        tally.add(&rec);
+        ctx.printer.record(&rec, &[]);
+        tally
+    };
     let bytes = match read(input) {
         Ok(b) => b,
-        Err(e) => {
-            ctx.printer
-                .record(&Record::failed(name, &format!("cannot read: {e}")), &[]);
-            return true;
-        }
+        Err(e) => return fail(Record::failed(name, &format!("cannot read: {e}"))),
     };
     let input_len = bytes.len() as u64;
     let registry = cfg.sqzer.registry();
     let Some((_, header)) = registry.probe(&bytes) else {
-        ctx.printer
-            .record(&Record::failed(name, &"unrecognised image format"), &[]);
-        return true;
+        return fail(Record::failed(name, &"unrecognised image format"));
     };
     let pixels = header
         .dimensions(&bytes)
@@ -54,10 +54,7 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> bool {
 
     let decoded = match cfg.sqzer.decode(&bytes) {
         Ok(d) => d,
-        Err(e) => {
-            ctx.printer.record(&Record::failed(name, &e), &[]);
-            return true;
-        }
+        Err(e) => return fail(Record::failed(name, &e)),
     };
 
     let formats: Vec<Option<Format>> = if cfg.formats.is_empty() {
@@ -65,7 +62,6 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> bool {
     } else {
         cfg.formats.iter().copied().map(Some).collect()
     };
-    let mut failed = false;
     for format in formats {
         let sqzer = match format {
             Some(f) => cfg.sqzer.clone().format(f),
@@ -77,10 +73,10 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> bool {
         } else {
             run(input, &decoded, &sqzer, base, ctx)
         };
-        failed |= record.status == Status::Failed;
+        tally.add(&record);
         ctx.printer.record(&record, &details);
     }
-    failed
+    tally
 }
 
 fn read(input: &Input) -> std::io::Result<Vec<u8>> {
