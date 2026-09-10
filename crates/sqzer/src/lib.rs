@@ -39,6 +39,26 @@ pub struct Sqzer {
     registry: Arc<Registry>,
 }
 
+/// A step of [`Sqzer::encode_with`], reported as it happens so a caller
+/// can show live progress. More variants arrive with the resize and
+/// colour stages; match with a wildcard.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum Progress {
+    /// The perceptual search scored one trial. `n` counts from one, `max`
+    /// is the encode budget.
+    Trial {
+        /// Position in the budget.
+        n: u8,
+        /// The budget.
+        max: u8,
+        /// Quality tried.
+        quality: f32,
+        /// Score it reached.
+        score: f32,
+    },
+}
+
 /// What [`Sqzer::run`] produces.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Output {
@@ -247,6 +267,19 @@ impl Sqzer {
     /// # Errors
     /// See [`Sqzer::run`].
     pub fn encode(&self, decoded: &Decoded) -> Result<Output> {
+        self.encode_with(decoded, |_| {})
+    }
+
+    /// [`Sqzer::encode`] that reports each step to `observe`, for a caller
+    /// showing live progress. The steps are [`Progress`].
+    ///
+    /// # Errors
+    /// See [`Sqzer::run`].
+    pub fn encode_with(
+        &self,
+        decoded: &Decoded,
+        mut observe: impl FnMut(Progress),
+    ) -> Result<Output> {
         let image = &decoded.image;
         let (format, content) = self.pick(decoded);
         let encoder = self.registry.encoder(format)?;
@@ -280,12 +313,24 @@ impl Sqzer {
             }
             Target::Ssimulacra2(t) => {
                 let mut reference = Reference::new(image)?;
-                let found = seeded_search(encoder, t).encode(
+                let search = seeded_search(encoder, t);
+                let max = search.max_encodes;
+                let mut n = 0u8;
+                let found = search.encode_with(
                     encoder,
                     image,
                     &self.params,
                     &self.registry,
                     |candidate| reference.score(candidate),
+                    |trial| {
+                        n = n.saturating_add(1);
+                        observe(Progress::Trial {
+                            n,
+                            max,
+                            quality: trial.quality,
+                            score: trial.score,
+                        });
+                    },
                 )?;
                 let quality = Resolved::Quality(found.report.quality);
                 (found.output, quality, Some(found.report))
@@ -519,6 +564,38 @@ mod tests {
         assert!(s.params().keep_icc);
         assert!(!s.decode_opts().apply_orientation);
         assert_eq!(s.format_choice(), None);
+    }
+
+    #[test]
+    fn progress_reports_the_trials_the_report_lists() {
+        let s = Sqzer::new().format(Format::Jpeg);
+        let decoded = s.decode(&png_bytes(ColorType::Rgb)).unwrap();
+        let mut seen = Vec::new();
+        let out = s
+            .encode_with(&decoded, |p| match p {
+                Progress::Trial {
+                    n, max, quality, ..
+                } => {
+                    assert_eq!(max, 6);
+                    seen.push((n, quality));
+                }
+            })
+            .unwrap();
+        let report = out.report.unwrap();
+        let expected: Vec<(u8, f32)> = report
+            .trials
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (u8::try_from(i + 1).unwrap(), t.quality))
+            .collect();
+        assert_eq!(seen, expected);
+        // No search, no progress.
+        let mut count = 0;
+        Sqzer::new()
+            .format(Format::Png)
+            .encode_with(&decoded, |_| count += 1)
+            .unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]

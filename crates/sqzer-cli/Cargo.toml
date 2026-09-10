@@ -27,6 +27,11 @@ clap = { version = "4.5", features = ["derive", "wrap_help"] }
 # already in the tree through `clap`. MIT OR Apache-2.0.
 anstream = "1.0"
 anstyle = "1.0"
+# Progress bars on stderr, hidden when stderr is not a terminal. MIT.
+# `console` is its terminal layer, needed directly only to honour
+# `--color` for the bars.
+indicatif = "0.18"
+console = "0.16"
 # `--json` output. MIT OR Apache-2.0.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

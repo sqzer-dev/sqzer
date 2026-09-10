@@ -15,7 +15,7 @@ use crate::cli::format_name;
 use crate::config::Config;
 use crate::inputs::Input;
 use crate::output::{Naming, stem_of};
-use crate::report::{Printer, Record, Status, Tally, content_name};
+use crate::report::{Printer, Record, Stage, Status, Tally, Worker, content_name};
 
 /// What every job shares.
 pub struct Ctx<'a> {
@@ -33,6 +33,7 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> Tally {
     let mut tally = Tally::default();
     let cfg = ctx.cfg;
     let name = input.display();
+    let worker = ctx.printer.worker(&name);
     let mut fail = |rec: Record| {
         tally.add(&rec);
         ctx.printer.record(&rec, &[]);
@@ -52,6 +53,9 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> Tally {
         .map_or(cfg.max_pixels, |(w, h)| u64::from(w) * u64::from(h));
     let _reservation = ctx.budget.reserve(pixels);
 
+    if let Some(w) = &worker {
+        w.stage(Stage::Decode);
+    }
     let decoded = match cfg.sqzer.decode(&bytes) {
         Ok(d) => d,
         Err(e) => return fail(Record::failed(name, &e)),
@@ -71,7 +75,7 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> Tally {
         let (record, details) = if cfg.dry_run {
             (plan(input, &decoded, &sqzer, base, ctx), Vec::new())
         } else {
-            run(input, &decoded, &sqzer, base, ctx)
+            run(input, &decoded, &sqzer, base, ctx, worker.as_ref())
         };
         tally.add(&record);
         ctx.printer.record(&record, &details);
@@ -146,9 +150,16 @@ fn run(
     sqzer: &Sqzer,
     rec: Record,
     ctx: &Ctx<'_>,
+    worker: Option<&Worker<'_>>,
 ) -> (Record, Vec<String>) {
     let cfg = ctx.cfg;
-    let out = match sqzer.encode(decoded) {
+    let stage = |s: Stage| {
+        if let Some(w) = worker {
+            w.stage(s);
+        }
+    };
+    stage(Stage::Encode);
+    let out = match sqzer.encode_with(decoded, |p| stage(Stage::from(p))) {
         Ok(o) => o,
         Err(e) => return (rec.fail(&e), Vec::new()),
     };
@@ -227,6 +238,7 @@ fn run(
     } else if path.exists() && !cfg.force {
         return (rec.fail(&"output exists; --force overwrites it"), details);
     }
+    stage(Stage::Write);
     match write_atomic(&path, &out.bytes) {
         Ok(()) => rec.status = Status::Written,
         Err(e) => return (rec.fail(&format!("cannot write: {e}")), details),
