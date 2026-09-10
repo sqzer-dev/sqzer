@@ -10,7 +10,7 @@ use sqzer::Sqzer;
 use sqzer::core::codec::Format;
 use sqzer::core::params::Target;
 
-use crate::cli::{Args, OUTPUT_FORMATS, When, format_name};
+use crate::cli::{Args, OUTPUT_FORMATS, format_name};
 use crate::inputs::Input;
 use crate::output::{Placement, Template};
 use crate::report::{Feedback, Need, render_unavailable};
@@ -116,17 +116,12 @@ pub fn build(args: Args, base: Sqzer) -> Result<Config, Failure> {
     );
     let max_pixels = sqzer.decode_opts().max_pixels;
 
-    let stderr_tty = || std::io::stderr().is_terminal();
     let feedback = Feedback {
         json: args.json,
-        progress: !args.quiet && args.progress.resolve(stderr_tty),
+        progress: !args.quiet && args.progress.resolve(|| std::io::stderr().is_terminal()),
         quiet: args.quiet,
         verbose: args.verbose,
-        color: match args.color {
-            When::Always => true,
-            When::Never => false,
-            When::Auto => stderr_tty() && !no_color(),
-        },
+        name_width: 0,
     };
 
     Ok(Config {
@@ -285,6 +280,11 @@ impl Config {
         self.placement.single_file = self.placement.output.as_deref().is_some_and(|o| {
             o.extension().is_some() && !o.is_dir() && inputs.len() == 1 && self.formats.len() <= 1
         });
+        self.feedback.name_width = inputs
+            .iter()
+            .map(|i| i.display().chars().count())
+            .max()
+            .unwrap_or(0);
         Ok(())
     }
 }
@@ -302,11 +302,6 @@ fn split_codec_opt(opt: &str) -> Result<(&str, &str, &str), Failure> {
         return Err(bad());
     }
     Ok((codec, key, value))
-}
-
-/// The `NO_COLOR` convention: set and non-empty means no colour.
-fn no_color() -> bool {
-    std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty())
 }
 
 #[cfg(all(test, feature = "portable"))]

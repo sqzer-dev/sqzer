@@ -4,6 +4,7 @@
 use std::io::Write;
 use std::sync::Mutex;
 
+use anstyle::{AnsiColor, Style};
 use serde::Serialize;
 use sqzer::Output;
 use sqzer::core::Registry;
@@ -189,18 +190,105 @@ pub fn content_name(c: Content) -> &'static str {
 
 /// The feedback flags, resolved.
 #[derive(Debug, Clone, Copy, Default)]
-#[allow(clippy::struct_excessive_bools)]
 pub struct Feedback {
     /// Records go to stdout as JSON Lines.
     pub json: bool,
-    /// Per-file lines on stderr.
+    /// Per-file lines and the summary on stderr.
     pub progress: bool,
     /// No warnings.
     pub quiet: bool,
     /// `-v` count.
     pub verbose: u8,
-    /// ANSI colour on stderr.
-    pub color: bool,
+    /// Width of the longest input path, so the columns line up across
+    /// workers that finish in any order.
+    pub name_width: usize,
+}
+
+/// Running totals over every record of a run, for the summary line.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Tally {
+    /// Outputs written.
+    pub written: u32,
+    /// Outputs skipped as larger.
+    pub skipped: u32,
+    /// Outputs planned by a dry run.
+    pub planned: u32,
+    /// Outputs that failed.
+    pub failed: u32,
+    /// Input bytes behind the written outputs.
+    pub input_bytes: u64,
+    /// Bytes written.
+    pub output_bytes: u64,
+}
+
+impl Tally {
+    /// Count one record.
+    pub fn add(&mut self, r: &Record) {
+        match r.status {
+            Status::Written => {
+                self.written += 1;
+                self.input_bytes += r.input_bytes.unwrap_or(0);
+                self.output_bytes += r.output_bytes.unwrap_or(0);
+            }
+            Status::Skipped => self.skipped += 1,
+            Status::Planned => self.planned += 1,
+            Status::Failed => self.failed += 1,
+        }
+    }
+
+    /// Two tallies as one.
+    pub fn merge(self, o: Self) -> Self {
+        Self {
+            written: self.written + o.written,
+            skipped: self.skipped + o.skipped,
+            planned: self.planned + o.planned,
+            failed: self.failed + o.failed,
+            input_bytes: self.input_bytes + o.input_bytes,
+            output_bytes: self.output_bytes + o.output_bytes,
+        }
+    }
+
+    /// Records counted.
+    pub fn total(&self) -> u32 {
+        self.written + self.skipped + self.planned + self.failed
+    }
+}
+
+// One palette, the same one clap uses for its own messages so an
+// argument error and a file error look alike: bold red `error:`, bold
+// yellow `warning:`, bold for the thing that was produced, dim for the
+// context around it, green for bytes saved and yellow for bytes added.
+const ERROR: Style = AnsiColor::Red.on_default().bold();
+const WARNING: Style = AnsiColor::Yellow.on_default().bold();
+const NAME: Style = Style::new().bold();
+const DIM: Style = Style::new().dimmed();
+const SMALLER: Style = AnsiColor::Green.on_default();
+const LARGER: Style = AnsiColor::Yellow.on_default();
+const PLANNED: Style = AnsiColor::Cyan.on_default();
+
+fn paint(style: Style, text: &str) -> String {
+    format!("{style}{text}{style:#}")
+}
+
+/// An error on stderr, in clap's style. A multi-line message keeps its
+/// own indentation after the first line.
+pub fn error_line(message: &str) {
+    let mut err = anstream::stderr().lock();
+    let _ = writeln!(err, "{} {message}", paint(ERROR, "error:"));
+}
+
+/// `dir/` dimmed, the file name in `name_style`, padded to `width`
+/// visible characters.
+fn path_cell(path: &str, name_style: Style, width: usize) -> String {
+    let split = path.rfind(['/', '\\']).map_or(0, |i| i + 1);
+    let (dir, name) = path.split_at(split);
+    let pad = width.saturating_sub(path.chars().count());
+    format!(
+        "{}{}{}",
+        paint(DIM, dir),
+        paint(name_style, name),
+        " ".repeat(pad)
+    )
 }
 
 /// The stderr and stdout writer shared by every worker.
@@ -211,11 +299,6 @@ pub struct Printer {
     lock: Mutex<()>,
 }
 
-const RED: &str = "\x1b[31m";
-const YELLOW: &str = "\x1b[33m";
-const DIM: &str = "\x1b[2m";
-const RESET: &str = "\x1b[0m";
-
 impl Printer {
     /// A printer with the given settings.
     pub fn new(feedback: Feedback) -> Self {
@@ -225,21 +308,13 @@ impl Printer {
         }
     }
 
-    fn paint(&self, code: &str, text: &str) -> String {
-        if self.feedback.color {
-            format!("{code}{text}{RESET}")
-        } else {
-            text.to_string()
-        }
-    }
-
     /// An error line. Always printed.
     pub fn error(&self, message: &str) {
         let _guard = self
             .lock
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        eprintln!("{}: {message}", self.paint(RED, "error"));
+        error_line(message);
     }
 
     /// One finished output: the JSON line if `--json`, the human line if
@@ -258,7 +333,7 @@ impl Printer {
             }
             let _ = out.flush();
         }
-        let mut err = std::io::stderr().lock();
+        let mut err = anstream::stderr().lock();
         match r.status {
             Status::Failed => {
                 let where_ = match &r.output {
@@ -267,13 +342,14 @@ impl Printer {
                 };
                 let _ = writeln!(
                     err,
-                    "{}: {where_}: {}",
-                    self.paint(RED, "error"),
+                    "{} {}: {}",
+                    paint(ERROR, "error:"),
+                    paint(NAME, &where_),
                     r.error.as_deref().unwrap_or("failed")
                 );
             }
             _ if fb.progress => {
-                let _ = writeln!(err, "{}", Self::human_line(r));
+                let _ = writeln!(err, "{}", self.human_line(r));
             }
             _ => {}
         }
@@ -287,12 +363,12 @@ impl Printer {
             let _ = writeln!(
                 err,
                 "  {}",
-                self.paint(DIM, &format!("trials: {}", list.join(", ")))
+                paint(DIM, &format!("trials: {}", list.join(", ")))
             );
         }
         if fb.verbose >= 2 {
             for d in details {
-                let _ = writeln!(err, "  {}", self.paint(DIM, d));
+                let _ = writeln!(err, "  {}", paint(DIM, d));
             }
         }
         if let (Some(false), Some(score), Some(target)) = (r.reached, r.score, r.target)
@@ -302,65 +378,117 @@ impl Printer {
             let q = r.quality.map_or(String::new(), |q| format!(" at q{q}"));
             let _ = writeln!(
                 err,
-                "{}: {} -> {}: target {target} not reached, best score {score:.1}{q}",
-                self.paint(YELLOW, "warning"),
+                "{} {} -> {}: target {target} not reached, best score {score:.1}{q}",
+                paint(WARNING, "warning:"),
                 r.input,
                 r.output.as_deref().unwrap_or("-")
             );
         }
     }
 
-    fn human_line(r: &Record) -> String {
-        let arrow = |o: &Option<String>| match o {
-            Some(o) => format!("{} -> {o}", r.input),
-            None => r.input.clone(),
+    /// The closing line of a run, when progress is on and there was more
+    /// than one output to sum up.
+    pub fn summary(&self, t: &Tally, elapsed: std::time::Duration) {
+        if !self.feedback.progress || t.total() < 2 {
+            return;
+        }
+        let _guard = self
+            .lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut counts = Vec::new();
+        let mut count = |n: u32, what: &str, style: Option<Style>| {
+            if n > 0 {
+                let text = format!("{n} {what}");
+                counts.push(style.map_or(text.clone(), |s| paint(s, &text)));
+            }
         };
+        count(t.written, "written", None);
+        count(t.planned, "planned", Some(PLANNED));
+        count(t.skipped, "skipped", Some(LARGER));
+        count(t.failed, "failed", Some(ERROR));
+        let sizes = if t.written > 0 {
+            format!(
+                "   {} -> {} {}",
+                fmt_bytes(t.input_bytes),
+                paint(NAME, &fmt_bytes(t.output_bytes)),
+                change_cell(t.input_bytes, t.output_bytes)
+            )
+        } else {
+            String::new()
+        };
+        let mut err = anstream::stderr().lock();
+        let _ = writeln!(
+            err,
+            "\n{}{sizes}   {}",
+            counts.join(", "),
+            paint(DIM, &format!("{:.1} s", elapsed.as_secs_f64()))
+        );
+    }
+
+    fn human_line(&self, r: &Record) -> String {
+        let w = self.feedback.name_width;
+        let arrow = paint(DIM, "->");
+        let input = path_cell(&r.input, Style::new(), w);
         match r.status {
             Status::Written => {
+                let output = path_cell(r.output.as_deref().unwrap_or("-"), NAME, w);
                 let sizes = match (r.input_bytes, r.output_bytes) {
                     (Some(i), Some(o)) => format!(
-                        "  {} -> {} ({})",
+                        "  {:>8} {arrow} {:>8}  {}",
                         fmt_bytes(i),
                         fmt_bytes(o),
-                        fmt_change(i, o)
+                        change_cell(i, o)
                     ),
-                    (_, Some(o)) => format!("  {}", fmt_bytes(o)),
+                    (_, Some(o)) => format!("  {:>8}", fmt_bytes(o)),
                     _ => String::new(),
                 };
                 let how = match (r.lossless, r.quality, r.score) {
-                    (Some(true), _, _) => " lossless".to_string(),
-                    (_, Some(q), Some(s)) => format!(" q{q} s{s:.1}"),
-                    (_, Some(q), None) => format!(" q{q}"),
+                    (Some(true), _, _) => "lossless".to_string(),
+                    (_, Some(q), Some(s)) => format!("q{q} s{s:.1}"),
+                    (_, Some(q), None) => format!("q{q}"),
                     _ => String::new(),
                 };
                 format!(
-                    "{}{sizes}  {}{how}",
-                    arrow(&r.output),
-                    r.format.unwrap_or("")
+                    "{input} {arrow} {output}{sizes}  {}",
+                    paint(DIM, &format!("{} {how}", r.format.unwrap_or("")))
                 )
             }
-            Status::Skipped => format!(
-                "{}  skipped: {}",
-                arrow(&r.output),
-                r.reason.as_deref().unwrap_or("")
-            ),
+            Status::Skipped => {
+                let output = path_cell(r.output.as_deref().unwrap_or("-"), Style::new(), w);
+                format!(
+                    "{input} {arrow} {output}  {}  {}",
+                    paint(LARGER, "skipped"),
+                    paint(DIM, r.reason.as_deref().unwrap_or(""))
+                )
+            }
             Status::Planned => {
                 let dims = match (r.width, r.height) {
                     (Some(w), Some(h)) => format!("{w}x{h}"),
                     _ => String::new(),
                 };
                 let alpha = if r.alpha == Some(true) { " alpha" } else { "" };
+                let output = path_cell(r.output.as_deref().unwrap_or("-"), NAME, 0);
                 format!(
-                    "{}  {dims}{alpha} {} {} -> {} ({})",
-                    r.input,
-                    r.content.unwrap_or(""),
-                    r.input_format.unwrap_or("?"),
-                    r.output.as_deref().unwrap_or("-"),
-                    r.format.unwrap_or("?")
+                    "{input}  {}  {} {} {arrow} {output} {}",
+                    paint(PLANNED, &format!("{dims}{alpha}")),
+                    paint(DIM, r.content.unwrap_or("")),
+                    paint(DIM, r.input_format.unwrap_or("?")),
+                    paint(DIM, &format!("({})", r.format.unwrap_or("?")))
                 )
             }
             Status::Failed => unreachable!("failures are rendered separately"),
         }
+    }
+}
+
+/// `-49%` in green, `+12%` in yellow, right-aligned to five columns.
+fn change_cell(input: u64, output: u64) -> String {
+    let text = format!("{:>5}", fmt_change(input, output));
+    if output <= input {
+        paint(SMALLER, &text)
+    } else {
+        paint(LARGER, &text)
     }
 }
 
@@ -480,6 +608,43 @@ mod tests {
         assert_eq!(fmt_change(1000, 370), "-63%");
         assert_eq!(fmt_change(1000, 1120), "+12%");
         assert_eq!(fmt_change(0, 5), "n/a");
+    }
+
+    #[test]
+    fn tally_counts_and_sums_written_bytes() {
+        let mut t = Tally::default();
+        t.add(&Record {
+            status: Status::Written,
+            input_bytes: Some(1000),
+            output_bytes: Some(400),
+            ..Record::default()
+        });
+        t.add(&Record {
+            status: Status::Skipped,
+            input_bytes: Some(1000),
+            output_bytes: Some(1200),
+            ..Record::default()
+        });
+        t.add(&Record::failed("x".into(), &"boom"));
+        let t = t.merge(Tally {
+            planned: 2,
+            ..Tally::default()
+        });
+        assert_eq!((t.written, t.skipped, t.planned, t.failed), (1, 1, 2, 1));
+        assert_eq!((t.input_bytes, t.output_bytes), (1000, 400));
+        assert_eq!(t.total(), 5);
+    }
+
+    #[test]
+    fn path_cells_pad_to_visible_width() {
+        let cell = path_cell("dir/sub/name.png", Style::new(), 20);
+        assert!(cell.ends_with("    "), "{cell:?}");
+        assert!(cell.contains("name.png"));
+        let cell = path_cell("图片.png", Style::new(), 8);
+        assert!(
+            cell.ends_with("  "),
+            "padding counts characters, not bytes: {cell:?}"
+        );
     }
 
     #[test]
