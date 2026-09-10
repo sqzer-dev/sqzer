@@ -351,8 +351,9 @@ impl Bars {
         let multi = MultiProgress::new();
         let overall = multi.add(ProgressBar::new(total));
         overall.set_style(
-            ProgressStyle::with_template("{bar:24.green/white} {pos}/{len}  {elapsed}")
-                .expect("static template"),
+            ProgressStyle::with_template("{bar:48.green/237} {pos}/{len}  {elapsed}")
+                .expect("static template")
+                .progress_chars("━╸━"),
         );
         overall.enable_steady_tick(std::time::Duration::from_millis(100));
         Self { multi, overall }
