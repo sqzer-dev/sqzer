@@ -23,6 +23,7 @@ pub struct JxlDecoder;
 
 static DECODER_CAPS: DecoderCaps = DecoderCaps {
     format: Format::Jxl,
+    name: "jxl-oxide",
     animation: false,
     tier: Tier::Portable,
 };
@@ -54,6 +55,13 @@ impl Decoder for JxlDecoder {
             format: Format::Jxl,
             animated,
         })
+    }
+
+    fn dimensions(&self, bytes: &[u8]) -> Option<(u32, u32)> {
+        self.probe(bytes)?;
+        parse_header(bytes)
+            .ok()
+            .map(|(image, _)| (image.width(), image.height()))
     }
 
     fn decode(&self, bytes: &[u8], opts: &DecodeOpts) -> Result<Image> {

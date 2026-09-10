@@ -8,7 +8,7 @@
 use oxipng::{
     BitDepth, ColorType as PngColor, Deflater, Options, RawImage, StripChunks, ZopfliOptions,
 };
-use sqzer_core::codec::{Encoder, EncoderCaps, Format, Tier};
+use sqzer_core::codec::{CodecOption, Encoder, EncoderCaps, Format, Tier};
 use sqzer_core::image::{ColorType, Image, Samples};
 use sqzer_core::params::EncodeParams;
 use sqzer_core::{Error, Result};
@@ -35,6 +35,7 @@ pub struct OxipngEncoder;
 
 static CAPS: EncoderCaps = EncoderCaps {
     format: Format::Png,
+    name: "oxipng",
     lossy: false,
     lossless: true,
     alpha: true,
@@ -44,6 +45,18 @@ static CAPS: EncoderCaps = EncoderCaps {
     quality_range: 100.0..=100.0,
     effort_range: 0..=10,
     tier: Tier::Portable,
+    options: &[
+        CodecOption {
+            key: "interlace",
+            default: "false",
+            help: "write Adam7 interlaced output",
+        },
+        CodecOption {
+            key: "optimize_alpha",
+            default: "false",
+            help: "let fully transparent pixels take whatever colour compresses best",
+        },
+    ],
 };
 
 impl Encoder for OxipngEncoder {

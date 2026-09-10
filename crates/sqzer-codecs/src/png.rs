@@ -21,6 +21,7 @@ pub struct PngDecoder;
 
 static DECODER_CAPS: DecoderCaps = DecoderCaps {
     format: Format::Png,
+    name: "png",
     animation: false,
     tier: Tier::Portable,
 };
@@ -35,6 +36,18 @@ impl Decoder for PngDecoder {
             format: Format::Png,
             animated: has_actl_chunk(bytes),
         })
+    }
+
+    fn dimensions(&self, bytes: &[u8]) -> Option<(u32, u32)> {
+        self.probe(bytes)?;
+        // IHDR is always the first chunk: 8 signature bytes, 4 length, 4
+        // type, then width and height as big-endian u32.
+        let ihdr = bytes.get(12..24)?;
+        if &ihdr[..4] != b"IHDR" {
+            return None;
+        }
+        let be = |b: &[u8]| u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
+        Some((be(&ihdr[4..8]), be(&ihdr[8..12])))
     }
 
     fn decode(&self, bytes: &[u8], opts: &DecodeOpts) -> Result<Image> {
@@ -121,6 +134,7 @@ pub struct PngEncoder;
 
 static ENCODER_CAPS: EncoderCaps = EncoderCaps {
     format: Format::Png,
+    name: "png",
     lossy: false,
     lossless: true,
     alpha: true,
@@ -130,6 +144,7 @@ static ENCODER_CAPS: EncoderCaps = EncoderCaps {
     quality_range: 100.0..=100.0,
     effort_range: 0..=10,
     tier: Tier::Portable,
+    options: &[],
 };
 
 impl Encoder for PngEncoder {

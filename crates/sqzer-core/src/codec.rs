@@ -158,11 +158,27 @@ impl core::fmt::Display for Tier {
     }
 }
 
+/// One backend-specific option an encoder accepts through
+/// [`EncodeParams::codec_specific`], for `--list-codecs -v` and for
+/// checking `--codec-opt` keys before any file is touched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CodecOption {
+    /// Key without the `codec:` prefix.
+    pub key: &'static str,
+    /// Value the backend uses when the option is not set, as the user
+    /// would spell it.
+    pub default: &'static str,
+    /// One line on what it does and which values it takes.
+    pub help: &'static str,
+}
+
 /// Static description of what a decoder can do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecoderCaps {
     /// Input format.
     pub format: Format,
+    /// Backend crate, as `--list-codecs` names it.
+    pub name: &'static str,
     /// Reads every frame of an animated file, not just the first.
     pub animation: bool,
     /// Which tier this backend belongs to.
@@ -175,6 +191,8 @@ pub struct DecoderCaps {
 pub struct EncoderCaps {
     /// Output format.
     pub format: Format,
+    /// Backend crate, as `--list-codecs` names it.
+    pub name: &'static str,
     /// Supports lossy output.
     pub lossy: bool,
     /// Supports lossless output.
@@ -193,6 +211,9 @@ pub struct EncoderCaps {
     pub effort_range: RangeInclusive<u8>,
     /// Which tier this backend belongs to.
     pub tier: Tier,
+    /// Every `codec_specific` key this backend accepts. A key that is not
+    /// listed is rejected by [`Encoder::encode`].
+    pub options: &'static [CodecOption],
 }
 
 /// A decoder backend.
@@ -201,6 +222,11 @@ pub trait Decoder: Send + Sync {
     fn caps(&self) -> &DecoderCaps;
     /// Cheap sniff. Returns `None` if the bytes are not this format.
     fn probe(&self, bytes: &[u8]) -> Option<FormatInfo>;
+    /// Width and height from the header, without decoding any pixels.
+    /// `None` when the header cannot be read or the bytes are not this
+    /// format. A batch scheduler uses it to budget memory before deciding
+    /// how many files to decode at once.
+    fn dimensions(&self, bytes: &[u8]) -> Option<(u32, u32)>;
     /// Full decode. Animated input yields the first frame until animation
     /// is modelled on [`Image`].
     ///

@@ -2,7 +2,7 @@
 
 Multi-format image optimizer with best-in-class defaults. A library and a CLI, pure Rust by default, C codecs when you want the last few percent.
 
-> **Note**: Private, pre-alpha. The library decodes JPEG, PNG, WebP, AVIF and JPEG XL and writes JPEG, PNG, lossless WebP and AVIF; everything else below is the plan. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md).
+> **Note**: Private, pre-alpha. The library and the CLI decode JPEG, PNG, WebP, AVIF and JPEG XL and write JPEG, PNG, lossless WebP and AVIF; resize, colour management and the native tier are still to come. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md), the command line in [`docs/adr/0003-cli-interface.md`](docs/adr/0003-cli-interface.md).
 
 ## What it is for
 
@@ -31,6 +31,71 @@ sqzer in.png --json
 ```
 
 The default mode is a perceptual target, not a quality slider. `sqzer` searches encoder quality until the output hits a SSIMULACRA2 score (70 by default), so a flat screenshot and a noisy photo get different settings for the same visible result. The search starts from a seed table calibrated per encoder on a corpus of photos, graphics and screenshots, so the first encode is usually close: on a held-out split the search takes two to four encodes instead of four to six, at the same quality and size.
+
+## Command line
+
+One flat command. Flags can go anywhere, `-q` means quality everywhere, and codec-specific knobs go through one flag instead of one flag per codec. `sqzer -h` shows the flags most runs need, `sqzer --help` shows all of them.
+
+```sh
+# the target: a SSIMULACRA2 score (default 70), an explicit quality, or lossless
+sqzer photo.jpg -t 60
+sqzer photo.jpg -q 82 -e 8
+sqzer photo.jpg --lossless -f png
+sqzer photo.jpg --preset thumbnail          # web (70), thumbnail (60), archive (85), lossless
+sqzer photo.jpg --fast                      # one encode at the calibrated seed quality, no search
+
+# codec-specific options, checked against the backend before anything runs
+sqzer photo.jpg -f jpeg -x jpeg:progressive=false
+sqzer --list-codecs -v                      # every backend's keys and defaults
+
+# where outputs go
+sqzer photo.jpg -o out.avif                 # a file, when there is one input and one format
+sqzer *.jpg -o dist                         # a directory otherwise
+sqzer *.jpg --suffix -min                   # photo-min.avif next to photo.jpg
+sqzer *.jpg --template "{stem}-{width}w.{ext}"
+sqzer *.jpg --in-place --backup             # write over the input, keep photo@backup.jpg
+sqzer ./assets -r -o dist --exclude "**/raw/*"
+
+# inputs from a list or a pipe
+find . -name '*.png' -print0 | sqzer --files-from - -0 -f webp --lossless
+curl -s https://example.com/a.png | sqzer - -f png --lossless > a.png
+
+# machine output and planning
+sqzer *.jpg --json                          # one JSON Lines object per output, nothing else on stdout
+sqzer *.jpg -n --json                       # dimensions, alpha, format and planned outputs, no encode
+```
+
+Defaults that differ from most optimisers: the output never overwrites the input unless `--in-place` is given, an output larger than its input is not written unless `--force` is, and metadata is stripped with the ICC profile converted to sRGB (`--keep-icc` keeps it). Every such "nothing happened" prints one line saying why and which flag changes it.
+
+Exit codes, from ADR-0001:
+
+```text
+0   every input produced every requested output (skipped-as-larger counts as success)
+1   at least one input failed; the failures are on stderr and in --json
+2   argument error, including --target with --quality and an unknown --codec-opt key
+3   nothing could be done: no input matched, or no encoder for the format in this build
+```
+
+Paths: an argument that exists on disk is taken literally and never parsed as a glob. One that does not exist and contains `*`, `?` or `[` is expanded by `sqzer` itself, case-insensitively, so `*.png` works in `cmd.exe` and finds `.PNG`. The output stem is everything before the last dot, so `a.b.c.jpg` becomes `a.b.c.avif`.
+
+Memory: `-j` sets how many files are in flight and defaults to the CPU count, but the decoder is also held to a pixel budget of `--max-pixels` times jobs over four, so a folder of huge images is processed a few at a time instead of all at once. Encoders run single-threaded; the parallelism is across files.
+
+### Coming from `rimage`
+
+`rimage` had one subcommand per codec and local flags under each. `sqzer` has one flat command; the codec is `-f`. A `rimage` codec name as the first argument prints the equivalent `sqzer` line and exits 2.
+
+```text
+rimage mozjpeg -q 75 in.jpg          sqzer -f jpeg -q 75 in.jpg
+rimage oxipng in.png                 sqzer -f png in.png
+rimage webp -q 80 in.png             sqzer -f webp -q 80 in.png    (lossy WebP needs the native tier)
+rimage avif in.jpg                   sqzer -f avif in.jpg
+-d <dir>                             -o <dir>
+-s <suffix>                          --suffix <suffix>
+-t <threads>                         -j <jobs>        (-t is now --target)
+--quantization / --dithering         --codec-opt png:colors=  (once a quantiser lands)
+--resize <spec>                      not yet; resize ships with the pipeline stage
+--backup                             --backup, unchanged, with --in-place
+```
 
 ## Formats
 
@@ -61,7 +126,7 @@ crates/sqzer-core      image model, codec traits, params, errors. No codecs.
 crates/sqzer-codecs    every backend behind a feature flag
 crates/sqzer-metrics   SSIMULACRA2 and the target-quality search
 crates/sqzer           library facade, the thing you depend on
-crates/sqzer-cli       the binary
+crates/sqzer-cli       the binary, `sqzer`
 crates/sqzer-wasm      browser build, portable tier only
 docs/adr               design decisions
 ```

@@ -1,0 +1,785 @@
+//! End-to-end checks of the `sqzer` binary: the six command shapes of
+//! ADR-0001 D5, the four exit codes, the path corpus of ADR-0003 and the
+//! feedback channels. Every test runs in its own scratch directory under
+//! the system temp dir and copies fixtures in, so nothing touches
+//! `tests/fixtures`.
+
+#![cfg(feature = "portable")]
+
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+use serde_json::Value;
+
+struct Sandbox {
+    dir: PathBuf,
+}
+
+impl Sandbox {
+    fn new(name: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("sqzer-cli-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        Self { dir }
+    }
+
+    fn path(&self, rel: &str) -> PathBuf {
+        self.dir.join(rel)
+    }
+
+    /// Copy a fixture in under `as_name`, creating parent directories.
+    fn fixture(&self, name: &str, as_name: &str) -> PathBuf {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures")
+            .join(name);
+        let dst = self.path(as_name);
+        fs::create_dir_all(dst.parent().unwrap()).unwrap();
+        fs::copy(&src, &dst).unwrap_or_else(|e| panic!("{}: {e}", src.display()));
+        dst
+    }
+
+    fn sqzer(&self) -> Command {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_sqzer"));
+        // stderr is not a terminal here, so progress and colour are off
+        // unless a test asks for them.
+        cmd.current_dir(&self.dir)
+            .env_remove("NO_COLOR")
+            .args(["-j", "1"]);
+        cmd
+    }
+}
+
+fn run(cmd: &mut Command) -> (i32, String, String) {
+    let out = cmd.output().unwrap();
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+fn run_with_stdin(cmd: &mut Command, input: &[u8]) -> (i32, Vec<u8>, String) {
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    let out = child.wait_with_output().unwrap();
+    (
+        out.status.code().unwrap_or(-1),
+        out.stdout,
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+fn json_lines(stdout: &str) -> Vec<Value> {
+    stdout
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("not JSON: {l}: {e}")))
+        .collect()
+}
+
+fn is_png(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"\x89PNG")
+}
+
+fn is_avif(bytes: &[u8]) -> bool {
+    bytes.len() > 12 && &bytes[4..8] == b"ftyp"
+}
+
+fn is_jpeg(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0xFF, 0xD8, 0xFF])
+}
+
+// ---- The six shapes
+
+#[test]
+fn shape_1_one_photo_becomes_a_sibling_avif() {
+    let sb = Sandbox::new("shape1");
+    sb.fixture("pattern-rgb.jpg", "photo.jpg");
+    let (code, out, err) = run(sb.sqzer().args(["photo.jpg", "--json"]));
+    assert_eq!(code, 0, "{err}");
+    let lines = json_lines(&out);
+    assert_eq!(lines.len(), 1);
+    let r = &lines[0];
+    assert_eq!(r["status"], "written");
+    assert_eq!(r["input"], "photo.jpg");
+    assert_eq!(r["output"], "photo.avif");
+    assert_eq!(r["format"], "avif");
+    assert_eq!(r["input_format"], "jpeg");
+    assert_eq!(r["backend"], "ravif");
+    assert_eq!(r["tier"], "portable");
+    assert_eq!(r["content"], "photo");
+    assert_eq!(r["target"], 70.0);
+    assert!(r["score"].is_number(), "{r}");
+    assert!(r["quality"].is_number(), "{r}");
+    assert!(r["iterations"].as_u64().unwrap() <= 6, "{r}");
+    assert!(r["trials"].is_array(), "{r}");
+    assert!(is_avif(&fs::read(sb.path("photo.avif")).unwrap()));
+}
+
+#[test]
+fn shape_2_one_input_several_formats() {
+    let sb = Sandbox::new("shape2");
+    sb.fixture("pattern-rgb.jpg", "photo.jpg");
+    let (code, out, err) = run(sb.sqzer().args([
+        "photo.jpg",
+        "-f",
+        "png,webp",
+        "--lossless",
+        "-o",
+        "out",
+        "--force",
+        "--json",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    let lines = json_lines(&out);
+    assert_eq!(lines.len(), 2);
+    assert!(
+        lines
+            .iter()
+            .all(|l| l["status"] == "written" && l["lossless"] == true)
+    );
+    assert!(is_png(&fs::read(sb.path("out/photo.png")).unwrap()));
+    assert_eq!(
+        &fs::read(sb.path("out/photo.webp")).unwrap()[8..12],
+        b"WEBP"
+    );
+}
+
+#[test]
+fn shape_3_recursive_mirrors_the_tree() {
+    let sb = Sandbox::new("shape3");
+    sb.fixture("pattern-rgb.webp", "assets/img/deep/a.webp");
+    sb.fixture("pattern-rgba.webp", "assets/b.webp");
+    sb.fixture("pattern-rgb.webp", "assets/notes.txt");
+    let (code, out, err) = run(sb.sqzer().args([
+        "assets",
+        "-r",
+        "-f",
+        "png",
+        "--lossless",
+        "-o",
+        "dist",
+        "--force",
+        "--json",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    let mut outputs: Vec<String> = json_lines(&out)
+        .iter()
+        .map(|l| l["output"].as_str().unwrap().replace('\\', "/"))
+        .collect();
+    outputs.sort();
+    assert_eq!(outputs, vec!["dist/b.png", "dist/img/deep/a.png"]);
+    assert!(sb.path("dist/img/deep/a.png").exists());
+    assert!(sb.path("dist/b.png").exists());
+    // A directory without -r is refused, and alone it means nothing matched.
+    let (code, _, err) = run(sb.sqzer().args(["assets"]));
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("pass -r"), "{err}");
+    assert!(err.contains("no input matched"), "{err}");
+}
+
+#[test]
+fn shape_4_lossless_preset_conversion() {
+    let sb = Sandbox::new("shape4");
+    sb.fixture("pattern-rgb.webp", "a.webp");
+    sb.fixture("pattern-rgba.webp", "b.webp");
+    let (code, out, err) = run(sb.sqzer().args([
+        "a.webp", "b.webp", "--preset", "lossless", "-f", "png", "--force", "--json",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    let lines = json_lines(&out);
+    assert_eq!(lines.len(), 2);
+    assert!(
+        lines
+            .iter()
+            .all(|l| l["lossless"] == true && l["status"] == "written")
+    );
+    assert!(is_png(&fs::read(sb.path("a.png")).unwrap()));
+    assert!(is_png(&fs::read(sb.path("b.png")).unwrap()));
+}
+
+#[test]
+fn shape_5_explicit_target_is_searched_for() {
+    let sb = Sandbox::new("shape5");
+    sb.fixture("pattern-rgb.jpg", "in.jpg");
+    let (code, out, err) = run(sb.sqzer().args([
+        "in.jpg", "--target", "60", "-f", "avif", "--json", "--force",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    let r = &json_lines(&out)[0];
+    assert_eq!(r["target"], 60.0);
+    assert!(r["reached"].is_boolean(), "{r}");
+    assert!(r["score"].as_f64().unwrap() > 50.0, "{r}");
+}
+
+#[test]
+fn shape_6_json_is_the_only_thing_on_stdout() {
+    let sb = Sandbox::new("shape6");
+    sb.fixture("pattern-rgb.jpg", "in.jpg");
+    fs::write(sb.path("garbage.png"), b"not an image at all").unwrap();
+    let (code, out, _) = run(sb.sqzer().args([
+        "in.jpg",
+        "garbage.png",
+        "-f",
+        "jpeg",
+        "-q",
+        "50",
+        "--suffix",
+        "-min",
+        "--force",
+        "--json",
+        "-v",
+        "--progress",
+        "always",
+    ]));
+    assert_eq!(code, 1);
+    let lines = json_lines(&out);
+    assert_eq!(lines.len(), 2, "every stdout line is JSON: {out}");
+    assert_eq!(lines[0]["status"], "written");
+    assert_eq!(lines[0]["quality"], 50.0);
+    assert!(lines[0]["ratio"].is_number());
+    assert_eq!(lines[1]["status"], "failed");
+    assert!(lines[1]["error"].as_str().unwrap().contains("unrecognised"));
+}
+
+#[test]
+fn shape_7_list_codecs() {
+    let sb = Sandbox::new("shape7");
+    let (code, out, _) = run(sb.sqzer().arg("--list-codecs"));
+    assert_eq!(code, 0);
+    assert!(out.contains("mozjpeg-rs (portable), lossy"), "{out}");
+    assert!(out.contains("jxl-oxide"), "{out}");
+    assert!(!out.contains("jpeg:progressive"), "{out}");
+    let (code, out, _) = run(sb.sqzer().args(["--list-codecs", "-v"]));
+    assert_eq!(code, 0);
+    assert!(out.contains("jpeg:progressive=true"), "{out}");
+    assert!(out.contains("avif:bit_depth=auto"), "{out}");
+    let (code, out, _) = run(sb.sqzer().args(["--list-codecs", "--json"]));
+    assert_eq!(code, 0);
+    let lines = json_lines(&out);
+    let jpeg = lines.iter().find(|l| l["format"] == "jpeg").unwrap();
+    assert_eq!(jpeg["encoder"]["backend"], "mozjpeg-rs");
+    assert_eq!(jpeg["encoder"]["options"][0]["key"], "jpeg:progressive");
+    let jxl = lines.iter().find(|l| l["format"] == "jxl").unwrap();
+    assert!(jxl.get("encoder").is_none());
+    assert_eq!(jxl["encoder_features"][0], "native-jxl");
+}
+
+// ---- Exit codes, one batch test each
+
+#[test]
+fn exit_0_includes_skipped_as_larger() {
+    let sb = Sandbox::new("exit0");
+    sb.fixture("pattern-rgb.jpg", "in.jpg");
+    let (code, out, err) = run(sb
+        .sqzer()
+        .args(["in.jpg", "-f", "png", "--lossless", "--json"]));
+    assert_eq!(code, 0, "{err}");
+    let r = &json_lines(&out)[0];
+    assert_eq!(
+        r["status"], "skipped",
+        "a lossless PNG of a 673 byte JPEG is larger: {r}"
+    );
+    assert!(r["reason"].as_str().unwrap().contains("--force"));
+    assert!(!sb.path("in.png").exists());
+    let (code, out, _) =
+        run(sb
+            .sqzer()
+            .args(["in.jpg", "-f", "png", "--lossless", "--json", "--force"]));
+    assert_eq!(code, 0);
+    assert_eq!(json_lines(&out)[0]["status"], "written");
+    assert!(sb.path("in.png").exists());
+}
+
+#[test]
+fn exit_1_when_one_input_of_a_batch_fails() {
+    let sb = Sandbox::new("exit1");
+    sb.fixture("pattern-rgb.webp", "ok.webp");
+    fs::write(sb.path("bad.webp"), b"RIFF____WEBPVP8 broken").unwrap();
+    let (code, out, err) = run(sb.sqzer().args([
+        "ok.webp",
+        "bad.webp",
+        "missing.webp",
+        "-f",
+        "png",
+        "--lossless",
+        "--force",
+        "--json",
+    ]));
+    assert_eq!(code, 1);
+    let lines = json_lines(&out);
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0]["status"], "written");
+    assert_eq!(lines[1]["status"], "failed");
+    assert!(err.contains("bad.webp"), "{err}");
+    assert!(err.contains("missing.webp: no such file"), "{err}");
+    assert!(sb.path("ok.png").exists());
+}
+
+#[test]
+fn exit_2_on_argument_errors() {
+    let sb = Sandbox::new("exit2");
+    sb.fixture("pattern-rgb.jpg", "in.jpg");
+    for (args, needle) in [
+        (
+            &["in.jpg", "--target", "70", "--quality", "80"][..],
+            "cannot be used with",
+        ),
+        (
+            &["in.jpg", "-x", "jpeg:nope=1"],
+            "unknown jpeg option `nope`",
+        ),
+        (&["in.jpg", "-x", "avif:bit_depth"], "codec:key=value"),
+        (&["-", "-o", "out"], "exactly one -f"),
+        (&["-", "-f", "png", "--json"], "both go to stdout"),
+        (&["in.jpg", "--template", "{nope}"], "unknown placeholder"),
+        (&["in.jpg", "--backup"], "in-place"),
+        (&["in.jpg", "-f", "gif"], "input format only"),
+        (&["in.jpg", "--include", "[", "-r"], "not a valid glob"),
+        (&[], "no input given"),
+    ] {
+        let (code, _, err) = run(sb.sqzer().args(args));
+        assert_eq!(code, 2, "{args:?}: {err}");
+        assert!(err.contains(needle), "{args:?}: {err}");
+    }
+    assert!(!sb.path("in.avif").exists());
+}
+
+#[test]
+fn exit_3_when_nothing_can_be_done() {
+    let sb = Sandbox::new("exit3");
+    sb.fixture("pattern-rgb.jpg", "in.jpg");
+    let (code, _, err) = run(sb.sqzer().args(["nope*.png", "also-missing.jpg"]));
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("nope*.png: no files match"), "{err}");
+    assert!(err.contains("no input matched"), "{err}");
+
+    let (code, _, err) = run(sb.sqzer().args(["in.jpg", "-f", "jxl"]));
+    assert_eq!(code, 3, "{err}");
+    assert!(
+        err.starts_with("error: no JPEG XL encoder in this build"),
+        "{err}"
+    );
+    assert!(
+        err.contains("this build encodes: JPEG (mozjpeg-rs, portable)"),
+        "{err}"
+    );
+    assert!(err.contains("`native-jxl`"), "{err}");
+    assert!(err.contains("sqzer --list-codecs"), "{err}");
+
+    let (code, _, err) = run(sb.sqzer().args(["in.jpg", "-f", "webp", "-q", "80"]));
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("for lossy output"), "{err}");
+    assert!(err.contains("`native-webp`"), "{err}");
+}
+
+// ---- Placement
+
+#[test]
+fn output_never_overwrites_input_without_in_place() {
+    let sb = Sandbox::new("overwrite");
+    let input = sb.fixture("pattern-rgb.jpg", "in.jpg");
+    let original = fs::read(&input).unwrap();
+    let (code, _, err) = run(sb
+        .sqzer()
+        .args(["in.jpg", "-f", "jpeg", "-q", "50", "--force"]));
+    assert_eq!(code, 1);
+    assert!(err.contains("would overwrite input"), "{err}");
+    assert_eq!(fs::read(&input).unwrap(), original);
+    // An existing output is refused too.
+    fs::write(sb.path("in.avif"), b"precious").unwrap();
+    let (code, _, err) = run(sb.sqzer().args(["in.jpg", "-f", "avif", "-q", "50"]));
+    assert_eq!(code, 1);
+    assert!(err.contains("output exists"), "{err}");
+    assert_eq!(fs::read(sb.path("in.avif")).unwrap(), b"precious");
+}
+
+#[test]
+fn in_place_with_backup_keeps_the_original() {
+    let sb = Sandbox::new("inplace");
+    let input = sb.fixture("pattern-rgb.jpg", "photo.jpg");
+    let original = fs::read(&input).unwrap();
+    let (code, out, err) = run(sb.sqzer().args([
+        "photo.jpg",
+        "--in-place",
+        "--backup",
+        "-f",
+        "jpeg",
+        "-q",
+        "30",
+        "--force",
+        "--json",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(json_lines(&out)[0]["output"], "photo.jpg");
+    let replaced = fs::read(&input).unwrap();
+    assert!(is_jpeg(&replaced));
+    assert_ne!(replaced, original);
+    assert_eq!(fs::read(sb.path("photo@backup.jpg")).unwrap(), original);
+    // In place with a format change is refused per file.
+    let (code, _, err) = run(sb.sqzer().args(["photo.jpg", "--in-place", "-f", "avif"]));
+    assert_eq!(code, 1);
+    assert!(
+        err.contains("--in-place would turn JPEG into AVIF"),
+        "{err}"
+    );
+}
+
+#[test]
+fn output_file_suffix_and_template() {
+    let sb = Sandbox::new("naming");
+    sb.fixture("pattern-rgb.webp", "in.webp");
+    let (code, _, err) = run(sb.sqzer().args([
+        "in.webp",
+        "-f",
+        "png",
+        "--lossless",
+        "--force",
+        "-o",
+        "sub/named.png",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    assert!(is_png(&fs::read(sb.path("sub/named.png")).unwrap()));
+    let (code, _, err) = run(sb.sqzer().args([
+        "in.webp",
+        "-f",
+        "png",
+        "--lossless",
+        "--force",
+        "--suffix",
+        "-min",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    assert!(sb.path("in-min.png").exists());
+    let (code, _, err) = run(sb.sqzer().args([
+        "in.webp",
+        "-f",
+        "png",
+        "--lossless",
+        "--force",
+        "--template",
+        "{stem}-{width}w-{quality}.{ext}",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    assert!(sb.path("in-48w-lossless.png").exists());
+}
+
+// ---- Paths
+
+#[test]
+fn path_corpus_of_awkward_names() {
+    let sb = Sandbox::new("paths");
+    let mut names = vec![
+        "a[1].webp",
+        "dots.in.name.webp",
+        "UPPER.WEBP",
+        "图片.webp",
+        "-dash.webp",
+        "with space.webp",
+    ];
+    if !cfg!(windows) {
+        names.push("trailing .webp");
+    }
+    for n in &names {
+        sb.fixture("pattern-rgb.webp", n);
+    }
+    let mut cmd = sb.sqzer();
+    cmd.args(["-f", "png", "--lossless", "--force", "--json", "--"]);
+    cmd.args(&names);
+    // A trailing quote, as cmd.exe leaves it, is stripped.
+    cmd.arg("a[1].webp\"");
+    let (code, out, err) = run(&mut cmd);
+    assert_eq!(code, 0, "{err}");
+    let lines = json_lines(&out);
+    assert_eq!(lines.len(), names.len(), "{out}");
+    assert!(lines.iter().all(|l| l["status"] == "written"), "{out}");
+    assert!(sb.path("a[1].png").exists());
+    assert!(
+        sb.path("dots.in.name.png").exists(),
+        "stem is everything before the last dot"
+    );
+    assert!(sb.path("UPPER.png").exists());
+    assert!(sb.path("图片.png").exists());
+    assert!(sb.path("-dash.png").exists());
+    assert!(sb.path("with space.png").exists());
+}
+
+#[test]
+fn globs_expand_in_process_case_insensitively() {
+    let sb = Sandbox::new("glob");
+    sb.fixture("pattern-rgb.webp", "UPPER.WEBP");
+    sb.fixture("pattern-rgb.webp", "lower.webp");
+    sb.fixture("pattern-rgb.jpg", "other.jpg");
+    // Passed as one literal argument: no shell expands it here.
+    let (code, out, err) =
+        run(sb
+            .sqzer()
+            .args(["*.webp", "-f", "png", "--lossless", "--force", "--json"]));
+    assert_eq!(code, 0, "{err}");
+    let mut inputs: Vec<&str> = Vec::new();
+    let lines = json_lines(&out);
+    for l in &lines {
+        inputs.push(l["input"].as_str().unwrap());
+    }
+    inputs.sort_unstable();
+    assert_eq!(inputs, vec!["UPPER.WEBP", "lower.webp"]);
+}
+
+#[test]
+fn files_from_and_nul_separation() {
+    let sb = Sandbox::new("filesfrom");
+    sb.fixture("pattern-rgb.webp", "a.webp");
+    sb.fixture("pattern-rgb.webp", "b c.webp");
+    fs::write(sb.path("list"), b"a.webp\0b c.webp\0").unwrap();
+    let (code, out, err) = run(sb.sqzer().args([
+        "--files-from",
+        "list",
+        "-0",
+        "-f",
+        "png",
+        "--lossless",
+        "--force",
+        "--json",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(json_lines(&out).len(), 2);
+    assert!(sb.path("b c.png").exists());
+    let (code, _, err) = run(sb.sqzer().args(["--files-from", "nolist", "-f", "png"]));
+    assert_eq!(code, 2, "{err}");
+}
+
+#[test]
+fn stdin_to_stdout() {
+    let sb = Sandbox::new("stdin");
+    let bytes = fs::read(sb.fixture("pattern-rgb.webp", "src.webp")).unwrap();
+    let (code, out, err) =
+        run_with_stdin(sb.sqzer().args(["-", "-f", "png", "--lossless"]), &bytes);
+    assert_eq!(code, 0, "{err}");
+    assert!(is_png(&out), "stdout is the image");
+    // With -o the image goes to the file and --json is allowed.
+    let (code, out, err) = run_with_stdin(
+        sb.sqzer().args([
+            "-",
+            "-f",
+            "png",
+            "--lossless",
+            "-o",
+            "from-stdin.png",
+            "--json",
+        ]),
+        &bytes,
+    );
+    assert_eq!(code, 0, "{err}");
+    let lines = json_lines(&String::from_utf8_lossy(&out));
+    assert_eq!(lines[0]["input"], "-");
+    assert_eq!(lines[0]["output"], "from-stdin.png");
+    assert!(is_png(&fs::read(sb.path("from-stdin.png")).unwrap()));
+}
+
+// ---- Feedback
+
+#[test]
+fn dry_run_plans_and_writes_nothing() {
+    let sb = Sandbox::new("dryrun");
+    sb.fixture("pattern-rgba.webp", "in.webp");
+    let (code, out, err) = run(sb.sqzer().args(["in.webp", "-n", "--json"]));
+    assert_eq!(code, 0, "{err}");
+    let r = &json_lines(&out)[0];
+    assert_eq!(r["status"], "planned");
+    assert_eq!(r["width"], 48);
+    assert_eq!(r["height"], 32);
+    assert_eq!(r["alpha"], true);
+    assert_eq!(r["input_format"], "webp");
+    assert_eq!(r["format"], "avif");
+    assert_eq!(r["output"], "in.avif");
+    assert!(r.get("output_bytes").is_none());
+    assert!(!sb.path("in.avif").exists());
+    let (code, _, err) = run(sb.sqzer().args(["in.webp", "-n", "--progress", "always"]));
+    assert_eq!(code, 0);
+    assert!(err.contains("48x32 alpha"), "{err}");
+    assert!(err.contains("-> in.avif (avif)"), "{err}");
+}
+
+#[test]
+fn progress_quiet_and_verbose_levels() {
+    let sb = Sandbox::new("feedback");
+    sb.fixture("pattern-rgb.jpg", "in.jpg");
+    let (code, out, err) = run(sb.sqzer().args([
+        "in.jpg", "-f", "jpeg", "-q", "40", "-o", "q.jpg", "--force", "--quiet",
+    ]));
+    assert_eq!(code, 0);
+    assert!(
+        out.is_empty() && err.is_empty(),
+        "quiet success says nothing: {out}{err}"
+    );
+    let (code, out, err) = run(sb.sqzer().args([
+        "in.jpg",
+        "-f",
+        "avif",
+        "-o",
+        "p.avif",
+        "--force",
+        "--progress",
+        "always",
+        "-vv",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    assert!(out.is_empty(), "no --json, nothing on stdout: {out}");
+    assert!(err.contains("in.jpg -> p.avif"), "{err}");
+    assert!(err.contains("trials:"), "{err}");
+    assert!(err.contains("params: backend ravif"), "{err}");
+}
+
+#[test]
+fn colour_is_off_by_default_here_and_on_when_asked() {
+    let sb = Sandbox::new("color");
+    let (_, _, err) = run(Command::new(env!("CARGO_BIN_EXE_sqzer"))
+        .current_dir(&sb.dir)
+        .args(["missing.jpg", "--color", "never"]));
+    assert!(!err.contains('\x1b'), "{err:?}");
+    let (_, _, err) = run(Command::new(env!("CARGO_BIN_EXE_sqzer"))
+        .current_dir(&sb.dir)
+        .args(["missing.jpg", "--color", "always"]));
+    assert!(err.contains("\x1b[31merror\x1b[0m"), "{err:?}");
+    let (_, _, err) = run(Command::new(env!("CARGO_BIN_EXE_sqzer"))
+        .current_dir(&sb.dir)
+        .env("NO_COLOR", "1")
+        .args(["missing.jpg", "--color", "auto"]));
+    assert!(!err.contains('\x1b'), "{err:?}");
+}
+
+#[test]
+fn help_tiers_and_version() {
+    let sb = Sandbox::new("help");
+    let (code, short, _) = run(sb.sqzer().arg("-h"));
+    assert_eq!(code, 0);
+    let (code, long, _) = run(sb.sqzer().arg("--help"));
+    assert_eq!(code, 0);
+    assert!(short.contains("--target"), "{short}");
+    assert!(
+        !short.contains("-x, --codec-opt"),
+        "-h hides the advanced flags: {short}"
+    );
+    assert!(long.contains("-x, --codec-opt"), "{long}");
+    assert!(!short.contains("--files-from") && long.contains("--files-from"));
+    assert!(short.contains("sqzer --list-codecs") && long.contains("sqzer --list-codecs"));
+    let (code, out, _) = run(sb.sqzer().arg("--version"));
+    assert_eq!(code, 0);
+    assert_eq!(out.trim(), format!("sqzer {}", env!("CARGO_PKG_VERSION")));
+}
+
+// ---- Flags reach the encoder as given
+
+#[test]
+fn quality_and_effort_change_the_output() {
+    let sb = Sandbox::new("mapping");
+    sb.fixture("pattern-rgb.jpg", "in.jpg");
+    for (q, name) in [("90", "hi.jpg"), ("20", "lo.jpg")] {
+        let (code, _, err) = run(sb
+            .sqzer()
+            .args(["in.jpg", "-f", "jpeg", "-q", q, "-o", name, "--force"]));
+        assert_eq!(code, 0, "{err}");
+    }
+    let hi = fs::metadata(sb.path("hi.jpg")).unwrap().len();
+    let lo = fs::metadata(sb.path("lo.jpg")).unwrap().len();
+    assert!(
+        hi > lo,
+        "q90 ({hi} bytes) must be larger than q20 ({lo} bytes)"
+    );
+    // A codec option reaches its backend.
+    let (code, _, err) = run(sb.sqzer().args([
+        "in.jpg",
+        "-f",
+        "jpeg",
+        "-q",
+        "50",
+        "-x",
+        "jpeg:progressive=false",
+        "-o",
+        "base.jpg",
+        "--force",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    let (code, _, err) = run(sb.sqzer().args([
+        "in.jpg",
+        "-f",
+        "jpeg",
+        "-q",
+        "50",
+        "-x",
+        "jpeg:progressive=true",
+        "-o",
+        "prog.jpg",
+        "--force",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    assert_ne!(
+        fs::read(sb.path("base.jpg")).unwrap(),
+        fs::read(sb.path("prog.jpg")).unwrap()
+    );
+}
+
+#[test]
+fn unsupported_settings_are_refused_not_approximated() {
+    let sb = Sandbox::new("unsupported");
+    sb.fixture("pattern-rgb.jpg", "in.jpg");
+    let (code, out, err) = run(sb.sqzer().args([
+        "in.jpg",
+        "-f",
+        "avif",
+        "-q",
+        "50",
+        "--subsampling",
+        "420",
+        "--json",
+    ]));
+    assert_eq!(code, 1);
+    assert!(err.contains("does not support chroma subsampling"), "{err}");
+    assert_eq!(json_lines(&out)[0]["status"], "failed");
+    assert!(!sb.path("in.avif").exists());
+    // A bad option value is the backend's error, per file.
+    let (code, _, err) = run(sb.sqzer().args([
+        "in.jpg",
+        "-f",
+        "avif",
+        "-q",
+        "50",
+        "-x",
+        "avif:bit_depth=12",
+    ]));
+    assert_eq!(code, 1);
+    assert!(err.contains("avif:bit_depth expects"), "{err}");
+}
+
+#[test]
+fn fast_mode_skips_the_search() {
+    let sb = Sandbox::new("fast");
+    sb.fixture("pattern-rgb.jpg", "in.jpg");
+    let (code, out, err) = run(sb.sqzer().args([
+        "in.jpg", "--fast", "-f", "jpeg", "-o", "fast.jpg", "--force", "--json",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    let r = &json_lines(&out)[0];
+    assert_eq!(r["status"], "written");
+    assert!(r["quality"].is_number(), "{r}");
+    assert!(r.get("iterations").is_none(), "no search ran: {r}");
+}
+
+#[test]
+fn rimage_syntax_gets_a_rewrite_hint() {
+    let sb = Sandbox::new("rimage");
+    // The hint fires on the first argument, as `rimage` always had the codec there.
+    let (code, _, err) = run(Command::new(env!("CARGO_BIN_EXE_sqzer"))
+        .current_dir(&sb.dir)
+        .args(["mozjpeg", "-q", "75", "-d", "out", "in.jpg"]));
+    assert_eq!(code, 2);
+    assert!(err.contains("rimage syntax"), "{err}");
+    assert!(err.contains("sqzer -f jpeg"), "{err}");
+    assert!(err.contains("-o out"), "{err}");
+}

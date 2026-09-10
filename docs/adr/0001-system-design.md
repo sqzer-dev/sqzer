@@ -281,7 +281,7 @@ What to revisit:
 4. [x] Add portable encoders: `oxipng`, `ravif`, `image-webp` lossless. (`oxipng` is desktop only, see ADR-0002.)
 5. [x] Add `sqzer-metrics` with `fast-ssim2` and the bisection loop; write the failure-mode tests (tiny image, flat image, noise).
 6. [x] Build the calibration harness on `codec-eval`; commit seed tables for JPEG, AVIF, WebP. (`codec-eval` pulls in AGPL `dssim-core`, so the harness is a standalone package under `tools/calibrate`, excluded from the workspace. The WebP table is measured through `libwebp` directly until item 8 provides the backend.)
-7. [ ] CLI with the six command shapes from D5, JSON output, exit codes.
+7. [x] CLI with the six command shapes from D5, JSON output, exit codes. (The grammar is ADR-0003. `--max-width` waits for the resize stage of D3.)
 8. [ ] Native tier: `libwebp`, `jpegxl-rs`, `libavif` + `libaom`, `libheif`; CI jobs for each on the six desktop targets.
 9. [ ] `cargo-dist` release matrix, portable + native artifacts.
 10. [ ] `sqzer-wasm` package and a minimal browser demo (the "Squoosh replacement" story is not complete without a drag-and-drop page, even if it is a 200-line HTML file).

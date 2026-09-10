@@ -7,6 +7,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod codec;
+pub mod content;
 pub mod error;
 pub mod image;
 pub mod metric;

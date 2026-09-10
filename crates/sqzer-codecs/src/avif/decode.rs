@@ -34,6 +34,7 @@ pub struct AvifDecoder;
 
 static DECODER_CAPS: DecoderCaps = DecoderCaps {
     format: Format::Avif,
+    name: "re_rav1d",
     animation: false,
     tier: Tier::Portable,
 };
@@ -58,6 +59,13 @@ impl Decoder for AvifDecoder {
             format: Format::Avif,
             animated: major == b"avis",
         })
+    }
+
+    fn dimensions(&self, bytes: &[u8]) -> Option<(u32, u32)> {
+        self.probe(bytes)?;
+        let data = avif_parse::read_avif(&mut Cursor::new(bytes)).ok()?;
+        let meta = data.primary_item_metadata().ok()?;
+        Some((meta.max_frame_width.get(), meta.max_frame_height.get()))
     }
 
     fn decode(&self, bytes: &[u8], opts: &DecodeOpts) -> Result<Image> {

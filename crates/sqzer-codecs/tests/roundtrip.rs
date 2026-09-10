@@ -91,6 +91,37 @@ fn encoder_caps_are_truthful() {
             );
         }
 
+        // Every listed option is accepted at its documented default, and a
+        // key that is not listed is refused. `--codec-opt` relies on both.
+        assert!(!caps.name.is_empty(), "{name}: no backend name");
+        let codec = name.extension();
+        let codec = if codec == "jpg" { "jpeg" } else { codec };
+        for opt in caps.options {
+            let params = quality(60.0).with_codec_opt(codec, opt.key, opt.default);
+            let params = if caps.lossy {
+                params
+            } else {
+                EncodeParams {
+                    target: Target::Lossless,
+                    ..params
+                }
+            };
+            assert!(
+                enc.encode(&test_image(ColorType::Rgb), &params).is_ok(),
+                "{name}: option {codec}:{} rejects its default `{}`",
+                opt.key,
+                opt.default
+            );
+        }
+        let unlisted = quality(60.0).with_codec_opt(codec, "no_such_option", "1");
+        assert!(
+            matches!(
+                enc.encode(&test_image(ColorType::Rgb), &unlisted),
+                Err(Error::InvalidParams(_))
+            ),
+            "{name}: an unlisted option must be InvalidParams"
+        );
+
         // No HDR claim means float samples are refused, not mangled.
         if !caps.hdr {
             let hdr = Image::new(1, 1, ColorType::Rgb, Samples::F32(vec![0.5; 3])).unwrap();
