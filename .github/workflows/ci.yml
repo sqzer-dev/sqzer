@@ -52,7 +52,10 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest,    target: x86_64-unknown-linux-gnu,  features: native }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, features: native }
+          # `jpegli-sys`'s vendored libjxl 0.10 segfaults on the first
+          # encode on this runner (GCC, Neoverse); the same code passes on
+          # Apple Silicon. Out until the binding moves to a newer tree.
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, features: "native-webp,native-jxl,native-avif,native-heif" }
           # musl-tools has no C++ compiler, so the libjxl and jpegli
           # backends stay out until a musl cross toolchain is wired in.
           # libheif has no musl package either.
@@ -97,11 +100,6 @@ jobs:
           echo "$HOME/nasm/nasm-2.16.03" >> "$GITHUB_PATH"
       - if: runner.os == 'Windows'
         uses: ilammy/setup-nasm@v1
-      # A native test binary segfaults on this runner; one test at a time
-      # so the log names it.
-      - if: matrix.target == 'aarch64-unknown-linux-gnu'
-        shell: bash
-        run: echo "RUST_TEST_THREADS=1" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
           key: native

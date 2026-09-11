@@ -90,8 +90,13 @@ What each backend refuses instead of approximating: `libavif` and lossless (qual
 **CI parity.** ADR-0001 asked for native jobs on all six desktop targets. What this record delivers:
 
 ```
-x86_64 / aarch64 linux-gnu   native, all five, libheif from apt
-x86_64 / aarch64 darwin      native, all five, libheif from brew
+x86_64 linux-gnu             native, all five, libheif and its libde265 plugin from apt
+aarch64 linux-gnu            native-webp, native-jxl, native-avif, native-heif;
+                             jpegli-sys's vendored libjxl 0.10 segfaults on the
+                             first encode on the GitHub arm runner (GCC, Neoverse)
+                             while the same code passes on Apple Silicon
+x86_64 / aarch64 darwin      native, all five, libheif from brew; the Intel Mac
+                             needs nasm 2, libaom 3.11's configure rejects nasm 3
 x86_64 windows-msvc          native-webp, native-jxl, native-avif; native-heif needs
                              libheif from vcpkg and is not in CI, and native-jpegli
                              cannot share a cmake generator with native-jxl there
@@ -124,7 +129,7 @@ What to revisit:
 1. [x] `native-webp` over `webpx`, `native-jxl` over `gamut-jxl`, `native-avif` over `libavif` + `libaom`, `native-heif` over `libheif-rs`, `native-jpegli` over `jpegli`; round-trip, caps and golden tests for each; HEIC fixtures of the test pattern.
 2. [x] CI jobs per desktop target with the feature sets above; `cargo deny` bans `jpegli-rs`, `jpegxl-rs` and `jpegxl-sys`.
 3. [x] Run `tools/calibrate sweep --features native` and commit seed tables for `gamut-jxl`, `libavif` and `jpegli`. (Swept on 2026-09-11; the `webpx` table replaced the one measured through the `webp` crate.)
-4. [ ] `native-heif` on Windows through vcpkg, `native-jpegli` on Windows once `jpegli-sys` finds its library under a multi-config generator, and the C++ backends on musl through a musl cross toolchain, in CI.
+4. [ ] `native-heif` on Windows through vcpkg, `native-jpegli` on Windows once `jpegli-sys` finds its library under a multi-config generator, `native-jpegli` on aarch64 Linux once its libjxl tree stops crashing there, and the C++ backends on musl through a musl cross toolchain, in CI.
 5. [ ] Measure `jixel` against `gamut-jxl` on the calibration corpus; if it is within a few percent at equal SSIMULACRA2, propose it for the portable tier in a new record.
 
 ---
