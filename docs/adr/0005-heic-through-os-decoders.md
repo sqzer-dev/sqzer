@@ -332,6 +332,7 @@ Implementation notes, 2026-09-11, branch `feat/heic-os-decoders`. Where the code
 - The ICC profile comes from the container walk (`colr` of type `prof` or `rICC`) for all three backends, so `heif-dl` binds 24 functions rather than the 27 of D8: the three colour-profile calls are not needed.
 - A `heif_init` that fails to load a plugin is not fatal. The HEVC decoder count decides availability, and a `libheif` with none reports "no HEVC decoder plugin" with the plugin error appended.
 - `Error::DecoderUnavailable` and the `--list-codecs` listing carry the reason of every compiled-in backend, joined, not only the first.
+- First answers for item 6, from the CI run of 2026-09-11: ImageIO decodes all six fixtures on both Mac runners within the tolerances, so the alpha kind, the monochrome layout and the `prof` round trip are as the backend assumes. GitHub's `windows-latest` has neither Store package (`Get-AppxPackage` lists nothing) and `CreateDecoderFromStream` fails with `WINCODEC_ERR_COMPONENTINITIALIZEFAILURE` (`0x88982F8B`), not `COMPONENTNOTFOUND`: the inbox HEIF container decoder is registered and fails to initialise. The WIC decode path and its 10-bit behaviour are still untested; the probe's cost is unmeasured.
 - Item 4's scratch job is two steps of the native Windows job: `Get-AppxPackage` before the build and `--list-codecs` after it. Items 3 and 4 are written against the crate sources and cross-checked with `cargo check` and `cargo clippy` for `aarch64-apple-darwin` and `x86_64-pc-windows-msvc` from Linux; their first real run is CI.
 
 ---

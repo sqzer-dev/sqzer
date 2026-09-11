@@ -19,7 +19,9 @@
 mod imp {
     use std::sync::OnceLock;
 
-    use windows::Win32::Foundation::WINCODEC_ERR_COMPONENTNOTFOUND;
+    use windows::Win32::Foundation::{
+        WINCODEC_ERR_COMPONENTINITIALIZEFAILURE, WINCODEC_ERR_COMPONENTNOTFOUND,
+    };
     use windows::Win32::Graphics::Imaging::{
         CLSID_WICImagingFactory, GUID_WICPixelFormat8bppGray, GUID_WICPixelFormat16bppGray,
         GUID_WICPixelFormat16bppGrayHalf, GUID_WICPixelFormat24bppBGR, GUID_WICPixelFormat24bppRGB,
@@ -173,10 +175,21 @@ mod imp {
             let decoder = factory
                 .CreateDecoderFromStream(&stream, std::ptr::null(), WICDecodeMetadataCacheOnDemand)
                 .map_err(|e| {
+                    // Seen on GitHub's windows-latest (Windows Server, no
+                    // Store packages): the HEIF container decoder is
+                    // registered but fails to initialise, 0x88982F8B, so
+                    // the "not found" case is a machine with no HEIF
+                    // codec at all.
                     if e.code() == WINCODEC_ERR_COMPONENTNOTFOUND {
                         Error::Decode(format!(
                             "HEIF Image Extension is not installed (Microsoft Store: \
                              \"HEIF Image Extensions\"); {e}"
+                        ))
+                    } else if e.code() == WINCODEC_ERR_COMPONENTINITIALIZEFAILURE {
+                        Error::Decode(format!(
+                            "the HEIF codec could not initialise, which is what a missing \
+                             HEVC Video Extensions package looks like (Microsoft Store: \
+                             \"HEVC Video Extensions\"); {e}"
                         ))
                     } else {
                         Error::Decode(format!("WIC cannot open HEIC: {e}"))

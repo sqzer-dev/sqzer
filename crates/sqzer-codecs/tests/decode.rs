@@ -440,11 +440,14 @@ mod heic {
             assert_eq!(img.icc(), None, "{}", d.caps().name);
             assert_close(&img, &test_image(ColorType::Rgb), 6.0, d.caps().name);
         });
+        // And through the registry, whichever backend it picks.
         let reg = registry();
-        let (img, info) = decode(&reg, "pattern-rgb.heic");
-        assert_eq!(info.format, Format::Heic);
-        assert!(!info.animated);
-        assert_eq!(img.color(), ColorType::Rgb);
+        if reg.has_decoder(Format::Heic) {
+            let (img, info) = decode(&reg, "pattern-rgb.heic");
+            assert_eq!(info.format, Format::Heic);
+            assert!(!info.animated);
+            assert_eq!(img.color(), ColorType::Rgb);
+        }
     }
 
     #[test]
