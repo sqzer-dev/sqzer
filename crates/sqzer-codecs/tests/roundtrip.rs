@@ -13,37 +13,83 @@
 mod common;
 
 use common::{H, IntoParams, W, assert_close, quality, test_image, test_image_u16};
+// The portable JPEG writer itself: a native build's registry hands out
+// `jpegli` for this format.
+use sqzer_codecs::jpeg::MozjpegEncoder;
 use sqzer_codecs::registry;
 use sqzer_core::Error;
+use sqzer_core::codec::Encoder;
 use sqzer_core::codec::{Format, Tier};
 use sqzer_core::image::{ColorType, Image, Samples};
 use sqzer_core::params::{DecodeOpts, EncodeParams, Target};
 
 #[test]
-fn feature_registry_lists_the_portable_backends() {
+fn feature_registry_lists_the_compiled_backends() {
     let reg = registry();
-    let enc: Vec<_> = reg.encoders().map(|e| e.caps().format).collect();
-    let mut expected = vec![Format::Jpeg, Format::Png];
+    // Portable tier first, in registration order, then the native tier,
+    // which takes a format over by registering after it.
+    let enc: Vec<_> = reg
+        .encoders()
+        .map(|e| (e.caps().format, e.caps().tier))
+        .collect();
+    let mut expected = vec![
+        (Format::Jpeg, Tier::Portable),
+        (Format::Png, Tier::Portable),
+    ];
     if cfg!(feature = "webp-lossless") {
-        expected.push(Format::WebP);
+        expected.push((Format::WebP, Tier::Portable));
     }
     if cfg!(feature = "avif") {
-        expected.push(Format::Avif);
+        expected.push((Format::Avif, Tier::Portable));
+    }
+    if cfg!(feature = "native-webp") {
+        expected.push((Format::WebP, Tier::Native));
+    }
+    if cfg!(feature = "native-jxl") {
+        expected.push((Format::Jxl, Tier::Native));
+    }
+    if cfg!(feature = "native-avif") {
+        expected.push((Format::Avif, Tier::Native));
+    }
+    if cfg!(feature = "native-jpegli") {
+        expected.push((Format::Jpeg, Tier::Native));
     }
     assert_eq!(enc, expected);
-    assert!(reg.encoders().all(|e| e.caps().tier == Tier::Portable));
-    assert!(reg.decoders().all(|d| d.caps().tier == Tier::Portable));
 
-    let dec: Vec<_> = reg.decoders().map(|d| d.caps().format).collect();
-    let mut expected = vec![Format::Jpeg, Format::Png];
+    // The encoder that owns each format is the last one registered.
+    let owner = |f: Format| reg.encoder(f).unwrap().caps().tier;
+    let tier = |native: bool| {
+        if native { Tier::Native } else { Tier::Portable }
+    };
+    assert_eq!(owner(Format::Jpeg), tier(cfg!(feature = "native-jpegli")));
+    assert_eq!(owner(Format::Png), Tier::Portable);
+    if cfg!(any(feature = "webp-lossless", feature = "native-webp")) {
+        assert_eq!(owner(Format::WebP), tier(cfg!(feature = "native-webp")));
+    }
+    if cfg!(any(feature = "avif", feature = "native-avif")) {
+        assert_eq!(owner(Format::Avif), tier(cfg!(feature = "native-avif")));
+    }
+    assert_eq!(reg.has_encoder(Format::Jxl), cfg!(feature = "native-jxl"));
+
+    let dec: Vec<_> = reg
+        .decoders()
+        .map(|d| (d.caps().format, d.caps().tier))
+        .collect();
+    let mut expected = vec![
+        (Format::Jpeg, Tier::Portable),
+        (Format::Png, Tier::Portable),
+    ];
     if cfg!(feature = "webp-lossless") {
-        expected.push(Format::WebP);
+        expected.push((Format::WebP, Tier::Portable));
     }
     if cfg!(all(feature = "avif", not(target_arch = "wasm32"))) {
-        expected.push(Format::Avif);
+        expected.push((Format::Avif, Tier::Portable));
     }
     if cfg!(feature = "jxl-decode") {
-        expected.push(Format::Jxl);
+        expected.push((Format::Jxl, Tier::Portable));
+    }
+    if cfg!(feature = "native-heif") {
+        expected.push((Format::Heic, Tier::Native));
     }
     assert_eq!(dec, expected);
 }
@@ -136,6 +182,7 @@ fn encoder_caps_are_truthful() {
     }
 }
 
+#[cfg(not(feature = "native-jxl"))]
 #[test]
 fn unavailable_encoder_is_reported_not_substituted() {
     let reg = registry();
@@ -236,7 +283,7 @@ fn unknown_bytes_are_unknown_format() {
 fn jpeg_round_trips_close_to_the_source() {
     let reg = registry();
     let src = test_image(ColorType::Rgb);
-    let jpeg = reg.encoder(Format::Jpeg).unwrap();
+    let jpeg = &MozjpegEncoder;
 
     let bytes = jpeg.encode(&src, &quality(90.0)).unwrap();
     assert_eq!(&bytes[..2], &[0xFF, 0xD8]);
@@ -250,9 +297,8 @@ fn jpeg_round_trips_close_to_the_source() {
 
 #[test]
 fn jpeg_quality_orders_size() {
-    let reg = registry();
     let src = test_image(ColorType::Rgb);
-    let jpeg = reg.encoder(Format::Jpeg).unwrap();
+    let jpeg = &MozjpegEncoder;
     let low = jpeg.encode(&src, &quality(30.0)).unwrap().len();
     let high = jpeg.encode(&src, &quality(95.0)).unwrap().len();
     assert!(
@@ -264,7 +310,7 @@ fn jpeg_quality_orders_size() {
 #[test]
 fn jpeg_accepts_alpha_and_16_bit_by_conversion() {
     let reg = registry();
-    let jpeg = reg.encoder(Format::Jpeg).unwrap();
+    let jpeg = &MozjpegEncoder;
     for color in [ColorType::Rgba, ColorType::GrayAlpha, ColorType::Gray] {
         let bytes = jpeg.encode(&test_image(color), &quality(75.0)).unwrap();
         let back = reg.decode(&bytes, &DecodeOpts::default()).unwrap().image;
@@ -277,8 +323,7 @@ fn jpeg_accepts_alpha_and_16_bit_by_conversion() {
 
 #[test]
 fn jpeg_refuses_what_it_cannot_do() {
-    let reg = registry();
-    let jpeg = reg.encoder(Format::Jpeg).unwrap();
+    let jpeg = &MozjpegEncoder;
     let src = test_image(ColorType::Rgb);
 
     assert!(matches!(
@@ -310,7 +355,7 @@ fn jpeg_refuses_what_it_cannot_do() {
 #[test]
 fn jpeg_codec_options_take_effect() {
     let reg = registry();
-    let jpeg = reg.encoder(Format::Jpeg).unwrap();
+    let jpeg = &MozjpegEncoder;
     let src = test_image(ColorType::Rgb);
     let progressive = jpeg
         .encode(
@@ -341,11 +386,7 @@ fn jpeg_codec_options_take_effect() {
 fn jpeg_icc_survives_a_round_trip() {
     let reg = registry();
     let src = test_image(ColorType::Rgb).with_icc(Some(b"fake profile bytes".to_vec()));
-    let bytes = reg
-        .encoder(Format::Jpeg)
-        .unwrap()
-        .encode(&src, &quality(80.0))
-        .unwrap();
+    let bytes = MozjpegEncoder.encode(&src, &quality(80.0)).unwrap();
     let back = reg.decode(&bytes, &DecodeOpts::default()).unwrap().image;
     assert_eq!(back.icc(), src.icc());
 }
@@ -425,11 +466,15 @@ fn gray_as_rgb(color: ColorType) -> Image {
 #[cfg(feature = "webp-lossless")]
 mod webp {
     use super::*;
+    // The portable writer itself: a native build's registry hands out
+    // `webpx` for this format.
+    use sqzer_codecs::webp::WebPLosslessEncoder;
+    use sqzer_core::codec::Encoder;
 
     #[test]
     fn round_trips_rgb_and_rgba_exactly() {
         let reg = registry();
-        let webp = reg.encoder(Format::WebP).unwrap();
+        let webp = &WebPLosslessEncoder;
         for color in [ColorType::Rgb, ColorType::Rgba] {
             let src = test_image(color);
             let bytes = webp.encode(&src, &Target::Lossless.into_params()).unwrap();
@@ -445,7 +490,7 @@ mod webp {
     #[test]
     fn gray_comes_back_as_rgb() {
         let reg = registry();
-        let webp = reg.encoder(Format::WebP).unwrap();
+        let webp = &WebPLosslessEncoder;
         for color in [ColorType::Gray, ColorType::GrayAlpha] {
             let bytes = webp
                 .encode(&test_image(color), &Target::Lossless.into_params())
@@ -459,11 +504,7 @@ mod webp {
     fn sixteen_bit_is_rounded_to_eight() {
         let reg = registry();
         let src = test_image_u16(ColorType::Rgba);
-        let bytes = reg
-            .encoder(Format::WebP)
-            .unwrap()
-            .encode(&src, &quality(60.0))
-            .unwrap();
+        let bytes = WebPLosslessEncoder.encode(&src, &quality(60.0)).unwrap();
         let back = reg.decode(&bytes, &DecodeOpts::default()).unwrap().image;
         assert_eq!(back, test_image(ColorType::Rgba));
     }
@@ -472,9 +513,7 @@ mod webp {
     fn icc_survives_a_round_trip() {
         let reg = registry();
         let src = test_image(ColorType::Rgb).with_icc(Some(b"fake profile bytes".to_vec()));
-        let bytes = reg
-            .encoder(Format::WebP)
-            .unwrap()
+        let bytes = WebPLosslessEncoder
             .encode(&src, &Target::Lossless.into_params())
             .unwrap();
         let back = reg.decode(&bytes, &DecodeOpts::default()).unwrap().image;
@@ -485,7 +524,7 @@ mod webp {
     #[test]
     fn predictor_option_takes_effect() {
         let reg = registry();
-        let webp = reg.encoder(Format::WebP).unwrap();
+        let webp = &WebPLosslessEncoder;
         let src = test_image(ColorType::Rgb);
         let with = webp
             .encode(
@@ -510,8 +549,7 @@ mod webp {
 
     #[test]
     fn refuses_what_it_cannot_do() {
-        let reg = registry();
-        let webp = reg.encoder(Format::WebP).unwrap();
+        let webp = &WebPLosslessEncoder;
         let src = test_image(ColorType::Rgb);
         assert!(matches!(
             webp.encode(&src, &EncodeParams::default()),
@@ -544,7 +582,11 @@ mod webp {
 #[cfg(all(feature = "avif", not(target_arch = "wasm32")))]
 mod avif {
     use super::*;
+    // The portable writer itself: a native build's registry hands out
+    // `libavif` for this format.
     use common::mae_channel;
+    use sqzer_codecs::avif::RavifEncoder;
+    use sqzer_core::codec::Encoder;
     use sqzer_core::image::SampleFormat;
     use sqzer_core::params::Subsampling;
 
@@ -561,11 +603,7 @@ mod avif {
     fn round_trips_close_to_the_source() {
         let reg = registry();
         let src = test_image(ColorType::Rgb);
-        let bytes = reg
-            .encoder(Format::Avif)
-            .unwrap()
-            .encode(&src, &quality(90.0))
-            .unwrap();
+        let bytes = RavifEncoder.encode(&src, &quality(90.0)).unwrap();
         assert_eq!(&bytes[4..8], b"ftyp");
         assert_eq!(&bytes[8..12], b"avif");
         let back = decode_u8(&reg, &bytes);
@@ -577,11 +615,7 @@ mod avif {
     fn alpha_is_preserved() {
         let reg = registry();
         let src = test_image(ColorType::Rgba);
-        let bytes = reg
-            .encoder(Format::Avif)
-            .unwrap()
-            .encode(&src, &quality(90.0))
-            .unwrap();
+        let bytes = RavifEncoder.encode(&src, &quality(90.0)).unwrap();
         let back = decode_u8(&reg, &bytes);
         assert_eq!(back.color(), ColorType::Rgba);
         let alpha_err = mae_channel(&back, &src, 3);
@@ -592,7 +626,7 @@ mod avif {
     #[test]
     fn gray_encodes_as_rgb() {
         let reg = registry();
-        let avif = reg.encoder(Format::Avif).unwrap();
+        let avif = &RavifEncoder;
         for color in [ColorType::Gray, ColorType::GrayAlpha] {
             let bytes = avif.encode(&test_image(color), &quality(90.0)).unwrap();
             let back = decode_u8(&reg, &bytes);
@@ -603,9 +637,7 @@ mod avif {
     #[test]
     fn sixteen_bit_is_accepted_by_conversion() {
         let reg = registry();
-        let bytes = reg
-            .encoder(Format::Avif)
-            .unwrap()
+        let bytes = RavifEncoder
             .encode(&test_image_u16(ColorType::Rgb), &quality(90.0))
             .unwrap();
         assert_close(
@@ -618,9 +650,8 @@ mod avif {
 
     #[test]
     fn quality_orders_size() {
-        let reg = registry();
         let src = test_image(ColorType::Rgb);
-        let avif = reg.encoder(Format::Avif).unwrap();
+        let avif = &RavifEncoder;
         let low = avif.encode(&src, &quality(30.0)).unwrap().len();
         let high = avif.encode(&src, &quality(95.0)).unwrap().len();
         assert!(
@@ -638,11 +669,7 @@ mod avif {
                 effort,
                 ..quality(70.0)
             };
-            let bytes = reg
-                .encoder(Format::Avif)
-                .unwrap()
-                .encode(&src, &params)
-                .unwrap();
+            let bytes = RavifEncoder.encode(&src, &params).unwrap();
             assert_close(
                 &decode_u8(&reg, &bytes),
                 &src,
@@ -655,7 +682,7 @@ mod avif {
     #[test]
     fn bit_depth_option_controls_the_payload() {
         let reg = registry();
-        let avif = reg.encoder(Format::Avif).unwrap();
+        let avif = &RavifEncoder;
         let src = test_image(ColorType::Rgb);
         let ten = avif.encode(&src, &quality(80.0)).unwrap();
         let eight = avif
@@ -674,7 +701,7 @@ mod avif {
     #[test]
     fn color_model_and_alpha_quality_options_take_effect() {
         let reg = registry();
-        let avif = reg.encoder(Format::Avif).unwrap();
+        let avif = &RavifEncoder;
         let src = test_image(ColorType::Rgba);
         let ycbcr = avif.encode(&src, &quality(80.0)).unwrap();
         let rgb = avif
@@ -700,8 +727,7 @@ mod avif {
 
     #[test]
     fn refuses_what_it_cannot_do() {
-        let reg = registry();
-        let avif = reg.encoder(Format::Avif).unwrap();
+        let avif = &RavifEncoder;
         let src = test_image(ColorType::Rgb);
         let unsupported = |r: Result<Vec<u8>, Error>| {
             matches!(

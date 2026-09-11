@@ -330,10 +330,12 @@ mod tests {
             "--no-auto-orient",
             "--max-pixels",
             "1M",
+            // Options that exist in both tiers: PNG stays portable, and
+            // both AVIF backends take `alpha_quality`.
             "-x",
-            "jpeg:progressive=false",
+            "png:interlace=true",
             "-x",
-            "avif:bit_depth=8",
+            "avif:alpha_quality=50",
         ])
         .unwrap();
         let p = cfg.sqzer.params();
@@ -342,12 +344,14 @@ mod tests {
         assert_eq!(p.subsampling, Subsampling::S420);
         assert!(p.keep_icc);
         assert_eq!(
-            p.codec_specific.get("jpeg:progressive").map(String::as_str),
-            Some("false")
+            p.codec_specific.get("png:interlace").map(String::as_str),
+            Some("true")
         );
         assert_eq!(
-            p.codec_specific.get("avif:bit_depth").map(String::as_str),
-            Some("8")
+            p.codec_specific
+                .get("avif:alpha_quality")
+                .map(String::as_str),
+            Some("50")
         );
         assert!(!cfg.sqzer.decode_opts().apply_orientation);
         assert_eq!(cfg.max_pixels, 1_000_000);
@@ -364,11 +368,18 @@ mod tests {
 
     #[test]
     fn unknown_codec_opts_are_usage_errors() {
+        // A native build has a JPEG XL encoder, which rejects the key
+        // itself; a portable build has none to ask.
+        let jxl_needle = if cfg!(feature = "native") {
+            "unknown jxl option `effort`"
+        } else {
+            "no JPEG XL encoder in this build"
+        };
         for (bad, needle) in [
             ("jpeg:nope=1", "unknown jpeg option `nope`"),
-            ("jpeg:progressive", "codec:key=value"),
+            ("jpeg:nope", "codec:key=value"),
             ("bmp:x=1", "unknown codec `bmp`"),
-            ("jxl:effort=7", "no JPEG XL encoder in this build"),
+            ("jxl:effort=7", jxl_needle),
         ] {
             let err = build_from(&["a.png", "-x", bad]).unwrap_err();
             assert_eq!(err.code, 2, "{bad}");
@@ -378,16 +389,19 @@ mod tests {
 
     #[test]
     fn a_format_this_build_cannot_write_is_exit_3() {
-        let err = build_from(&["a.png", "-f", "jxl"]).unwrap_err();
-        assert_eq!(err.code, 3);
-        assert!(
-            err.message.contains("no JPEG XL encoder"),
-            "{}",
-            err.message
-        );
-        let err = build_from(&["a.png", "-f", "webp", "-q", "80"]).unwrap_err();
-        assert_eq!(err.code, 3);
-        assert!(err.message.contains("for lossy output"), "{}", err.message);
+        // A native build writes both; only the portable build refuses.
+        if !cfg!(feature = "native") {
+            let err = build_from(&["a.png", "-f", "jxl"]).unwrap_err();
+            assert_eq!(err.code, 3);
+            assert!(
+                err.message.contains("no JPEG XL encoder"),
+                "{}",
+                err.message
+            );
+            let err = build_from(&["a.png", "-f", "webp", "-q", "80"]).unwrap_err();
+            assert_eq!(err.code, 3);
+            assert!(err.message.contains("for lossy output"), "{}", err.message);
+        }
         let err = build_from(&["a.png", "-f", "jpeg", "--lossless"]).unwrap_err();
         assert_eq!(err.code, 3);
         assert!(

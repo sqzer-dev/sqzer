@@ -14,6 +14,7 @@ use sqzer_core::image::{ColorType, Image};
 use sqzer_core::params::{EncodeParams, Resolved, Subsampling};
 use sqzer_core::{Error, Result};
 
+use crate::layout::widen_gray;
 use crate::opts::unknown;
 
 /// AVIF encoder over `rav1e`. Lossy, 8-bit input, 4:4:4, alpha as a
@@ -181,16 +182,6 @@ fn parse_color_model(value: &str) -> Result<ColorModel> {
     }
 }
 
-/// Replicate a gray sample into three channels, keeping a trailing alpha.
-fn widen_gray(samples: &[u8], channels: usize) -> Vec<u8> {
-    let mut out = Vec::with_capacity(samples.len() / channels * (channels + 2));
-    for px in samples.chunks_exact(channels) {
-        out.extend_from_slice(&[px[0], px[0], px[0]]);
-        out.extend_from_slice(&px[1..]);
-    }
-    out
-}
-
 fn unsupported(what: &str) -> Error {
     Error::Unsupported {
         format: Format::Avif,
@@ -227,11 +218,5 @@ mod tests {
         assert_eq!(parse_quality("alpha_quality", "55.5").unwrap(), 55.5);
         assert!(parse_bit_depth("12").is_err());
         assert!(parse_color_model("yuv").is_err());
-    }
-
-    #[test]
-    fn gray_widens_and_keeps_alpha() {
-        assert_eq!(widen_gray(&[7, 9], 1), vec![7, 7, 7, 9, 9, 9]);
-        assert_eq!(widen_gray(&[7, 128], 2), vec![7, 7, 7, 128]);
     }
 }

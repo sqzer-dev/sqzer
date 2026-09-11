@@ -28,7 +28,7 @@ Dependency direction is strictly downward: `core` depends on nothing in the work
 Three Cargo feature groups in `sqzer-codecs`:
 
 - `portable`: pure Rust, permissive licence, must build on `wasm32-unknown-unknown`. Default.
-- `native`: C bindings (`native-webp`, `native-jxl`, `native-avif`, `native-heif`). Opt-in, desktop only.
+- `native`: C bindings (`native-webp`, `native-jxl`, `native-avif`, `native-heif`, `native-jpegli`). Opt-in, desktop only. The crate choices are in `docs/adr/0004-native-tier.md`; `jpegxl-rs` is GPL and banned.
 - `agpl`: reserved, empty. When populated it lives in a separate `sqzer-codecs-agpl` crate.
 
 `deny.toml` enforces this. The allow-list is permissive licences plus MPL-2.0. The ban list names the imazen zen* crates (`zenwebp`, `zenjpeg`, `zenavif`, `zenravif`, `zenjxl`, `jxl-encoder`, `rav1d-safe`, `heic`). Do not add any of them to a permissive crate, do not add AGPL to the allow-list, and do not work around `cargo deny` failures by loosening the config. If a task needs one of those crates, stop and say so.

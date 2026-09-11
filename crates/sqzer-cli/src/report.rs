@@ -711,11 +711,14 @@ pub fn render_unavailable(format: Format, need: Need, registry: &Registry) -> St
         lines.push(format!("  this build encodes: {}", have.join(", ")));
     }
     let existing = registry.encoder(format).ok().map(Encoder::caps);
+    // A native feature can add a lossy mode to a format whose portable
+    // encoder is lossless only (WebP). None adds a lossless mode, so a
+    // lossless request with an existing encoder names no feature.
     let native: Vec<&str> = format
         .encoder_features()
         .iter()
         .copied()
-        .filter(|f| existing.is_none() || f.starts_with("native-"))
+        .filter(|f| existing.is_none() || (need != Need::Lossless && f.starts_with("native-")))
         .collect();
     let mode = match need {
         Need::Any => format!("{format}"),

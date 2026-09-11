@@ -7,12 +7,17 @@
 name = "sqzer-calibrate"
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.92"
 license = "MIT OR Apache-2.0"
 publish = false
 description = "Sweeps sqzer's encoders over a corpus and writes the seed tables for the target search."
 
 [workspace]
+
+[features]
+# Sweep the native backends too. Same build requirements as
+# `sqzer --features native`, see ADR-0004.
+native = ["sqzer/native"]
 
 [dependencies]
 sqzer = { path = "../../crates/sqzer" }
@@ -21,10 +26,6 @@ sqzer = { path = "../../crates/sqzer" }
 # (BSD-3-Clause). The `icc` and `jpeg-decode` features are off: sources
 # are decoded through sqzer's own registry.
 codec-eval = { version = "0.3.3", default-features = false, features = ["corpus"] }
-# Lossy WebP for the table the native tier will use. `libwebp` via
-# `libwebp-sys` (MIT, vendored C source built by `cc`). The `img` feature
-# would pull in the `image` crate, which nothing here needs.
-webp = { version = "0.3.1", default-features = false }
 clap = { version = "4.5", features = ["derive"] }
 rayon = "1.10"
 # Already in the tree through codec-eval; used for the date in the header.

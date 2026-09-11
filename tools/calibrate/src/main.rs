@@ -25,9 +25,9 @@ use clap::{Args, Parser, Subcommand};
 use codec_eval::eval::session::EncodeRequest;
 use codec_eval::{Corpus, EvalConfig, EvalSession, ImageData, MetricConfig};
 use rayon::prelude::*;
-use sqzer::core::codec::{Encoder, EncoderCaps, Format, Tier};
+use sqzer::core::codec::{EncoderCaps, Format, Tier};
 use sqzer::core::image::{ColorType, Image};
-use sqzer::core::params::{DecodeOpts, EncodeParams, Resolved, Target};
+use sqzer::core::params::{DecodeOpts, EncodeParams, Target};
 use sqzer::core::{Error as SqzerError, Registry, Result as SqzerResult};
 use sqzer::metrics::{Reference, Search, seeds};
 
@@ -172,17 +172,12 @@ struct Backend {
     grid: Vec<f64>,
 }
 
-/// `sqzer`'s registry plus the tool-only lossy WebP encoder when the build
-/// has none of its own.
+/// `sqzer`'s registry for this build. With `--features native` the native
+/// backends take their formats over and the sweep measures them; without
+/// it, the portable tier, whose lossy WebP table cannot be measured at all
+/// (the portable writer is lossless only).
 fn registry() -> Registry {
-    let mut reg = sqzer::codecs::registry();
-    let has_lossy_webp = reg
-        .encoders()
-        .any(|e| e.caps().format == Format::WebP && e.caps().lossy);
-    if !has_lossy_webp {
-        reg.register_encoder(LibwebpEncoder);
-    }
-    reg
+    sqzer::codecs::registry()
 }
 
 fn backends(registry: &Registry, wanted: &[String]) -> Result<Vec<Backend>> {
@@ -220,7 +215,10 @@ fn label(caps: &EncoderCaps, lock: &str) -> String {
     let crates: &[&str] = match (caps.format, caps.tier) {
         (Format::Jpeg, Tier::Portable) => &["mozjpeg-rs"],
         (Format::Avif, Tier::Portable) => &["ravif", "rav1e"],
-        (Format::WebP, Tier::Native) => &["libwebp-sys"],
+        (Format::WebP, Tier::Native) => &["webpx", "libwebp-sys"],
+        (Format::Jxl, Tier::Native) => &["gamut-jxl", "jpegxl-src"],
+        (Format::Avif, Tier::Native) => &["libavif-sys", "libaom-sys"],
+        (Format::Jpeg, Tier::Native) => &["jpegli-sys"],
         _ => &[],
     };
     if crates.is_empty() {
@@ -244,58 +242,15 @@ fn lock_version(lock: &str, name: &str) -> String {
         .to_string()
 }
 
-/// Quality grid per format. AV1 encodes are two orders of magnitude slower
-/// than JPEG, so they get a coarser grid; the crossing is interpolated
-/// between neighbours either way.
+/// Quality grid per format. AV1 and JPEG XL encodes are one to two orders
+/// of magnitude slower than JPEG, so they get a coarser grid; the crossing
+/// is interpolated between neighbours either way.
 fn grid(format: Format) -> Vec<f64> {
     let step = match format {
-        Format::Avif => 5,
+        Format::Avif | Format::Jxl => 5,
         _ => 2,
     };
     (1..=100 / step).map(|i| f64::from(i * step)).collect()
-}
-
-// ---------------------------------------------------------------------------
-// Tool-only lossy WebP
-// ---------------------------------------------------------------------------
-
-/// `libwebp` through the `webp` crate, standing in for the `native-webp`
-/// backend of ADR-0001 item 8. Abstract quality maps one to one onto
-/// `libwebp`'s, at its default method (4). Re-run the sweep through the
-/// real backend once it exists; this type then goes.
-struct LibwebpEncoder;
-
-static LIBWEBP_CAPS: EncoderCaps = EncoderCaps {
-    format: Format::WebP,
-    lossy: true,
-    lossless: true,
-    alpha: false,
-    animation: false,
-    bit_depth: &[8],
-    hdr: false,
-    quality_range: 0.0..=100.0,
-    effort_range: 4..=4,
-    tier: Tier::Native,
-};
-
-impl Encoder for LibwebpEncoder {
-    fn caps(&self) -> &EncoderCaps {
-        &LIBWEBP_CAPS
-    }
-
-    fn encode(&self, img: &Image, params: &EncodeParams) -> SqzerResult<Vec<u8>> {
-        let img = rgb8(img)?;
-        let samples = img
-            .samples()
-            .as_u8()
-            .ok_or_else(|| SqzerError::Codec("expected 8-bit samples".into()))?;
-        let enc = webp::Encoder::from_rgb(samples, img.width(), img.height());
-        let mem = match params.resolved()? {
-            Resolved::Lossless => enc.encode_lossless(),
-            Resolved::Quality(q) => enc.encode(q),
-        };
-        Ok(mem.to_vec())
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +387,28 @@ fn sweep(args: SweepArgs) -> Result<()> {
         tables.push(fit(backend, &corpus_label, &curves));
     }
 
+    // Keep the tables of backends this build did not sweep, typically the
+    // other tier's, so a native sweep does not drop the portable tables or
+    // the reverse. They come from the library as compiled, i.e. the
+    // committed file; their "never reached" comment is not carried over.
+    let swept: Vec<(Format, Tier)> = tables.iter().map(|t| (t.format, t.tier)).collect();
+    for kept in seeds::tables()
+        .iter()
+        .filter(|t| !swept.contains(&(t.format, t.tier)))
+    {
+        eprintln!(
+            "{} ({}): kept from the committed tables",
+            kept.backend, kept.tier
+        );
+        tables.push(Table::from_seed(kept));
+    }
+    tables.sort_by_key(|t| {
+        (
+            Format::ALL.iter().position(|f| *f == t.format),
+            t.tier.to_string(),
+        )
+    });
+
     let code = render(&tables);
     std::fs::write(&out, code)?;
     eprintln!("wrote {}", out.display());
@@ -549,6 +526,31 @@ struct Point {
     high: f64,
     /// Images that never reached the target at the top of the grid.
     unreachable: usize,
+}
+
+impl Table {
+    /// A committed table, as compiled into the library, for re-emitting
+    /// unchanged next to freshly swept ones.
+    fn from_seed(t: &seeds::SeedTable) -> Self {
+        Self {
+            format: t.format,
+            tier: t.tier,
+            label: t.backend.to_string(),
+            corpus: t.corpus.to_string(),
+            images: t.images as usize,
+            points: t
+                .points
+                .iter()
+                .map(|p| Point {
+                    target: f64::from(p.target),
+                    quality: f64::from(p.quality),
+                    low: f64::from(p.low),
+                    high: f64::from(p.high),
+                    unreachable: 0,
+                })
+                .collect(),
+        }
+    }
 }
 
 fn fit(backend: &Backend, corpus: &str, curves: &Curves) -> Table {

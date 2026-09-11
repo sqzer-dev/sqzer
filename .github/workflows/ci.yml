@@ -39,6 +39,86 @@ jobs:
       - run: cargo build --workspace --target ${{ matrix.target }}
       - run: cargo test --workspace --target ${{ matrix.target }}
 
+  # The native tier builds its C libraries from source (libwebp, libaom,
+  # libavif, libjxl twice) and links the system libheif. ADR-0004 lists
+  # what each target can and cannot build; the feature set per target
+  # below is that list. Partial sets test the library crates only: the
+  # CLI tests assume the whole tier or none of it.
+  native:
+    name: native ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,    target: x86_64-unknown-linux-gnu,  features: native }
+          # `jpegli-sys`'s vendored libjxl 0.10 segfaults on the first
+          # encode on this runner (GCC, Neoverse); the same code passes on
+          # Apple Silicon. Out until the binding moves to a newer tree.
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, features: "native-webp,native-jxl,native-avif,native-heif" }
+          # musl-tools has no C++ compiler, so the libjxl and jpegli
+          # backends stay out until a musl cross toolchain is wired in.
+          # libheif has no musl package either.
+          - { os: ubuntu-latest,    target: x86_64-unknown-linux-musl, features: "native-webp,native-avif" }
+          - { os: macos-latest,     target: aarch64-apple-darwin,      features: native }
+          - { os: macos-15-intel,   target: x86_64-apple-darwin,       features: native }
+          # libheif on Windows comes from vcpkg, which is not set up here
+          # yet. jpegli is out too: `jpegli-sys` expects a single-config
+          # cmake generator (Ninja) while `jpegxl-src` asks for the
+          # ClangCL toolset that only the Visual Studio generator has.
+          - { os: windows-latest,   target: x86_64-pc-windows-msvc,    features: "native-webp,native-jxl,native-avif" }
+    env:
+      CC_x86_64_unknown_linux_musl: musl-gcc
+      # libaom is C, but its cmake project also asks for a C++ compiler
+      # and musl-tools ships none. The host g++ only has to pass cmake's
+      # compiler check; no C++ source is compiled into the library.
+      CXX_x86_64_unknown_linux_musl: g++
+      # The vendored libjpeg-turbo inside jpegli's libjxl tree declares a
+      # cmake floor that cmake 4 refuses; this lifts it.
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools nasm
+      # Ubuntu ships libheif's HEVC decoder as a separate plugin package;
+      # without it every HEIC decode fails with "unsupported codec".
+      - if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y nasm libheif-dev libheif-plugin-libde265
+      - if: runner.os == 'macOS'
+        run: brew install libheif
+      # libaom 3.11's configure greps `nasm -hf` for `-Ox`, which nasm 3
+      # (what brew installs) no longer prints, so the Intel Mac gets the
+      # last nasm 2 from nasm.us instead.
+      - if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          curl -sSL -o nasm.zip https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/macosx/nasm-2.16.03-macosx.zip
+          unzip -q nasm.zip -d "$HOME/nasm"
+          echo "$HOME/nasm/nasm-2.16.03" >> "$GITHUB_PATH"
+      - if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: native
+      # `sqzer-cli` names the same features as `sqzer-codecs`, so the
+      # list applies to the binary as is; testing one package at a time
+      # needs the `package/feature` spelling and keeps a crash in one
+      # backend from hiding the other results.
+      - shell: bash
+        run: |
+          list=$(echo "${{ matrix.features }}" | tr ',' '\n')
+          echo "CODECS_FEATURES=$(echo "$list" | sed 's#^#sqzer-codecs/#' | paste -sd ',' -)" >> "$GITHUB_ENV"
+          echo "SQZER_FEATURES=$(echo "$list" | sed 's#^#sqzer/#' | paste -sd ',' -)" >> "$GITHUB_ENV"
+      - run: cargo build -p sqzer-cli --target ${{ matrix.target }} --features ${{ matrix.features }}
+      - run: cargo test -p sqzer-codecs --target ${{ matrix.target }} --features ${{ env.CODECS_FEATURES }}
+      - run: cargo test -p sqzer --target ${{ matrix.target }} --features ${{ env.SQZER_FEATURES }}
+      # The CLI tests expect the whole tier or none of it.
+      - if: matrix.features == 'native'
+        run: cargo test -p sqzer-cli --target ${{ matrix.target }} --features native
+
   wasm:
     name: wasm32 portable tier
     runs-on: ubuntu-latest
@@ -54,11 +134,15 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    env:
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # `--all-features` builds the native tier's C libraries too.
+      - run: sudo apt-get update && sudo apt-get install -y nasm libheif-dev
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features

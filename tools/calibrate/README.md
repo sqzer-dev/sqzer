@@ -70,12 +70,19 @@ measures the backend exactly as the pipeline runs it. Quality grids are
 every 2 for JPEG and WebP and every 5 for AVIF; the crossing of each target
 is interpolated between the two grid points either side.
 
-Lossy WebP has no encoder in the portable tier. Until the `native-webp`
-backend lands (ADR-0001 item 8), the harness registers its own encoder over
-`libwebp` through the `webp` crate, maps abstract quality one to one onto
-`libwebp`'s and labels the table `Tier::Native`. Once the real backend
-exists, delete `LibwebpEncoder` from `main.rs` and re-run the sweep through
-it.
+The native tier is swept with `--features native`, which needs the same
+tools as `sqzer --features native` (cmake, a C++ compiler, nasm, a system
+`libheif`; see ADR-0004). A native backend takes its format over from the
+portable one, so a native sweep measures `webpx`, `gamut-jxl`, `libavif`
+and `jpegli` and a portable sweep measures `mozjpeg-rs` and `ravif`; both
+tables are kept, keyed by tier. Lossy WebP exists only in the native tier,
+so its table comes from a native sweep.
+
+```sh
+# the native backends; run the portable sweep too, since each run
+# overwrites the whole table file
+cargo run --release --features native -- sweep --jobs 6
+```
 
 ## Reading a table
 
