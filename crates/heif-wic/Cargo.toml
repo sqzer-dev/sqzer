@@ -1,0 +1,29 @@
+[package]
+name = "heif-wic"
+description = "HEIC decoding through the Windows Imaging Component, for sqzer's `native-heif` feature. Not a public API. Empty on every other OS."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+include = ["src/**", "probe.heic", "Cargo.toml"]
+
+# MIT OR Apache-2.0. The umbrella crate is the only binding for WIC;
+# `windows` 0.62 pins `windows-core` 0.62, whose MSRV fits the workspace.
+# A bump past 0.62 must be checked against the MSRV first (ADR-0005 D4).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_Graphics_Imaging", "Win32_System_Com", "Win32_Foundation"] }
+
+# This crate exists to hold the `unsafe` the workspace forbids: every COM
+# method is `unsafe fn` in `windows`. Keep it small and review it as a
+# binding.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+undocumented_unsafe_blocks = "warn"

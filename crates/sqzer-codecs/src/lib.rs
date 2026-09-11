@@ -26,6 +26,8 @@ compile_error!("the native tier is C code and does not build for wasm32; use the
 pub mod avif;
 #[cfg(any(feature = "jpeg", feature = "webp-lossless"))]
 mod exif;
+#[cfg(feature = "heif")]
+pub mod heif;
 #[cfg(feature = "jpeg")]
 pub mod jpeg;
 #[cfg(feature = "jxl-decode")]
@@ -99,13 +101,22 @@ pub fn register_portable(reg: &mut Registry) {
     {
         reg.register_decoder(jxl::JxlDecoder);
     }
+    // HEIC is recognised in every build so the error for one names the
+    // feature that reads it. The sniffer is only consulted when no
+    // decoder claims the bytes, so a `native-heif` build is unaffected.
+    #[cfg(feature = "heif")]
+    reg.register_sniffer(heif::probe);
     // Silence the unused-variable lint when no portable feature is on.
     let _ = reg;
 }
 
 /// Add the compiled-in native (C binding) backends. Each encoder takes
-/// over its format from the portable tier; the HEIC decoder adds a format
-/// the portable tier does not read.
+/// over its format from the portable tier; the HEIC decoders add a format
+/// the portable tier does not read. On macOS and Windows the OS decoder
+/// registers first and the runtime-loaded `libheif` second, so the
+/// zero-install path is tried first and `libheif` covers a machine whose
+/// OS decoder is missing (ADR-0005 D1). Linux has `libheif` only; musl,
+/// which cannot load a library at run time, has nothing.
 pub fn register_native(reg: &mut Registry) {
     #[cfg(feature = "native-webp")]
     reg.register_encoder(native::webp::LibwebpEncoder);
@@ -113,8 +124,12 @@ pub fn register_native(reg: &mut Registry) {
     reg.register_encoder(native::jxl::LibjxlEncoder);
     #[cfg(feature = "native-avif")]
     reg.register_encoder(native::avif::LibavifEncoder);
-    #[cfg(feature = "native-heif")]
-    reg.register_decoder(native::heif::HeifDecoder);
+    #[cfg(all(feature = "native-heif", target_os = "macos"))]
+    reg.register_decoder(native::heif::ImageIoDecoder);
+    #[cfg(all(feature = "native-heif", windows))]
+    reg.register_decoder(native::heif::WicDecoder);
+    #[cfg(all(feature = "native-heif", not(target_env = "musl")))]
+    reg.register_decoder(native::heif::LibheifDecoder);
     #[cfg(feature = "native-jpegli")]
     reg.register_encoder(native::jpegli::JpegliEncoder);
     // Silence the unused-variable lint when no native feature is on.

@@ -242,10 +242,12 @@ impl Sqzer {
     /// > the default format falls back to JPEG.
     ///
     /// # Errors
-    /// Unknown input, an image over the pixel limit, a decoder failure,
-    /// [`sqzer_core::Error::EncoderUnavailable`] for the chosen format, or
-    /// [`sqzer_core::Error::Unsupported`] for a perceptual target whose
-    /// output this build cannot decode.
+    /// Unknown input, input this build recognises but cannot decode
+    /// ([`sqzer_core::Error::DecoderUnavailable`], naming the feature or
+    /// the missing library), an image over the pixel limit, a decoder
+    /// failure, [`sqzer_core::Error::EncoderUnavailable`] for the chosen
+    /// format, or [`sqzer_core::Error::Unsupported`] for a perceptual
+    /// target whose output this build cannot decode.
     pub fn run(&self, input: &[u8]) -> Result<Output> {
         self.encode(&self.decode(input)?)
     }
@@ -253,8 +255,9 @@ impl Sqzer {
     /// Probe and decode `input` with the configured decode options.
     ///
     /// # Errors
-    /// [`sqzer_core::Error::UnknownFormat`], [`sqzer_core::Error::TooLarge`]
-    /// or the decoder's own error.
+    /// [`sqzer_core::Error::UnknownFormat`],
+    /// [`sqzer_core::Error::DecoderUnavailable`],
+    /// [`sqzer_core::Error::TooLarge`] or the decoder's own error.
     pub fn decode(&self, input: &[u8]) -> Result<Decoded> {
         self.registry.decode(input, &self.decode)
     }

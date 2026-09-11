@@ -315,83 +315,290 @@ mod avif {
 
 // ------------------------------------------------------------------ HEIC
 
-#[cfg(feature = "native-heif")]
+/// Every build recognises HEIC; only `native-heif` reads it, and on musl
+/// not even that, since a static binary cannot load `libheif` and there
+/// is no OS decoder. The error names the feature instead of calling the
+/// file unrecognised.
+#[cfg(all(
+    feature = "heif",
+    any(not(feature = "native-heif"), target_env = "musl")
+))]
+#[test]
+fn heic_is_recognised_but_needs_the_feature() {
+    let reg = registry();
+    let bytes = fixture("pattern-rgb.heic");
+    assert!(reg.probe(&bytes).is_none());
+    assert_eq!(reg.identify(&bytes).map(|i| i.format), Some(Format::Heic));
+    assert!(!reg.has_decoder(Format::Heic));
+    let err = reg.decode(&bytes, &DecodeOpts::default()).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::DecoderUnavailable {
+                format: Format::Heic,
+                available_in: &["native-heif"],
+                reason: None,
+            }
+        ),
+        "{err}"
+    );
+    assert_eq!(
+        err.to_string(),
+        "no decoder for HEIC in this build (enable one of: native-heif)"
+    );
+}
+
+/// The conformance suite of ADR-0005 D5: every HEIC decoder this build has
+/// is run over every fixture and must produce the same picture within the
+/// same tolerances. A backend that cannot run on this machine has to say
+/// so cleanly; on Windows that is allowed to be the whole story, since
+/// GitHub's runners are Windows Server without the Store codecs and
+/// `libheif` is nowhere on `PATH`. Everywhere else every compiled-in
+/// backend must work: CI installs `libheif`, and every macOS has `ImageIO`.
+#[cfg(all(feature = "native-heif", not(target_env = "musl")))]
 mod heic {
     use super::*;
+    use sqzer_core::codec::Decoder;
+    use sqzer_core::image::Orientation;
+
+    /// Run `check` on every HEIC backend that can run here.
+    fn for_each_backend(check: impl Fn(&dyn Decoder)) {
+        let reg = registry();
+        let backends: Vec<&dyn Decoder> = reg
+            .decoders()
+            .filter(|d| d.caps().format == Format::Heic)
+            .collect();
+        assert!(!backends.is_empty(), "native-heif registered no decoder");
+        for d in backends {
+            let name = d.caps().name;
+            match d.available() {
+                Ok(()) => check(d),
+                Err(reason) => {
+                    // Unavailable is a first-class answer, never a crash
+                    // and never a wrong image.
+                    let err = d
+                        .decode(&fixture("pattern-rgb.heic"), &DecodeOpts::default())
+                        .unwrap_err();
+                    assert!(
+                        matches!(
+                            &err,
+                            Error::DecoderUnavailable {
+                                format: Format::Heic,
+                                reason: Some(r),
+                                ..
+                            } if r.starts_with(name)
+                        ),
+                        "{name}: {err}"
+                    );
+                    let windows = cfg!(windows);
+                    assert!(windows, "{name} must be usable on this platform: {reason}");
+                    eprintln!("{name}: unavailable here, decode checks skipped: {reason}");
+                }
+            }
+        }
+    }
+
+    fn decode_with(d: &dyn Decoder, name: &str) -> Image {
+        d.decode(&fixture(name), &DecodeOpts::default())
+            .unwrap_or_else(|e| panic!("{}: {name}: {e}", d.caps().name))
+    }
+
+    /// The gray pattern as a backend may hand it back: one channel, or
+    /// three equal ones.
+    fn assert_gray(img: &Image, limit: f64, what: &str) {
+        match img.color() {
+            ColorType::Gray => assert_close(img, &test_image(ColorType::Gray), limit, what),
+            ColorType::Rgb => {
+                let rgb = img.samples().as_u8().expect("8-bit");
+                for c in 1..3 {
+                    let spread = rgb
+                        .as_chunks::<3>()
+                        .0
+                        .iter()
+                        .map(|px| f64::from(px[0].abs_diff(px[c])))
+                        .sum::<f64>()
+                        / f64::from(W * H);
+                    assert!(
+                        spread < 2.0,
+                        "{what}: channel {c} differs from R by {spread:.2}"
+                    );
+                }
+                let gray: Vec<u8> = rgb.iter().step_by(3).copied().collect();
+                let gray =
+                    Image::from_u8(img.width(), img.height(), ColorType::Gray, gray).unwrap();
+                assert_close(&gray, &test_image(ColorType::Gray), limit, what);
+            }
+            other => panic!("{what}: unexpected layout {other:?}"),
+        }
+    }
 
     #[test]
     fn rgb_420() {
+        for_each_backend(|d| {
+            let img = decode_with(d, "pattern-rgb.heic");
+            assert_eq!(img.color(), ColorType::Rgb, "{}", d.caps().name);
+            assert_eq!(img.icc(), None, "{}", d.caps().name);
+            assert_close(&img, &test_image(ColorType::Rgb), 6.0, d.caps().name);
+        });
+        // And through the registry, whichever backend it picks.
         let reg = registry();
-        let (img, info) = decode(&reg, "pattern-rgb.heic");
-        assert_eq!(info.format, Format::Heic);
-        assert!(!info.animated);
-        assert_eq!(img.color(), ColorType::Rgb);
-        assert_eq!(img.icc(), None);
-        assert_close(&img, &test_image(ColorType::Rgb), 6.0, "pattern-rgb.heic");
+        if reg.has_decoder(Format::Heic) {
+            let (img, info) = decode(&reg, "pattern-rgb.heic");
+            assert_eq!(info.format, Format::Heic);
+            assert!(!info.animated);
+            assert_eq!(img.color(), ColorType::Rgb);
+        }
     }
 
     #[test]
     fn alpha_plane_becomes_a_channel() {
-        let (img, _) = decode(&registry(), "pattern-rgba.heic");
-        assert_eq!(img.color(), ColorType::Rgba);
-        let expected = test_image(ColorType::Rgba);
-        assert_close(&img, &expected, 6.0, "pattern-rgba.heic");
-        assert!(mae_channel(&img, &expected, 3) < 6.0, "alpha plane");
+        for_each_backend(|d| {
+            let img = decode_with(d, "pattern-rgba.heic");
+            assert_eq!(img.color(), ColorType::Rgba, "{}", d.caps().name);
+            let expected = test_image(ColorType::Rgba);
+            assert_close(&img, &expected, 6.0, d.caps().name);
+            assert!(
+                mae_channel(&img, &expected, 3) < 6.0,
+                "{}: alpha plane",
+                d.caps().name
+            );
+        });
     }
 
     #[test]
     fn monochrome_decodes_to_gray() {
-        let (img, _) = decode(&registry(), "pattern-gray.heic");
-        assert_eq!(img.color(), ColorType::Gray);
-        assert_close(&img, &test_image(ColorType::Gray), 4.0, "pattern-gray.heic");
+        for_each_backend(|d| {
+            let img = decode_with(d, "pattern-gray.heic");
+            assert_gray(&img, 4.0, d.caps().name);
+        });
     }
 
     #[test]
     fn icc_is_kept() {
-        let (img, _) = decode(&registry(), "pattern-icc.heic");
-        assert!(img.icc().is_some_and(is_icc), "ICC profile missing");
-        assert_close(&img, &test_image(ColorType::Rgb), 6.0, "pattern-icc.heic");
+        for_each_backend(|d| {
+            let img = decode_with(d, "pattern-icc.heic");
+            assert!(
+                img.icc().is_some_and(is_icc),
+                "{}: ICC missing",
+                d.caps().name
+            );
+            assert_close(&img, &test_image(ColorType::Rgb), 6.0, d.caps().name);
+        });
     }
 
     #[test]
     fn container_rotation_is_always_applied() {
-        let reg = registry();
-        let (img, _) = decode(&reg, "pattern-rot90.heic");
-        assert_eq!((img.width(), img.height()), (W, H));
-        // 4:2:0 chroma was subsampled along the stored axes, so the hard
-        // edge blurs a little more than in the upright file.
-        assert_close(&img, &test_image(ColorType::Rgb), 8.0, "pattern-rot90.heic");
+        for_each_backend(|d| {
+            let name = d.caps().name;
+            assert_eq!(
+                d.dimensions(&fixture("pattern-rot90.heic")),
+                Some((W, H)),
+                "{name}"
+            );
+            let img = decode_with(d, "pattern-rot90.heic");
+            assert_eq!((img.width(), img.height()), (W, H), "{name}");
+            // 4:2:0 chroma was subsampled along the stored axes, so the
+            // hard edge blurs a little more than in the upright file.
+            assert_close(&img, &test_image(ColorType::Rgb), 8.0, name);
 
-        // `irot` is container geometry, like the JPEG XL orientation
-        // field, not Exif metadata: the flag does not turn it off.
-        let raw = reg
-            .decode(
-                &fixture("pattern-rot90.heic"),
-                &DecodeOpts {
-                    apply_orientation: false,
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-            .image;
-        assert_eq!((raw.width(), raw.height()), (W, H));
-        assert_eq!(raw, img);
+            // `irot` is container geometry, like the JPEG XL orientation
+            // field, not Exif metadata: the flag does not turn it off.
+            let raw = d
+                .decode(
+                    &fixture("pattern-rot90.heic"),
+                    &DecodeOpts {
+                        apply_orientation: false,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(raw, img, "{name}");
+        });
+        // The value every backend applies comes from the container walk.
+        let header = sqzer_codecs::heif::header(&fixture("pattern-rot90.heic")).unwrap();
+        assert_eq!(header.orientation, Orientation::Rotate90);
+    }
+
+    #[test]
+    fn ten_bit_decodes_to_the_pattern() {
+        for_each_backend(|d| {
+            let name = d.caps().name;
+            let img = decode_with(d, "pattern-10bit.heic");
+            assert_eq!(img.color(), ColorType::Rgb, "{name}");
+            match img.sample_format() {
+                SampleFormat::U16 => {
+                    assert_close(&img, &test_image_u16(ColorType::Rgb), 6.0 * 257.0, name);
+                }
+                // ADR-0005 D5 allows a backend that cannot produce more
+                // than 8 bits to return 8; the pixels still have to be
+                // right.
+                SampleFormat::U8 => {
+                    eprintln!("{name}: 10-bit source returned as 8-bit samples");
+                    assert_close(&img, &test_image(ColorType::Rgb), 6.0, name);
+                }
+                SampleFormat::F32 => panic!("{name}: float samples from HEVC"),
+            }
+        });
     }
 
     #[test]
     fn pixel_limit() {
-        assert_too_large(&registry(), "pattern-rgb.heic");
+        for_each_backend(|d| {
+            let opts = DecodeOpts {
+                max_pixels: u64::from(W * H) - 1,
+                ..Default::default()
+            };
+            assert!(
+                matches!(
+                    d.decode(&fixture("pattern-rgb.heic"), &opts),
+                    Err(Error::TooLarge { pixels, .. }) if pixels == u64::from(W * H)
+                ),
+                "{}: pixel limit not enforced",
+                d.caps().name
+            );
+        });
+        // And through the registry, whichever backend it picks.
+        let reg = registry();
+        if reg.has_decoder(Format::Heic) {
+            assert_too_large(&reg, "pattern-rgb.heic");
+        }
     }
 
     #[test]
     fn corrupt_file_is_a_codec_error() {
-        let mut bytes = fixture("pattern-rgb.heic");
-        let len = bytes.len();
-        bytes.truncate(len / 2);
-        let err = registry()
-            .decode(&bytes, &DecodeOpts::default())
-            .unwrap_err();
-        assert!(matches!(err, Error::Codec(_)), "{err}");
+        for_each_backend(|d| {
+            let mut bytes = fixture("pattern-rgb.heic");
+            let len = bytes.len();
+            bytes.truncate(len / 2);
+            let err = d.decode(&bytes, &DecodeOpts::default()).unwrap_err();
+            assert!(matches!(err, Error::Codec(_)), "{}: {err}", d.caps().name);
+        });
+    }
+
+    #[test]
+    fn registry_reports_what_it_has() {
+        let reg = registry();
+        let bytes = fixture("pattern-rgb.heic");
+        assert_eq!(reg.identify(&bytes).map(|i| i.format), Some(Format::Heic));
+        match reg.decode(&bytes, &DecodeOpts::default()) {
+            Ok(out) => {
+                assert!(reg.has_decoder(Format::Heic));
+                assert_eq!(out.info.format, Format::Heic);
+            }
+            Err(Error::DecoderUnavailable {
+                format: Format::Heic,
+                available_in: &["native-heif"],
+                reason: Some(reason),
+            }) => {
+                let windows = cfg!(windows);
+                assert!(windows, "no usable HEIC decoder here: {reason}");
+                assert!(!reg.has_decoder(Format::Heic));
+                for d in reg.decoders().filter(|d| d.caps().format == Format::Heic) {
+                    assert!(reason.contains(d.caps().name), "{reason}");
+                }
+            }
+            Err(other) => panic!("unexpected error: {other}"),
+        }
     }
 }
 

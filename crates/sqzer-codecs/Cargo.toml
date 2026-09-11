@@ -12,7 +12,7 @@ repository.workspace = true
 default = ["portable"]
 
 # Tier 1: pure Rust, permissive. Must build on wasm32.
-portable = ["png", "jpeg", "webp-lossless", "avif", "jxl-decode", "gif", "tiff", "svg"]
+portable = ["png", "jpeg", "webp-lossless", "avif", "jxl-decode", "heif", "gif", "tiff", "svg"]
 # `oxipng` is the PNG writer on desktop targets; on wasm32 it is compiled
 # out (see below) and the plain `png` writer takes its place.
 png = ["dep:png", "dep:oxipng"]
@@ -23,14 +23,19 @@ webp-lossless = ["dep:image-webp", "dep:kamadak-exif"]
 # encoder and nothing else.
 avif = ["dep:avif-parse", "dep:re_rav1d", "dep:yuv", "dep:ravif", "dep:rgb"]
 jxl-decode = ["dep:jxl-oxide"]
+# HEIC recognised and its header read (size, rotation, ICC) with no
+# decoder: a portable build says "needs `native-heif`" for a HEIC instead
+# of "unrecognised". Pure Rust, no dependencies.
+heif = []
 gif = []
 tiff = []
 svg = []
 
 # Tier 2: C bindings. Opt-in, desktop targets only; a native feature on
 # wasm32 is a compile error. Each feature vendors its C library and builds
-# it with `cc` or `cmake`, except `native-heif`, which links the system
-# `libheif`. A native backend registers after the portable one for the
+# it with `cc` or `cmake`, except `native-heif`, which links nothing: it
+# uses the OS decoder where there is one and loads `libheif` at runtime
+# (ADR-0005). A native backend registers after the portable one for the
 # same format and takes it over. See ADR-0004 for the crate choices.
 native = ["native-webp", "native-jxl", "native-avif", "native-heif", "native-jpegli"]
 # Lossy and lossless WebP over `libwebp`.
@@ -39,9 +44,11 @@ native-webp = ["dep:webpx"]
 native-jxl = ["dep:gamut-jxl", "dep:gamut-core"]
 # AVIF encoding over `libavif` + `libaom`. Needs cmake, and `nasm` on x86.
 native-avif = ["dep:libavif"]
-# HEIC decoding over a system `libheif`. Needs `libheif` >= 1.17 with an
-# HEVC decoder, found through `pkg-config` (vcpkg on Windows).
-native-heif = ["dep:libheif-rs"]
+# HEIC decoding: ImageIO on macOS, WIC on Windows, and `libheif` loaded at
+# runtime everywhere but musl. Nothing to install at build time; at run
+# time a machine needs one of those, and `--list-codecs` says which it
+# has. Which crates apply is decided per target below.
+native-heif = ["heif", "dep:heif-dl", "dep:heif-imageio", "dep:heif-wic"]
 # JPEG encoding over `jpegli`. Needs cmake and a C++ compiler.
 native-jpegli = ["dep:jpegli"]
 
@@ -102,15 +109,23 @@ gamut-core = { version = "2.0.1", optional = true }
 # `codec-dav1d` and `codec-rav1e` features are off: decoding stays with
 # `re_rav1d` and rav1e is the portable tier's encoder already.
 libavif = { version = "0.14.0", optional = true, default-features = false, features = ["codec-aom"] }
-# `libheif`, decode only. The binding crates are MIT; libheif itself and
-# its HEVC decoder libde265 are LGPL-3.0 and are linked dynamically from
-# the system, never vendored. `v1_17` is the oldest API the crate supports
-# and what Ubuntu 24.04 ships.
-libheif-rs = { version = "3.0.0", optional = true, default-features = false, features = ["v1_17"] }
 # `jpegli` through Kornel's mozjpeg-style wrapper. BSD-3-Clause;
 # `jpegli-sys` (BSD-3-Clause) vendors libjxl 0.10's jpegli and highway and
 # builds them with cmake.
 jpegli = { version = "0.1.0", optional = true }
+
+# ---- native-heif, per target (ADR-0005). The crates are in this
+# workspace and hold the `unsafe` this crate forbids. `libheif` and its
+# HEVC decoder are LGPL-3.0 and loaded from the system at run time, never
+# vendored or linked; a static musl binary cannot load them at all.
+[target.'cfg(not(any(target_arch = "wasm32", target_env = "musl")))'.dependencies]
+heif-dl = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+heif-imageio = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+heif-wic = { workspace = true, optional = true }
 
 [lints]
 workspace = true

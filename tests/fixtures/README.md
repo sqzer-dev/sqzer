@@ -20,8 +20,9 @@ gray = (r + g + b) / 3
 ```
 
 `pattern-rot90.*` store the pattern rotated so that EXIF orientation 6
-(rotate 90 degrees clockwise) brings it upright. `pattern-rgb16.jxl` and
-`pattern-10bit.avif` hold the 8-bit values widened by replication.
+(rotate 90 degrees clockwise) brings it upright. `pattern-rgb16.jxl`,
+`pattern-10bit.avif` and `pattern-10bit.heic` hold the 8-bit values widened
+by replication.
 
 ## How they were made
 
@@ -61,7 +62,8 @@ pattern-gray.avif         8-bit monochrome, full range
 pattern-rgba.avif         ravif q90, alpha q90, speed 8 (4:4:4 plus alpha item)
 
 # HEIC: libheif 1.19.8 + x265 4.1 through libheif-rs 3.0.0 (x265 is GPL, used only
-# as a tool; the files are data). All 8-bit 4:2:0, quality 92, brand `heic`.
+# as a tool; the files are data). All 8-bit 4:2:0, quality 92, brand `heic`. Every
+# file is coded as 64 x 64 with a `clap` box cropping it to the pattern.
 pattern-rgb.heic          YCbCr
 pattern-rgba.heic         YCbCr plus an alpha auxiliary image
 pattern-gray.heic         monochrome
@@ -69,6 +71,9 @@ pattern-icc.heic          YCbCr with the Display P3 profile in a `prof` colr box
 pattern-rot90.heic        stored rotated so that the container's `irot` (90 degrees
                           clockwise) brings it upright; the header reports the
                           displayed 48 x 32
+pattern-10bit.heic        10-bit 4:2:0, quality 92, the same way with x265 4.3; the
+                          conformance fixture of ADR-0005 for what each HEIC decoder
+                          does with a deep source
 ```
 
 The ICC profile in the `-icc` files is a Display P3 profile synthesised by

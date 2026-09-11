@@ -1,0 +1,29 @@
+[package]
+name = "heif-imageio"
+description = "HEIC decoding through macOS ImageIO, for sqzer's `native-heif` feature. Not a public API. Empty on every other OS."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# Zlib OR Apache-2.0 OR MIT, all three. Only the frameworks and the parts
+# of them that the decoder touches are enabled.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-image-io = { version = "0.3.2", default-features = false, features = ["std", "CGImageSource", "objc2-core-graphics"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGImage", "CGDataProvider", "CGColorSpace", "CGBitmapContext", "CGContext", "CGGeometry"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFData", "CFArray", "CFString", "CFDictionary", "CFCGTypes"] }
+
+# This crate exists to hold the `unsafe` the workspace forbids: the
+# ImageIO and Quartz entry points are `unsafe fn` in their bindings. Keep
+# it small and review it as a binding.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+undocumented_unsafe_blocks = "warn"

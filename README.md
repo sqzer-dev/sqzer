@@ -2,7 +2,7 @@
 
 Multi-format image optimizer with best-in-class defaults. A library and a CLI, pure Rust by default, C codecs when you want the last few percent.
 
-> **Note**: Private, pre-alpha. The portable build decodes JPEG, PNG, WebP, AVIF and JPEG XL and writes JPEG, PNG, lossless WebP and AVIF; the native build adds lossy WebP, JPEG XL, `libaom` AVIF, jpegli JPEG and HEIC input. Resize and colour management are still to come. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md), the command line in [`docs/adr/0003-cli-interface.md`](docs/adr/0003-cli-interface.md), the native backends in [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md).
+> **Note**: Pre-alpha. The portable build decodes JPEG, PNG, WebP, AVIF and JPEG XL and writes JPEG, PNG, lossless WebP and AVIF; the native build adds lossy WebP, JPEG XL, `libaom` AVIF, jpegli JPEG and HEIC input through the OS decoder or a runtime-loaded `libheif`. Resize and colour management are still to come. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md), the command line in [`docs/adr/0003-cli-interface.md`](docs/adr/0003-cli-interface.md), the native backends in [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md).
 
 ## What it is for
 
@@ -113,7 +113,8 @@ native     C bindings, opt-in, one feature per library, `native` for all five.
            native-webp    libwebp, lossy and lossless WebP (webpx)
            native-jxl     libjxl, JPEG XL encoding (gamut-jxl)
            native-avif    libavif + libaom, AVIF encoding (libavif)
-           native-heif    libheif, HEIC decoding, system library (libheif-rs)
+           native-heif    HEIC decoding: ImageIO on macOS, WIC on Windows, libheif
+                          loaded at run time elsewhere (heif-imageio, heif-wic, heif-dl)
            native-jpegli  jpegli, JPEG encoding (jpegli)
            A native encoder takes its format over from the portable one.
 agpl       reserved. Never a default dependency, never in the library.
@@ -121,7 +122,7 @@ agpl       reserved. Never a default dependency, never in the library.
 
 > **Note**: The portable tier cannot write lossy WebP or JPEG XL. No permissive pure-Rust encoder exists for either as of September 2026 (`jixel` is a candidate for JPEG XL, unmeasured). Requesting one in a portable build returns `EncoderUnavailable` with the feature that would provide it, it never silently falls back.
 
-> **Note**: Every native feature vendors and builds its C library from source (`cc` or cmake; nasm on x86; a C++ compiler for `native-jxl` and `native-jpegli`), except `native-heif`, which links the system `libheif` (LGPL-3.0, >= 1.17, with an HEVC decoder) through `pkg-config`, or vcpkg on Windows. [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md) has the crate choices and the licence facts, and which targets CI covers: all five on x86_64 Linux and both macOS targets, four on aarch64 Linux (jpegli crashes there), three on Windows (no `libheif` from vcpkg yet, and jpegli cannot share a cmake generator with libjxl there), two on musl (no C++ toolchain there yet).
+> **Note**: Every native feature vendors and builds its C library from source (`cc` or cmake; nasm on x86; a C++ compiler for `native-jxl` and `native-jpegli`), except `native-heif`, which links nothing. HEIC comes from the OS decoder on macOS (ImageIO, every Mac since 10.13) and Windows (WIC, needs the HEIF Image Extension and HEVC Video Extensions from the Microsoft Store), and from `libheif` (LGPL-3.0, >= 1.17, with an HEVC decoder) loaded at run time everywhere but musl: `libheif1` plus `libheif-plugin-libde265` on Debian and Ubuntu, `libheif-freeworld` on Fedora, `brew install libheif` on a Mac without ImageIO's decoder, or `SQZER_LIBHEIF` pointing at the library. A binary always starts; `sqzer --list-codecs` says which HEIC decoder it has and whether this machine can use it, and a HEIC input on a machine with none gets an error naming the fix. Static musl builds have no HEIC. [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md) has the crate choices and the licence facts, [`docs/adr/0005-heic-through-os-decoders.md`](docs/adr/0005-heic-through-os-decoders.md) the HEIC design, and which targets CI covers: all five on x86_64 Linux and both macOS targets, four on aarch64 Linux (jpegli crashes there), four on Windows (jpegli cannot share a cmake generator with libjxl there), three on musl (no C++ toolchain there yet).
 
 > **Note**: AVIF decoding is desktop only. `rav1d` does not compile for `wasm32`, so the WASM build recognises AVIF input but has no decoder for it. AVIF encoding builds everywhere, but a perceptual target needs the output decoded to score it, so on `wasm32` AVIF takes an explicit quality only and the default output format there is JPEG.
 
@@ -145,10 +146,13 @@ docs/adr               design decisions
 # everything, portable tier
 cargo build --workspace
 
-# native tier: cmake, a C++ compiler and nasm on PATH, libheif-dev installed
-# (`brew install libheif` on macOS); cmake 4 needs CMAKE_POLICY_VERSION_MINIMUM=3.5
-# for the vendored libjpeg-turbo in jpegli's tree. Or one backend at a time,
-# for example --features native-webp,native-avif on a box without a C++ compiler
+# native tier: cmake, a C++ compiler and nasm on PATH; cmake 4 needs
+# CMAKE_POLICY_VERSION_MINIMUM=3.5 for the vendored libjpeg-turbo in jpegli's
+# tree. Nothing to install for HEIC at build time; the tests need a libheif
+# with an HEVC decoder at run time (libheif1 + libheif-plugin-libde265 on
+# Ubuntu, `brew install libheif` on macOS, or SQZER_LIBHEIF=/path/to/it). Or one
+# backend at a time, for example --features native-webp,native-avif on a box
+# without a C++ compiler
 cargo build -p sqzer-cli --features native
 cargo test -p sqzer-codecs -p sqzer -p sqzer-cli --features sqzer-codecs/native,sqzer/native,sqzer-cli/native
 
