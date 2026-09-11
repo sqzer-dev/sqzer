@@ -273,11 +273,19 @@ fn shape_7_list_codecs() {
             out.contains("gamut-jxl (native), lossy and lossless"),
             "{out}"
         );
-        assert!(out.contains("libheif-rs (native)"), "{out}");
+        let heic = if cfg!(target_os = "macos") {
+            "imageio (native"
+        } else if cfg!(windows) {
+            "wic (native"
+        } else {
+            "libheif (native"
+        };
+        assert!(out.contains(heic), "{out}");
     } else {
         assert!(out.contains("tiers in this build: portable"), "{out}");
         assert!(out.contains("mozjpeg-rs (portable), lossy"), "{out}");
         assert!(out.contains("none; needs `native-jxl`"), "{out}");
+        assert!(out.contains("none; needs `native-heif`"), "{out}");
     }
     let (code, out, _) = run(sb.sqzer().args(["--list-codecs", "-v"]));
     assert_eq!(code, 0);
@@ -383,6 +391,39 @@ fn exit_2_on_argument_errors() {
         assert!(err.contains(needle), "{args:?}: {err}");
     }
     assert!(!sb.path("in.avif").exists());
+}
+
+/// A HEIC is recognised by every build. Without `native-heif` the error
+/// names the feature; with it, the file decodes or the error names what
+/// this machine is missing. Neither is "unrecognised".
+#[test]
+fn heic_is_never_unrecognised() {
+    let sb = Sandbox::new("heic");
+    sb.fixture("pattern-rgb.heic", "photo.heic");
+    let (code, out, err) = run(sb.sqzer().args(["photo.heic", "-f", "png", "--json"]));
+    assert!(!err.contains("unrecognised"), "{err}");
+    let lines = json_lines(&out);
+    if cfg!(feature = "native") {
+        // The decode either works or reports the missing library; a
+        // failed file is exit 1, like any other per-file failure.
+        if code == 0 {
+            assert_eq!(lines[0]["format"], "png", "{out}");
+        } else {
+            assert_eq!(code, 1, "{err}");
+            assert_eq!(lines[0]["status"], "failed", "{out}");
+            let error = lines[0]["error"].as_str().unwrap();
+            assert!(error.starts_with("no usable HEIC decoder"), "{error}");
+        }
+    } else {
+        assert_eq!(code, 1, "{err}");
+        assert_eq!(lines[0]["status"], "failed", "{out}");
+        let error = lines[0]["error"].as_str().unwrap();
+        assert!(
+            error.contains("no decoder for HEIC in this build"),
+            "{error}"
+        );
+        assert!(error.contains("native-heif"), "{error}");
+    }
 }
 
 #[test]

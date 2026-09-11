@@ -8,6 +8,18 @@ use crate::codec::Format;
 pub enum Error {
     /// No decoder in this build recognised the input.
     UnknownFormat,
+    /// The input was recognised but nothing can decode it here: either no
+    /// decoder for the format is compiled in, or the ones that are need a
+    /// library or an OS component this machine does not have.
+    DecoderUnavailable {
+        /// Detected input format.
+        format: Format,
+        /// Cargo features that would provide a decoder.
+        available_in: &'static [&'static str],
+        /// Why the compiled-in decoders cannot run, one `name: reason`
+        /// clause per backend. `None` when none is compiled in.
+        reason: Option<String>,
+    },
     /// The requested output format has no encoder in this build.
     EncoderUnavailable {
         /// Requested format.
@@ -45,6 +57,19 @@ impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::UnknownFormat => write!(f, "unrecognised image format"),
+            Self::DecoderUnavailable {
+                format,
+                available_in,
+                reason,
+            } => match reason {
+                Some(reason) => write!(f, "no usable {format} decoder on this machine: {reason}"),
+                None if available_in.is_empty() => write!(f, "no decoder exists for {format}"),
+                None => write!(
+                    f,
+                    "no decoder for {format} in this build (enable one of: {})",
+                    available_in.join(", ")
+                ),
+            },
             Self::EncoderUnavailable {
                 format,
                 available_in,

@@ -25,6 +25,12 @@ sqzer-core = { path = "crates/sqzer-core", version = "0.0.1" }
 sqzer-codecs = { path = "crates/sqzer-codecs", version = "0.0.1", default-features = false }
 sqzer-metrics = { path = "crates/sqzer-metrics", version = "0.0.1" }
 sqzer = { path = "crates/sqzer", version = "0.0.1", default-features = false }
+# The three crates that hold the workspace's `unsafe`, one per HEIC
+# decoder (ADR-0005 D4). Not public API; published because `sqzer-codecs`
+# depends on them.
+heif-dl = { path = "crates/heif-dl", version = "0.0.1" }
+heif-imageio = { path = "crates/heif-imageio", version = "0.0.1" }
+heif-wic = { path = "crates/heif-wic", version = "0.0.1" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

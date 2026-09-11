@@ -44,12 +44,15 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> Tally {
         Err(e) => return fail(Record::failed(name, &format!("cannot read: {e}"))),
     };
     let input_len = bytes.len() as u64;
-    let registry = cfg.sqzer.registry();
-    let Some((_, header)) = registry.probe(&bytes) else {
-        return fail(Record::failed(name, &"unrecognised image format"));
-    };
-    let pixels = header
-        .dimensions(&bytes)
+    // The header sizes the budget reservation; a file no usable decoder
+    // claims reserves the maximum and gets its error from the decode
+    // below, which knows whether the format is unknown or merely
+    // unreadable in this build.
+    let pixels = cfg
+        .sqzer
+        .registry()
+        .probe(&bytes)
+        .and_then(|(_, decoder)| decoder.dimensions(&bytes))
         .map_or(cfg.max_pixels, |(w, h)| u64::from(w) * u64::from(h));
     let _reservation = ctx.budget.reserve(pixels);
 

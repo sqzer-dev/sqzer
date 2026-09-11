@@ -125,6 +125,60 @@ impl Orientation {
             Self::Transpose | Self::Rotate90 | Self::Transverse | Self::Rotate270
         )
     }
+
+    /// The single orientation that applies `self` first and `next` after
+    /// it, so a container listing several transforms in order, as HEIF's
+    /// `irot` and `imir` properties are, composes into one
+    /// [`Image::apply_orientation`] call.
+    #[must_use]
+    pub const fn then(self, next: Self) -> Self {
+        let (swap1, fx1, fy1) = self.parts();
+        let (swap2, fx2, fy2) = next.parts();
+        // Moving the second swap past the first pair of flips exchanges
+        // which axis each of those flips acts on.
+        let (fx1, fy1) = if swap2 { (fy1, fx1) } else { (fx1, fy1) };
+        Self::from_parts(swap1 != swap2, fx1 != fx2, fy1 != fy2)
+    }
+
+    /// The orientation as a transpose followed by flips of the output's
+    /// x and y axes: `(swap, flip_x, flip_y)`.
+    const fn parts(self) -> (bool, bool, bool) {
+        match self {
+            Self::Normal => (false, false, false),
+            Self::FlipHorizontal => (false, true, false),
+            Self::Rotate180 => (false, true, true),
+            Self::FlipVertical => (false, false, true),
+            Self::Transpose => (true, false, false),
+            Self::Rotate90 => (true, true, false),
+            Self::Transverse => (true, true, true),
+            Self::Rotate270 => (true, false, true),
+        }
+    }
+
+    const fn from_parts(swap: bool, flip_x: bool, flip_y: bool) -> Self {
+        match (swap, flip_x, flip_y) {
+            (false, false, false) => Self::Normal,
+            (false, true, false) => Self::FlipHorizontal,
+            (false, true, true) => Self::Rotate180,
+            (false, false, true) => Self::FlipVertical,
+            (true, false, false) => Self::Transpose,
+            (true, true, false) => Self::Rotate90,
+            (true, true, true) => Self::Transverse,
+            (true, false, true) => Self::Rotate270,
+        }
+    }
+
+    /// Every orientation, in EXIF order.
+    pub const ALL: [Self; 8] = [
+        Self::Normal,
+        Self::FlipHorizontal,
+        Self::Rotate180,
+        Self::FlipVertical,
+        Self::Transpose,
+        Self::Rotate90,
+        Self::Transverse,
+        Self::Rotate270,
+    ];
 }
 
 /// Sample storage. Decoders pick the smallest type that is lossless for the
@@ -560,6 +614,38 @@ mod tests {
             assert_eq!((out.width(), out.height()), (w, h), "{o:?} size");
             assert_eq!(out.samples().as_u8(), Some(expected), "{o:?} samples");
         }
+    }
+
+    #[test]
+    fn orientation_composes_like_two_applications() {
+        // `six()` is 3 x 2 with distinct samples, so every one of the 64
+        // pairs is told apart from every other transform.
+        for a in Orientation::ALL {
+            for b in Orientation::ALL {
+                let twice = six().apply_orientation(a).apply_orientation(b);
+                let once = six().apply_orientation(a.then(b));
+                assert_eq!(twice, once, "{a:?} then {b:?}");
+            }
+            assert_eq!(a.then(Orientation::Normal), a);
+            assert_eq!(Orientation::Normal.then(a), a);
+        }
+        // HEIF's iPhone case: `irot` 90 degrees clockwise on its own.
+        assert_eq!(
+            Orientation::Normal.then(Orientation::Rotate90),
+            Orientation::Rotate90
+        );
+        assert_eq!(
+            Orientation::Rotate90.then(Orientation::Rotate90),
+            Orientation::Rotate180
+        );
+        assert_eq!(
+            Orientation::Rotate90.then(Orientation::FlipHorizontal),
+            Orientation::Transpose
+        );
+        assert_eq!(
+            Orientation::Rotate90.then(Orientation::FlipVertical),
+            Orientation::Transverse
+        );
     }
 
     #[test]

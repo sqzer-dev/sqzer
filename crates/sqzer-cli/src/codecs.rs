@@ -29,13 +29,27 @@ pub fn render(registry: &Registry, verbose: bool) -> String {
     )];
     out.push(String::new());
     for &format in Format::ALL {
+        // A decoder that is compiled in but cannot run here is listed as
+        // unavailable, with its reason on the next line.
+        let mut unavailable = Vec::new();
         let decode = registry
             .decoders()
             .filter(|d| d.caps().format == format)
-            .map(|d| format!("{} ({})", d.caps().name, d.caps().tier))
+            .map(|d| match d.available() {
+                Ok(()) => format!("{} ({})", d.caps().name, d.caps().tier),
+                Err(reason) => {
+                    unavailable.push(format!("{}: {reason}", d.caps().name));
+                    format!("{} ({}, unavailable)", d.caps().name, d.caps().tier)
+                }
+            })
             .collect::<Vec<_>>();
         let decode = if decode.is_empty() {
-            "none".to_string()
+            let features = format.decoder_features();
+            if features.is_empty() {
+                "none".to_string()
+            } else {
+                format!("none; needs `{}`", features.join("` or `"))
+            }
         } else {
             decode.join(", ")
         };
@@ -75,6 +89,9 @@ pub fn render(registry: &Registry, verbose: bool) -> String {
             format.to_string(),
             decode
         ));
+        for reason in unavailable {
+            out.push(format!("{:<16} {reason}", ""));
+        }
         if verbose && let Ok(e) = registry.encoder(format) {
             let codec = format_name(format);
             for opt in e.caps().options {
@@ -96,16 +113,23 @@ struct Line {
     extension: &'static str,
     mime: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    decoder: Option<Backend>,
+    decoder: Option<DecoderLine>,
     #[serde(skip_serializing_if = "Option::is_none")]
     encoder: Option<EncoderLine>,
+    decoder_features: &'static [&'static str],
     encoder_features: &'static [&'static str],
 }
 
+/// The decoder that would read the format: the first usable one, or, when
+/// none can run here, the first compiled in, with `available: false` and
+/// the reason.
 #[derive(Serialize)]
-struct Backend {
+struct DecoderLine {
     backend: &'static str,
     tier: String,
+    available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -132,13 +156,20 @@ struct OptionLine {
 pub fn render_json(registry: &Registry) -> String {
     let mut out = Vec::new();
     for &format in Format::ALL {
-        let decoder = registry
+        let candidates: Vec<_> = registry
             .decoders()
-            .rev()
-            .find(|d| d.caps().format == format)
-            .map(|d| Backend {
+            .filter(|d| d.caps().format == format)
+            .map(|d| (d, d.available()))
+            .collect();
+        let decoder = candidates
+            .iter()
+            .find(|(_, available)| available.is_ok())
+            .or_else(|| candidates.first())
+            .map(|(d, available)| DecoderLine {
                 backend: d.caps().name,
                 tier: d.caps().tier.to_string(),
+                available: available.is_ok(),
+                reason: available.clone().err(),
             });
         let encoder = registry.encoder(format).ok().map(|e| {
             let c = e.caps();
@@ -167,6 +198,7 @@ pub fn render_json(registry: &Registry) -> String {
             mime: format.mime(),
             decoder,
             encoder,
+            decoder_features: format.decoder_features(),
             encoder_features: format.encoder_features(),
         };
         if let Ok(s) = serde_json::to_string(&line) {
@@ -200,19 +232,87 @@ mod tests {
                 "{text}"
             );
             assert!(text.contains("jxl:container=false"), "{text}");
-            assert!(
-                text.contains("HEIC     decode  libheif-rs (native)"),
-                "{text}"
-            );
+            // Which HEIC decoder a build has depends on the target; the
+            // OS decoder is listed first where there is one.
+            let heic = if cfg!(target_os = "macos") {
+                "HEIC     decode  imageio (native"
+            } else if cfg!(windows) {
+                "HEIC     decode  wic (native"
+            } else {
+                "HEIC     decode  libheif (native"
+            };
+            assert!(text.contains(heic), "{text}");
         } else {
             assert!(text.contains("mozjpeg-rs (portable), lossy"), "{text}");
             assert!(text.contains("jpeg:progressive=true"), "{text}");
             assert!(text.contains("none; needs `native-jxl`"), "{text}");
+            assert!(
+                text.contains("HEIC     decode  none; needs `native-heif`"),
+                "{text}"
+            );
         }
         assert!(!render(&reg, false).contains("option"));
         for line in render_json(&reg).lines() {
             let v: serde_json::Value = serde_json::from_str(line).unwrap();
             assert!(v["format"].is_string());
+            if v["format"] == "heic" {
+                assert_eq!(v["decoder_features"], serde_json::json!(["native-heif"]));
+                if !cfg!(feature = "native") {
+                    assert!(v["decoder"].is_null(), "{v}");
+                }
+            }
         }
+    }
+
+    #[test]
+    fn unavailable_decoders_are_listed_with_their_reason() {
+        use sqzer::core::codec::{Decoder, DecoderCaps, FormatInfo};
+        use sqzer::core::image::Image;
+        use sqzer::core::params::DecodeOpts;
+
+        struct Missing;
+        impl Decoder for Missing {
+            fn caps(&self) -> &DecoderCaps {
+                static CAPS: DecoderCaps = DecoderCaps {
+                    format: Format::Heic,
+                    name: "libheif",
+                    animation: false,
+                    tier: Tier::Native,
+                };
+                &CAPS
+            }
+            fn available(&self) -> Result<(), String> {
+                Err("libheif.so.1 not found".into())
+            }
+            fn probe(&self, _: &[u8]) -> Option<FormatInfo> {
+                None
+            }
+            fn dimensions(&self, _: &[u8]) -> Option<(u32, u32)> {
+                None
+            }
+            fn decode(&self, _: &[u8], _: &DecodeOpts) -> sqzer::core::Result<Image> {
+                unreachable!()
+            }
+        }
+
+        let mut reg = Registry::new();
+        reg.register_decoder(Missing);
+        let text = render(&reg, false);
+        assert!(
+            text.contains("HEIC     decode  libheif (native, unavailable)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\n                 libheif: libheif.so.1 not found"),
+            "{text}"
+        );
+        let heic = render_json(&reg)
+            .lines()
+            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+            .find(|v| v["format"] == "heic")
+            .unwrap();
+        assert_eq!(heic["decoder"]["backend"], "libheif");
+        assert_eq!(heic["decoder"]["available"], false);
+        assert_eq!(heic["decoder"]["reason"], "libheif.so.1 not found");
     }
 }

@@ -110,6 +110,23 @@ impl Format {
             Self::Gif | Self::Tiff | Self::Heic | Self::Svg => &[],
         }
     }
+
+    /// Cargo features of `sqzer-codecs` that provide a decoder for this
+    /// format, the mirror of [`Format::encoder_features`]. This is the
+    /// `available_in` list in [`crate::Error::DecoderUnavailable`]. Empty
+    /// for a format no feature reads yet.
+    #[must_use]
+    pub const fn decoder_features(self) -> &'static [&'static str] {
+        match self {
+            Self::Jpeg => &["jpeg"],
+            Self::Png => &["png"],
+            Self::WebP => &["webp-lossless"],
+            Self::Avif => &["avif"],
+            Self::Jxl => &["jxl-decode"],
+            Self::Heic => &["native-heif"],
+            Self::Gif | Self::Tiff | Self::Svg => &[],
+        }
+    }
 }
 
 impl core::fmt::Display for Format {
@@ -220,6 +237,19 @@ pub struct EncoderCaps {
 pub trait Decoder: Send + Sync {
     /// Static capabilities.
     fn caps(&self) -> &DecoderCaps;
+    /// Whether this decoder can run on this machine. A backend over a
+    /// library loaded at runtime or an OS component answers from a probe
+    /// it caches for the life of the process; everything else keeps the
+    /// default, `Ok(())`. The `Err` is the reason, written for the user:
+    /// what is missing and, where known, how to get it. The
+    /// [`crate::Registry`] skips an unavailable decoder when probing and
+    /// reports the reason in [`crate::Error::DecoderUnavailable`].
+    ///
+    /// # Errors
+    /// The reason this decoder cannot run here.
+    fn available(&self) -> core::result::Result<(), String> {
+        Ok(())
+    }
     /// Cheap sniff. Returns `None` if the bytes are not this format.
     fn probe(&self, bytes: &[u8]) -> Option<FormatInfo>;
     /// Width and height from the header, without decoding any pixels.
@@ -231,7 +261,9 @@ pub trait Decoder: Send + Sync {
     /// is modelled on [`Image`].
     ///
     /// # Errors
-    /// Malformed input, or an image above `opts.max_pixels`.
+    /// Malformed input, an image above `opts.max_pixels`, or
+    /// [`crate::Error::DecoderUnavailable`] when [`Decoder::available`]
+    /// says no.
     fn decode(&self, bytes: &[u8], opts: &DecodeOpts) -> Result<Image>;
 }
 
