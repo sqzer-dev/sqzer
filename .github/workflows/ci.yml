@@ -60,8 +60,10 @@ jobs:
           - { os: macos-latest,     target: aarch64-apple-darwin,      features: native }
           - { os: macos-15-intel,   target: x86_64-apple-darwin,       features: native }
           # libheif on Windows comes from vcpkg, which is not set up here
-          # yet, so `native-heif` is the one backend missing.
-          - { os: windows-latest,   target: x86_64-pc-windows-msvc,    features: "native-webp,native-jxl,native-avif,native-jpegli" }
+          # yet. jpegli is out too: `jpegli-sys` expects a single-config
+          # cmake generator (Ninja) while `jpegxl-src` asks for the
+          # ClangCL toolset that only the Visual Studio generator has.
+          - { os: windows-latest,   target: x86_64-pc-windows-msvc,    features: "native-webp,native-jxl,native-avif" }
     env:
       CC_x86_64_unknown_linux_musl: musl-gcc
       # libaom is C, but its cmake project also asks for a C++ compiler
@@ -95,14 +97,11 @@ jobs:
           echo "$HOME/nasm/nasm-2.16.03" >> "$GITHUB_PATH"
       - if: runner.os == 'Windows'
         uses: ilammy/setup-nasm@v1
-      # `jpegli-sys` links its library from `build/lib`, which only a
-      # single-config generator produces; Visual Studio's puts it under
-      # `build/lib/Debug`. Ninja needs `cl.exe` on PATH.
-      - if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-      - if: runner.os == 'Windows'
+      # A native test binary segfaults on this runner; one test at a time
+      # so the log names it.
+      - if: matrix.target == 'aarch64-unknown-linux-gnu'
         shell: bash
-        run: echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
+        run: echo "RUST_TEST_THREADS=1" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
           key: native

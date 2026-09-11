@@ -54,5 +54,5 @@
 * **sqzer:** golden SSIMULACRA2 tests cover every compiled-in encoder by backend name, native ones included
 * **metrics:** seed tables for the native backends (`webpx`, `gamut-jxl`, `libavif`, `jpegli`), swept on the same corpus as the portable ones; a sweep now keeps the tables of backends it did not run
 * **tools:** `tools/calibrate` sweeps the native backends with `--features native`; its stand-in `libwebp` encoder is gone now that `native-webp` exists
-* **workspace:** native CI jobs on the six desktop targets (all five backends on Linux glibc and macOS, four on Windows, two on musl), `cargo deny` bans `jpegli-rs`, `jpegxl-rs` and `jpegxl-sys`, MSRV 1.92
+* **workspace:** native CI jobs on the six desktop targets (all five backends on Linux glibc and macOS, three on Windows, two on musl), `cargo deny` bans `jpegli-rs`, `jpegxl-rs` and `jpegxl-sys`, MSRV 1.92
 * **workspace:** scaffold, feature tiers, CI and the licence allow-list

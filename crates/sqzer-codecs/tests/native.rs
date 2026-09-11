@@ -43,7 +43,7 @@ fn gray_as_rgb(color: ColorType) -> Image {
 
 /// A real ICC profile: the Display P3 profile embedded in the JPEG
 /// fixture. libjxl validates profiles, so fake bytes will not do.
-#[cfg(feature = "jpeg")]
+#[cfg(all(feature = "jpeg", feature = "native-jxl"))]
 fn p3_profile() -> Vec<u8> {
     registry()
         .decode(&common::fixture("pattern-icc.jpg"), &DecodeOpts::default())
