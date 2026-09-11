@@ -40,8 +40,11 @@ fn header_dimensions_match_the_decode() {
         let dims = decoder.dimensions(&bytes);
         let img = decoder.decode(&bytes, &DecodeOpts::default()).unwrap();
         // Stored dimensions; a rotated fixture comes out with the axes
-        // swapped once orientation is applied.
-        let stored = if path.to_string_lossy().contains("rot90") {
+        // swapped once orientation is applied. HEIF is the exception: its
+        // header reports the displayed size, after the container's own
+        // rotation, so header and decode agree as they are.
+        let name = path.to_string_lossy();
+        let stored = if name.contains("rot90") && !name.ends_with(".heic") {
             (img.height(), img.width())
         } else {
             (img.width(), img.height())
@@ -307,6 +310,88 @@ mod avif {
     #[test]
     fn pixel_limit() {
         assert_too_large(&registry(), "pattern-rgb.avif");
+    }
+}
+
+// ------------------------------------------------------------------ HEIC
+
+#[cfg(feature = "native-heif")]
+mod heic {
+    use super::*;
+
+    #[test]
+    fn rgb_420() {
+        let reg = registry();
+        let (img, info) = decode(&reg, "pattern-rgb.heic");
+        assert_eq!(info.format, Format::Heic);
+        assert!(!info.animated);
+        assert_eq!(img.color(), ColorType::Rgb);
+        assert_eq!(img.icc(), None);
+        assert_close(&img, &test_image(ColorType::Rgb), 6.0, "pattern-rgb.heic");
+    }
+
+    #[test]
+    fn alpha_plane_becomes_a_channel() {
+        let (img, _) = decode(&registry(), "pattern-rgba.heic");
+        assert_eq!(img.color(), ColorType::Rgba);
+        let expected = test_image(ColorType::Rgba);
+        assert_close(&img, &expected, 6.0, "pattern-rgba.heic");
+        assert!(mae_channel(&img, &expected, 3) < 6.0, "alpha plane");
+    }
+
+    #[test]
+    fn monochrome_decodes_to_gray() {
+        let (img, _) = decode(&registry(), "pattern-gray.heic");
+        assert_eq!(img.color(), ColorType::Gray);
+        assert_close(&img, &test_image(ColorType::Gray), 4.0, "pattern-gray.heic");
+    }
+
+    #[test]
+    fn icc_is_kept() {
+        let (img, _) = decode(&registry(), "pattern-icc.heic");
+        assert!(img.icc().is_some_and(is_icc), "ICC profile missing");
+        assert_close(&img, &test_image(ColorType::Rgb), 6.0, "pattern-icc.heic");
+    }
+
+    #[test]
+    fn container_rotation_is_always_applied() {
+        let reg = registry();
+        let (img, _) = decode(&reg, "pattern-rot90.heic");
+        assert_eq!((img.width(), img.height()), (W, H));
+        // 4:2:0 chroma was subsampled along the stored axes, so the hard
+        // edge blurs a little more than in the upright file.
+        assert_close(&img, &test_image(ColorType::Rgb), 8.0, "pattern-rot90.heic");
+
+        // `irot` is container geometry, like the JPEG XL orientation
+        // field, not Exif metadata: the flag does not turn it off.
+        let raw = reg
+            .decode(
+                &fixture("pattern-rot90.heic"),
+                &DecodeOpts {
+                    apply_orientation: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .image;
+        assert_eq!((raw.width(), raw.height()), (W, H));
+        assert_eq!(raw, img);
+    }
+
+    #[test]
+    fn pixel_limit() {
+        assert_too_large(&registry(), "pattern-rgb.heic");
+    }
+
+    #[test]
+    fn corrupt_file_is_a_codec_error() {
+        let mut bytes = fixture("pattern-rgb.heic");
+        let len = bytes.len();
+        bytes.truncate(len / 2);
+        let err = registry()
+            .decode(&bytes, &DecodeOpts::default())
+            .unwrap_err();
+        assert!(matches!(err, Error::Codec(_)), "{err}");
     }
 }
 

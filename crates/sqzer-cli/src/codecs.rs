@@ -188,13 +188,27 @@ mod tests {
             text.contains("JPEG     decode  zune-jpeg (portable)"),
             "{text}"
         );
-        assert!(text.contains("mozjpeg-rs (portable), lossy"), "{text}");
-        assert!(text.contains("jpeg:progressive=true"), "{text}");
         assert!(
             text.contains("JPEG XL  decode  jxl-oxide (portable)"),
             "{text}"
         );
-        assert!(text.contains("none; needs `native-jxl`"), "{text}");
+        assert!(text.contains("png:interlace=false"), "{text}");
+        if cfg!(feature = "native") {
+            assert!(text.contains("jpegli (native), lossy"), "{text}");
+            assert!(
+                text.contains("gamut-jxl (native), lossy and lossless"),
+                "{text}"
+            );
+            assert!(text.contains("jxl:container=false"), "{text}");
+            assert!(
+                text.contains("HEIC     decode  libheif-rs (native)"),
+                "{text}"
+            );
+        } else {
+            assert!(text.contains("mozjpeg-rs (portable), lossy"), "{text}");
+            assert!(text.contains("jpeg:progressive=true"), "{text}");
+            assert!(text.contains("none; needs `native-jxl`"), "{text}");
+        }
         assert!(!render(&reg, false).contains("option"));
         for line in render_json(&reg).lines() {
             let v: serde_json::Value = serde_json::from_str(line).unwrap();

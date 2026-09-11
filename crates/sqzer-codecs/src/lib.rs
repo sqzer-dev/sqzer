@@ -10,6 +10,18 @@
 
 pub use sqzer_core::Registry;
 
+#[cfg(all(
+    target_arch = "wasm32",
+    any(
+        feature = "native-webp",
+        feature = "native-jxl",
+        feature = "native-avif",
+        feature = "native-heif",
+        feature = "native-jpegli",
+    )
+))]
+compile_error!("the native tier is C code and does not build for wasm32; use the portable tier");
+
 #[cfg(feature = "avif")]
 pub mod avif;
 #[cfg(any(feature = "jpeg", feature = "webp-lossless"))]
@@ -18,11 +30,25 @@ mod exif;
 pub mod jpeg;
 #[cfg(feature = "jxl-decode")]
 pub mod jxl;
+#[cfg(any(feature = "avif", feature = "native-webp", feature = "native-avif"))]
+mod layout;
+#[cfg(any(
+    feature = "native-webp",
+    feature = "native-jxl",
+    feature = "native-avif",
+    feature = "native-heif",
+    feature = "native-jpegli",
+))]
+pub mod native;
 #[cfg(any(
     feature = "jpeg",
     feature = "webp-lossless",
     feature = "avif",
-    all(feature = "png", not(target_arch = "wasm32"))
+    all(feature = "png", not(target_arch = "wasm32")),
+    feature = "native-webp",
+    feature = "native-jxl",
+    feature = "native-avif",
+    feature = "native-jpegli",
 ))]
 mod opts;
 #[cfg(all(feature = "png", not(target_arch = "wasm32")))]
@@ -77,8 +103,20 @@ pub fn register_portable(reg: &mut Registry) {
     let _ = reg;
 }
 
-/// Add the compiled-in native (C binding) backends. Empty until ADR-0001
-/// item 8.
+/// Add the compiled-in native (C binding) backends. Each encoder takes
+/// over its format from the portable tier; the HEIC decoder adds a format
+/// the portable tier does not read.
 pub fn register_native(reg: &mut Registry) {
+    #[cfg(feature = "native-webp")]
+    reg.register_encoder(native::webp::LibwebpEncoder);
+    #[cfg(feature = "native-jxl")]
+    reg.register_encoder(native::jxl::LibjxlEncoder);
+    #[cfg(feature = "native-avif")]
+    reg.register_encoder(native::avif::LibavifEncoder);
+    #[cfg(feature = "native-heif")]
+    reg.register_decoder(native::heif::HeifDecoder);
+    #[cfg(feature = "native-jpegli")]
+    reg.register_encoder(native::jpegli::JpegliEncoder);
+    // Silence the unused-variable lint when no native feature is on.
     let _ = reg;
 }

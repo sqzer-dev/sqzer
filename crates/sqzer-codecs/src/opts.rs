@@ -27,6 +27,19 @@ pub(crate) fn parse_u8(codec: &str, key: &str, value: &str) -> Result<u8> {
     })
 }
 
+/// An integer `0..=100`.
+pub(crate) fn parse_percent(codec: &str, key: &str, value: &str) -> Result<u8> {
+    value
+        .parse::<u8>()
+        .ok()
+        .filter(|v| *v <= 100)
+        .ok_or_else(|| {
+            Error::InvalidParams(format!(
+                "{codec}:{key} expects an integer 0..=100, got `{value}`"
+            ))
+        })
+}
+
 /// The option is owned by `codec` but not known to it.
 pub(crate) fn unknown(codec: &str, key: &str) -> Error {
     Error::InvalidParams(format!("unknown {codec} option `{key}`"))
@@ -49,5 +62,13 @@ mod tests {
         assert_eq!(parse_u8("jpeg", "smoothing", "7").unwrap(), 7);
         assert!(parse_u8("jpeg", "smoothing", "256").is_err());
         assert!(parse_u8("jpeg", "smoothing", "x").is_err());
+    }
+
+    #[test]
+    fn percentages_stop_at_100() {
+        assert_eq!(parse_percent("webp", "alpha_quality", "100").unwrap(), 100);
+        assert_eq!(parse_percent("webp", "alpha_quality", "0").unwrap(), 0);
+        assert!(parse_percent("webp", "alpha_quality", "101").is_err());
+        assert!(parse_percent("webp", "alpha_quality", "-1").is_err());
     }
 }

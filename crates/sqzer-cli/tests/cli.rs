@@ -111,8 +111,14 @@ fn shape_1_one_photo_becomes_a_sibling_avif() {
     assert_eq!(r["output"], "photo.avif");
     assert_eq!(r["format"], "avif");
     assert_eq!(r["input_format"], "jpeg");
-    assert_eq!(r["backend"], "ravif");
-    assert_eq!(r["tier"], "portable");
+    // A native build's libavif takes AVIF over from ravif.
+    let (backend, tier) = if cfg!(feature = "native") {
+        ("libavif", "native")
+    } else {
+        ("ravif", "portable")
+    };
+    assert_eq!(r["backend"], backend);
+    assert_eq!(r["tier"], tier);
     assert_eq!(r["content"], "photo");
     assert_eq!(r["target"], 70.0);
     assert!(r["score"].is_number(), "{r}");
@@ -253,22 +259,50 @@ fn shape_7_list_codecs() {
     let sb = Sandbox::new("shape7");
     let (code, out, _) = run(sb.sqzer().arg("--list-codecs"));
     assert_eq!(code, 0);
-    assert!(out.contains("mozjpeg-rs (portable), lossy"), "{out}");
     assert!(out.contains("jxl-oxide"), "{out}");
     assert!(!out.contains("jpeg:progressive"), "{out}");
+    if cfg!(feature = "native") {
+        // The native tier owns JPEG, WebP, AVIF and JPEG XL and reads HEIC.
+        assert!(
+            out.contains("tiers in this build: native, portable"),
+            "{out}"
+        );
+        assert!(out.contains("jpegli (native), lossy"), "{out}");
+        assert!(out.contains("webpx (native), lossy and lossless"), "{out}");
+        assert!(
+            out.contains("gamut-jxl (native), lossy and lossless"),
+            "{out}"
+        );
+        assert!(out.contains("libheif-rs (native)"), "{out}");
+    } else {
+        assert!(out.contains("tiers in this build: portable"), "{out}");
+        assert!(out.contains("mozjpeg-rs (portable), lossy"), "{out}");
+        assert!(out.contains("none; needs `native-jxl`"), "{out}");
+    }
     let (code, out, _) = run(sb.sqzer().args(["--list-codecs", "-v"]));
     assert_eq!(code, 0);
-    assert!(out.contains("jpeg:progressive=true"), "{out}");
-    assert!(out.contains("avif:bit_depth=auto"), "{out}");
+    if cfg!(feature = "native") {
+        assert!(out.contains("webp:sharp_yuv=false"), "{out}");
+        assert!(out.contains("jxl:container=false"), "{out}");
+    } else {
+        assert!(out.contains("jpeg:progressive=true"), "{out}");
+        assert!(out.contains("avif:bit_depth=auto"), "{out}");
+    }
     let (code, out, _) = run(sb.sqzer().args(["--list-codecs", "--json"]));
     assert_eq!(code, 0);
     let lines = json_lines(&out);
     let jpeg = lines.iter().find(|l| l["format"] == "jpeg").unwrap();
-    assert_eq!(jpeg["encoder"]["backend"], "mozjpeg-rs");
-    assert_eq!(jpeg["encoder"]["options"][0]["key"], "jpeg:progressive");
     let jxl = lines.iter().find(|l| l["format"] == "jxl").unwrap();
-    assert!(jxl.get("encoder").is_none());
-    assert_eq!(jxl["encoder_features"][0], "native-jxl");
+    if cfg!(feature = "native") {
+        assert_eq!(jpeg["encoder"]["backend"], "jpegli");
+        assert_eq!(jxl["encoder"]["backend"], "gamut-jxl");
+        assert_eq!(jxl["encoder"]["tier"], "native");
+    } else {
+        assert_eq!(jpeg["encoder"]["backend"], "mozjpeg-rs");
+        assert_eq!(jpeg["encoder"]["options"][0]["key"], "jpeg:progressive");
+        assert!(jxl.get("encoder").is_none());
+        assert_eq!(jxl["encoder_features"][0], "native-jxl");
+    }
 }
 
 // ---- Exit codes, one batch test each
@@ -360,6 +394,11 @@ fn exit_3_when_nothing_can_be_done() {
     assert!(err.contains("nope*.png: no files match"), "{err}");
     assert!(err.contains("no input matched"), "{err}");
 
+    // A native build writes JPEG XL and lossy WebP; the rest of this test
+    // is about the portable build's honesty.
+    if cfg!(feature = "native") {
+        return;
+    }
     let (code, _, err) = run(sb.sqzer().args(["in.jpg", "-f", "jxl"]));
     assert_eq!(code, 3, "{err}");
     assert!(
@@ -377,6 +416,12 @@ fn exit_3_when_nothing_can_be_done() {
     assert_eq!(code, 3, "{err}");
     assert!(err.contains("for lossy output"), "{err}");
     assert!(err.contains("`native-webp`"), "{err}");
+
+    // No build adds lossless JPEG, so no feature is named.
+    let (code, _, err) = run(sb.sqzer().args(["in.jpg", "-f", "jpeg", "--lossless"]));
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("no build offers lossless JPEG"), "{err}");
+    assert!(!err.contains("native-jpegli"), "{err}");
 }
 
 // ---- Placement
@@ -633,7 +678,12 @@ fn progress_quiet_and_verbose_levels() {
     assert!(out.is_empty(), "no --json, nothing on stdout: {out}");
     assert!(err.contains("in.jpg -> p.avif"), "{err}");
     assert!(err.contains("trials:"), "{err}");
-    assert!(err.contains("params: backend ravif"), "{err}");
+    let backend = if cfg!(feature = "native") {
+        "params: backend libavif (native)"
+    } else {
+        "params: backend ravif (portable)"
+    };
+    assert!(err.contains(backend), "{err}");
     assert!(
         !err.contains("written"),
         "one output, no summary line: {err}"
@@ -748,36 +798,35 @@ fn quality_and_effort_change_the_output() {
         hi > lo,
         "q90 ({hi} bytes) must be larger than q20 ({lo} bytes)"
     );
-    // A codec option reaches its backend.
+    // A codec option reaches its backend. PNG stays portable in every
+    // build, so its option set is the same everywhere.
     let (code, _, err) = run(sb.sqzer().args([
         "in.jpg",
         "-f",
-        "jpeg",
-        "-q",
-        "50",
+        "png",
+        "--lossless",
         "-x",
-        "jpeg:progressive=false",
+        "png:interlace=false",
         "-o",
-        "base.jpg",
+        "plain.png",
         "--force",
     ]));
     assert_eq!(code, 0, "{err}");
     let (code, _, err) = run(sb.sqzer().args([
         "in.jpg",
         "-f",
-        "jpeg",
-        "-q",
-        "50",
+        "png",
+        "--lossless",
         "-x",
-        "jpeg:progressive=true",
+        "png:interlace=true",
         "-o",
-        "prog.jpg",
+        "adam7.png",
         "--force",
     ]));
     assert_eq!(code, 0, "{err}");
     assert_ne!(
-        fs::read(sb.path("base.jpg")).unwrap(),
-        fs::read(sb.path("prog.jpg")).unwrap()
+        fs::read(sb.path("plain.png")).unwrap(),
+        fs::read(sb.path("adam7.png")).unwrap()
     );
 }
 
@@ -785,21 +834,27 @@ fn quality_and_effort_change_the_output() {
 fn unsupported_settings_are_refused_not_approximated() {
     let sb = Sandbox::new("unsupported");
     sb.fixture("pattern-rgb.jpg", "in.jpg");
+    // Neither AVIF backend can embed a profile, so `--keep-icc` on a
+    // tagged input is refused per file rather than re-tagged as sRGB.
+    sb.fixture("pattern-icc.jpg", "tagged.jpg");
     let (code, out, err) = run(sb.sqzer().args([
-        "in.jpg",
+        "tagged.jpg",
         "-f",
         "avif",
         "-q",
         "50",
-        "--subsampling",
-        "420",
+        "--keep-icc",
         "--json",
     ]));
-    assert_eq!(code, 1);
-    assert!(err.contains("does not support chroma subsampling"), "{err}");
+    assert_eq!(code, 1, "{err}");
+    assert!(
+        err.contains("does not support an embedded ICC profile"),
+        "{err}"
+    );
     assert_eq!(json_lines(&out)[0]["status"], "failed");
-    assert!(!sb.path("in.avif").exists());
-    // A bad option value is the backend's error, per file.
+    assert!(!sb.path("tagged.avif").exists());
+    // A bad option value is the backend's error, per file. Both AVIF
+    // backends take `alpha_quality`.
     let (code, _, err) = run(sb.sqzer().args([
         "in.jpg",
         "-f",
@@ -807,18 +862,26 @@ fn unsupported_settings_are_refused_not_approximated() {
         "-q",
         "50",
         "-x",
-        "avif:bit_depth=12",
+        "avif:alpha_quality=lots",
     ]));
-    assert_eq!(code, 1);
-    assert!(err.contains("avif:bit_depth expects"), "{err}");
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("avif:alpha_quality expects"), "{err}");
 }
 
 #[test]
 fn fast_mode_skips_the_search() {
     let sb = Sandbox::new("fast");
     sb.fixture("pattern-rgb.jpg", "in.jpg");
+    // Both tiers have a JPEG table, but WebP is the format that exists in
+    // the native tier only, so it doubles as a check that the native table
+    // is wired up.
+    let (format, out_name) = if cfg!(feature = "native") {
+        ("webp", "fast.webp")
+    } else {
+        ("jpeg", "fast.jpg")
+    };
     let (code, out, err) = run(sb.sqzer().args([
-        "in.jpg", "--fast", "-f", "jpeg", "-o", "fast.jpg", "--force", "--json",
+        "in.jpg", "--fast", "-f", format, "-o", out_name, "--force", "--json",
     ]));
     assert_eq!(code, 0, "{err}");
     let r = &json_lines(&out)[0];

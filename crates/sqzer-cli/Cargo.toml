@@ -16,7 +16,15 @@ doc = false
 [features]
 default = ["portable"]
 portable = ["sqzer/portable"]
+# The native tier, all of it or one backend at a time. The CLI tests
+# expect either the whole `native` set or none of it; CI runs partial
+# sets against the library crates only.
 native = ["sqzer/native"]
+native-webp = ["sqzer/native-webp"]
+native-jxl = ["sqzer/native-jxl"]
+native-avif = ["sqzer/native-avif"]
+native-heif = ["sqzer/native-heif"]
+native-jpegli = ["sqzer/native-jpegli"]
 
 [dependencies]
 sqzer.workspace = true

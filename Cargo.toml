@@ -9,7 +9,9 @@ exclude = ["tools/calibrate"]
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.89"
+# 1.92 is what `gamut-jxl` (the `native-jxl` backend) asks for; the
+# portable tier itself needs nothing newer than 1.89.
+rust-version = "1.92"
 license = "MIT OR Apache-2.0"
 authors = ["Vladyslav Vladinov"]
 repository = "https://github.com/vlad-salone/sqzer"

@@ -102,7 +102,7 @@ impl Format {
     #[must_use]
     pub const fn encoder_features(self) -> &'static [&'static str] {
         match self {
-            Self::Jpeg => &["jpeg"],
+            Self::Jpeg => &["jpeg", "native-jpegli"],
             Self::Png => &["png"],
             Self::WebP => &["webp-lossless", "native-webp"],
             Self::Avif => &["avif", "native-avif"],

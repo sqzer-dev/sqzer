@@ -12,7 +12,14 @@ readme = "../../README.md"
 [features]
 default = ["portable"]
 portable = ["sqzer-codecs/portable"]
+# The native tier, all of it or one backend at a time. See ADR-0004 for
+# what each needs at build time.
 native = ["sqzer-codecs/native"]
+native-webp = ["sqzer-codecs/native-webp"]
+native-jxl = ["sqzer-codecs/native-jxl"]
+native-avif = ["sqzer-codecs/native-avif"]
+native-heif = ["sqzer-codecs/native-heif"]
+native-jpegli = ["sqzer-codecs/native-jpegli"]
 
 [dependencies]
 sqzer-core.workspace = true

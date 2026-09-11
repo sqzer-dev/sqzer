@@ -47,6 +47,13 @@ deny = [
     { crate = "jxl-encoder" },
     { crate = "rav1d-safe" },
     { crate = "heic" },
+    # imazen's pure-Rust jpegli port. The native tier's `jpegli` crate
+    # (BSD-3-Clause, over the C library) is a different crate.
+    { crate = "jpegli-rs" },
+    # GPL-3.0 libjxl bindings. The native tier uses `gamut-jxl` over
+    # `jpegxl-src` instead; `jpegxl-src` alone is BSD-3-Clause and fine.
+    { crate = "jpegxl-rs" },
+    { crate = "jpegxl-sys" },
 ]
 
 [advisories]

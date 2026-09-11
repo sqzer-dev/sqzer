@@ -2,7 +2,7 @@
 
 Multi-format image optimizer with best-in-class defaults. A library and a CLI, pure Rust by default, C codecs when you want the last few percent.
 
-> **Note**: Private, pre-alpha. The library and the CLI decode JPEG, PNG, WebP, AVIF and JPEG XL and write JPEG, PNG, lossless WebP and AVIF; resize, colour management and the native tier are still to come. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md), the command line in [`docs/adr/0003-cli-interface.md`](docs/adr/0003-cli-interface.md).
+> **Note**: Private, pre-alpha. The portable build decodes JPEG, PNG, WebP, AVIF and JPEG XL and writes JPEG, PNG, lossless WebP and AVIF; the native build adds lossy WebP, JPEG XL, `libaom` AVIF, jpegli JPEG and HEIC input. Resize and colour management are still to come. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md), the command line in [`docs/adr/0003-cli-interface.md`](docs/adr/0003-cli-interface.md), the native backends in [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md).
 
 ## What it is for
 
@@ -109,11 +109,19 @@ Backends come in tiers, mirrored by Cargo features:
 portable   pure Rust, permissive licences, builds on wasm32. Always on.
            JPEG (mozjpeg-rs / zune-jpeg), PNG (oxipng), AVIF (ravif / re_rav1d),
            WebP (image-webp, lossless write), JXL decode (jxl-oxide).
-native     C bindings, opt-in. libwebp, libjxl, libavif + libaom, libheif.
+native     C bindings, opt-in, one feature per library, `native` for all five.
+           native-webp    libwebp, lossy and lossless WebP (webpx)
+           native-jxl     libjxl, JPEG XL encoding (gamut-jxl)
+           native-avif    libavif + libaom, AVIF encoding (libavif)
+           native-heif    libheif, HEIC decoding, system library (libheif-rs)
+           native-jpegli  jpegli, JPEG encoding (jpegli)
+           A native encoder takes its format over from the portable one.
 agpl       reserved. Never a default dependency, never in the library.
 ```
 
-> **Note**: The portable tier cannot write lossy WebP or JPEG XL. No permissive pure-Rust encoder exists for either as of September 2026. Requesting one in a portable build returns `EncoderUnavailable` with the feature that would provide it, it never silently falls back.
+> **Note**: The portable tier cannot write lossy WebP or JPEG XL. No permissive pure-Rust encoder exists for either as of September 2026 (`jixel` is a candidate for JPEG XL, unmeasured). Requesting one in a portable build returns `EncoderUnavailable` with the feature that would provide it, it never silently falls back.
+
+> **Note**: Every native feature vendors and builds its C library from source (`cc` or cmake; nasm on x86; a C++ compiler for `native-jxl` and `native-jpegli`), except `native-heif`, which links the system `libheif` (LGPL-3.0, >= 1.17, with an HEVC decoder) through `pkg-config`, or vcpkg on Windows. [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md) has the crate choices and the licence facts, and which targets CI covers: all five on Linux glibc and macOS, four on Windows (no `libheif` from vcpkg yet), two on musl (no C++ toolchain there yet).
 
 > **Note**: AVIF decoding is desktop only. `rav1d` does not compile for `wasm32`, so the WASM build recognises AVIF input but has no decoder for it. AVIF encoding builds everywhere, but a perceptual target needs the output decoded to score it, so on `wasm32` AVIF takes an explicit quality only and the default output format there is JPEG.
 
@@ -137,8 +145,12 @@ docs/adr               design decisions
 # everything, portable tier
 cargo build --workspace
 
-# native tier (needs the C libraries on PATH / vcpkg)
+# native tier: cmake, a C++ compiler and nasm on PATH, libheif-dev installed
+# (`brew install libheif` on macOS); cmake 4 needs CMAKE_POLICY_VERSION_MINIMUM=3.5
+# for the vendored libjpeg-turbo in jpegli's tree. Or one backend at a time,
+# for example --features native-webp,native-avif on a box without a C++ compiler
 cargo build -p sqzer-cli --features native
+cargo test -p sqzer-codecs -p sqzer -p sqzer-cli --features sqzer-codecs/native,sqzer/native,sqzer-cli/native
 
 # prove the portable tier stays C-free
 cargo build -p sqzer-wasm --target wasm32-unknown-unknown

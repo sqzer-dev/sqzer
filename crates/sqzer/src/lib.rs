@@ -455,6 +455,15 @@ mod tests {
         encode_png(&photo(color))
     }
 
+    /// The portable registry, whatever features the build has: these
+    /// tests are about the facade's decisions, which a native backend
+    /// taking a format over would otherwise change from underneath.
+    fn portable() -> Sqzer {
+        let mut reg = Registry::new();
+        sqzer_codecs::register_portable(&mut reg);
+        Sqzer::with_registry(reg)
+    }
+
     fn encode_png(img: &Image) -> Vec<u8> {
         sqzer_codecs::registry()
             .encoder(Format::Png)
@@ -471,9 +480,7 @@ mod tests {
 
     #[test]
     fn graphics_default_to_lossless_webp() {
-        let out = Sqzer::new()
-            .run(&encode_png(&flat(ColorType::Rgb)))
-            .unwrap();
+        let out = portable().run(&encode_png(&flat(ColorType::Rgb))).unwrap();
         assert_eq!(out.content, Content::Graphic);
         assert_eq!(out.format, Format::WebP);
         assert_eq!(out.target, Resolved::Lossless);
@@ -494,7 +501,7 @@ mod tests {
 
     #[test]
     fn fast_mode_encodes_once_at_the_seed() {
-        let out = Sqzer::new()
+        let out = portable()
             .fast(true)
             .format(Format::Jpeg)
             .run(&png_bytes(ColorType::Rgb))
@@ -503,7 +510,7 @@ mod tests {
         let seed = seeds::seed(Format::Jpeg, Tier::Portable, 70.0).unwrap();
         assert_eq!(out.target, Resolved::Quality(seed.quality));
         // A lossless-only encoder needs no seed.
-        let out = Sqzer::new()
+        let out = portable()
             .fast(true)
             .format(Format::Png)
             .run(&png_bytes(ColorType::Rgb))
@@ -613,7 +620,7 @@ mod tests {
 
     #[test]
     fn perceptual_default_runs_the_search() {
-        let out = Sqzer::new().run(&png_bytes(ColorType::Rgb)).unwrap();
+        let out = portable().run(&png_bytes(ColorType::Rgb)).unwrap();
         assert_eq!(out.content, Content::Photo);
         assert_eq!(out.format, Format::Avif);
         assert_eq!(out.backend, "ravif");
@@ -644,7 +651,7 @@ mod tests {
     #[test]
     fn lossless_only_encoder_meets_a_perceptual_target_without_a_search() {
         // Explicitly asked for, on a photograph.
-        let out = Sqzer::new()
+        let out = portable()
             .format(Format::WebP)
             .run(&png_bytes(ColorType::Rgb))
             .unwrap();
@@ -741,7 +748,7 @@ mod tests {
 
     #[test]
     fn missing_encoder_is_an_error_not_a_fallback() {
-        let err = Sqzer::new()
+        let err = portable()
             .format(Format::Jxl)
             .target(Target::Quality(50.0))
             .run(&png_bytes(ColorType::Rgb))
