@@ -23,11 +23,18 @@ mod imp {
     use windows::Win32::Graphics::Imaging::{
         CLSID_WICImagingFactory, GUID_WICPixelFormat8bppGray, GUID_WICPixelFormat16bppGray,
         GUID_WICPixelFormat16bppGrayHalf, GUID_WICPixelFormat24bppBGR, GUID_WICPixelFormat24bppRGB,
-        GUID_WICPixelFormat32bppBGR, GUID_WICPixelFormat32bppBGRA,
-        GUID_WICPixelFormat32bppGrayFloat, GUID_WICPixelFormat32bppPBGRA,
-        GUID_WICPixelFormat32bppPRGBA, GUID_WICPixelFormat32bppRGB, GUID_WICPixelFormat32bppRGBA,
-        GUID_WICPixelFormat64bppRGBA, IWICImagingFactory, WICBitmapDitherTypeNone,
-        WICBitmapPaletteTypeCustom, WICDecodeMetadataCacheOnDemand,
+        GUID_WICPixelFormat32bppBGR, GUID_WICPixelFormat32bppBGR101010,
+        GUID_WICPixelFormat32bppBGRA, GUID_WICPixelFormat32bppGrayFloat,
+        GUID_WICPixelFormat32bppPBGRA, GUID_WICPixelFormat32bppPRGBA,
+        GUID_WICPixelFormat32bppR10G10B10A2, GUID_WICPixelFormat32bppR10G10B10A2HDR10,
+        GUID_WICPixelFormat32bppRGB, GUID_WICPixelFormat32bppRGBA,
+        GUID_WICPixelFormat32bppRGBA1010102, GUID_WICPixelFormat32bppRGBA1010102XR,
+        GUID_WICPixelFormat48bppBGR, GUID_WICPixelFormat48bppRGB, GUID_WICPixelFormat48bppRGBHalf,
+        GUID_WICPixelFormat64bppBGRA, GUID_WICPixelFormat64bppPBGRA, GUID_WICPixelFormat64bppPRGBA,
+        GUID_WICPixelFormat64bppRGB, GUID_WICPixelFormat64bppRGBA,
+        GUID_WICPixelFormat64bppRGBAHalf, GUID_WICPixelFormat128bppPRGBAFloat,
+        GUID_WICPixelFormat128bppRGBAFloat, GUID_WICPixelFormat128bppRGBFloat, IWICImagingFactory,
+        WICBitmapDitherTypeNone, WICBitmapPaletteTypeCustom, WICDecodeMetadataCacheOnDemand,
     };
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
@@ -263,6 +270,29 @@ mod imp {
                 GUID_WICPixelFormat32bppPRGBA,
             ]
             .contains(format);
+            let deep = [
+                GUID_WICPixelFormat16bppGray,
+                GUID_WICPixelFormat16bppGrayHalf,
+                GUID_WICPixelFormat32bppGrayFloat,
+                GUID_WICPixelFormat48bppRGB,
+                GUID_WICPixelFormat48bppBGR,
+                GUID_WICPixelFormat48bppRGBHalf,
+                GUID_WICPixelFormat64bppRGB,
+                GUID_WICPixelFormat64bppRGBA,
+                GUID_WICPixelFormat64bppBGRA,
+                GUID_WICPixelFormat64bppPRGBA,
+                GUID_WICPixelFormat64bppPBGRA,
+                GUID_WICPixelFormat64bppRGBAHalf,
+                GUID_WICPixelFormat32bppRGBA1010102,
+                GUID_WICPixelFormat32bppRGBA1010102XR,
+                GUID_WICPixelFormat32bppR10G10B10A2,
+                GUID_WICPixelFormat32bppR10G10B10A2HDR10,
+                GUID_WICPixelFormat32bppBGR101010,
+                GUID_WICPixelFormat128bppRGBFloat,
+                GUID_WICPixelFormat128bppRGBAFloat,
+                GUID_WICPixelFormat128bppPRGBAFloat,
+            ]
+            .contains(format);
             let opaque = [
                 GUID_WICPixelFormat8bppGray,
                 GUID_WICPixelFormat16bppGray,
@@ -272,12 +302,18 @@ mod imp {
                 GUID_WICPixelFormat24bppRGB,
                 GUID_WICPixelFormat32bppBGR,
                 GUID_WICPixelFormat32bppRGB,
+                GUID_WICPixelFormat48bppRGB,
+                GUID_WICPixelFormat48bppBGR,
+                GUID_WICPixelFormat48bppRGBHalf,
+                GUID_WICPixelFormat64bppRGB,
+                GUID_WICPixelFormat32bppBGR101010,
+                GUID_WICPixelFormat128bppRGBFloat,
             ]
             .contains(format);
-            let known = eight_bit || gray || !opaque;
+            debug_assert!(!(eight_bit && deep));
             Self {
                 gray,
-                deep: known && !eight_bit,
+                deep,
                 alpha: !opaque,
             }
         }
@@ -342,6 +378,10 @@ mod imp {
             assert!(!l.gray && l.deep && l.alpha);
             let l = Layout::of(&GUID_WICPixelFormat16bppGray);
             assert!(l.gray && l.deep && !l.alpha);
+            let l = Layout::of(&GUID_WICPixelFormat48bppRGB);
+            assert!(!l.gray && l.deep && !l.alpha);
+            let l = Layout::of(&GUID_WICPixelFormat32bppRGBA1010102);
+            assert!(!l.gray && l.deep && l.alpha);
             // Unknown: 8-bit RGBA, the conversion that always works.
             let l = Layout::of(&GUID::zeroed());
             assert!(!l.gray && !l.deep && l.alpha);

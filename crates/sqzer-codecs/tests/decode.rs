@@ -315,9 +315,14 @@ mod avif {
 
 // ------------------------------------------------------------------ HEIC
 
-/// Every build recognises HEIC; only `native-heif` reads it. The error
-/// names the feature instead of calling the file unrecognised.
-#[cfg(all(feature = "heif", not(feature = "native-heif")))]
+/// Every build recognises HEIC; only `native-heif` reads it, and on musl
+/// not even that, since a static binary cannot load `libheif` and there
+/// is no OS decoder. The error names the feature instead of calling the
+/// file unrecognised.
+#[cfg(all(
+    feature = "heif",
+    any(not(feature = "native-heif"), target_env = "musl")
+))]
 #[test]
 fn heic_is_recognised_but_needs_the_feature() {
     let reg = registry();
@@ -350,7 +355,7 @@ fn heic_is_recognised_but_needs_the_feature() {
 /// GitHub's runners are Windows Server without the Store codecs and
 /// `libheif` is nowhere on `PATH`. Everywhere else every compiled-in
 /// backend must work: CI installs `libheif`, and every macOS has `ImageIO`.
-#[cfg(feature = "native-heif")]
+#[cfg(all(feature = "native-heif", not(target_env = "musl")))]
 mod heic {
     use super::*;
     use sqzer_core::codec::Decoder;

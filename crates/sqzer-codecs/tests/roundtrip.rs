@@ -88,7 +88,15 @@ fn feature_registry_lists_the_compiled_backends() {
     if cfg!(feature = "jxl-decode") {
         expected.push((Format::Jxl, Tier::Portable));
     }
-    if cfg!(feature = "native-heif") {
+    // HEIC: the OS decoder and the runtime loader on macOS and Windows,
+    // the loader alone on Linux gnu, nothing on musl (ADR-0005).
+    if cfg!(all(
+        feature = "native-heif",
+        any(target_os = "macos", windows)
+    )) {
+        expected.push((Format::Heic, Tier::Native));
+    }
+    if cfg!(all(feature = "native-heif", not(target_env = "musl"))) {
         expected.push((Format::Heic, Tier::Native));
     }
     assert_eq!(dec, expected);

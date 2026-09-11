@@ -103,7 +103,9 @@ jobs:
       # below shows which path the WIC tests took.
       - if: runner.os == 'Windows'
         shell: pwsh
-        run: Get-AppxPackage -AllUsers Microsoft.HEIFImageExtension, Microsoft.HEVCVideoExtension* | Format-List Name, Version, Status
+        run: |
+          'Microsoft.HEIFImageExtension', 'Microsoft.HEVCVideoExtension*' | ForEach-Object { Get-AppxPackage -AllUsers -Name $_ } | Format-List Name, Version, Status
+          Write-Host "(an empty listing means neither Store package is installed)"
       # libaom 3.11's configure greps `nasm -hf` for `-Ox`, which nasm 3
       # (what brew installs) no longer prints, so the Intel Mac gets the
       # last nasm 2 from nasm.us instead.
