@@ -2,7 +2,7 @@
 
 Multi-format image optimizer with best-in-class defaults. A library and a CLI, pure Rust by default, C codecs when you want the last few percent.
 
-> **Note**: Private, pre-alpha. The portable build decodes JPEG, PNG, WebP, AVIF and JPEG XL and writes JPEG, PNG, lossless WebP and AVIF; the native build adds lossy WebP, JPEG XL, `libaom` AVIF, jpegli JPEG and HEIC input through the OS decoder or a runtime-loaded `libheif`. Resize and colour management are still to come. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md), the command line in [`docs/adr/0003-cli-interface.md`](docs/adr/0003-cli-interface.md), the native backends in [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md).
+> **Note**: Pre-alpha. The portable build decodes JPEG, PNG, WebP, AVIF and JPEG XL and writes JPEG, PNG, lossless WebP and AVIF; the native build adds lossy WebP, JPEG XL, `libaom` AVIF, jpegli JPEG and HEIC input through the OS decoder or a runtime-loaded `libheif`. Resize and colour management are still to come. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md), the command line in [`docs/adr/0003-cli-interface.md`](docs/adr/0003-cli-interface.md), the native backends in [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md).
 
 ## What it is for
 
