@@ -64,9 +64,14 @@ jobs:
           - { os: windows-latest,   target: x86_64-pc-windows-msvc,    features: "native-webp,native-jxl,native-avif,native-jpegli" }
     env:
       CC_x86_64_unknown_linux_musl: musl-gcc
+      # libaom is C, but its cmake project also asks for a C++ compiler
+      # and musl-tools ships none. The host g++ only has to pass cmake's
+      # compiler check; no C++ source is compiled into the library.
+      CXX_x86_64_unknown_linux_musl: g++
       # The vendored libjpeg-turbo inside jpegli's libjxl tree declares a
       # cmake floor that cmake 4 refuses; this lifts it.
       CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+      RUST_BACKTRACE: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -74,27 +79,48 @@ jobs:
           targets: ${{ matrix.target }}
       - if: matrix.target == 'x86_64-unknown-linux-musl'
         run: sudo apt-get update && sudo apt-get install -y musl-tools nasm
+      # Ubuntu ships libheif's HEVC decoder as a separate plugin package;
+      # without it every HEIC decode fails with "unsupported codec".
       - if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-unknown-linux-gnu'
-        run: sudo apt-get update && sudo apt-get install -y nasm libheif-dev
+        run: sudo apt-get update && sudo apt-get install -y nasm libheif-dev libheif-plugin-libde265
       - if: runner.os == 'macOS'
-        run: brew install nasm libheif
+        run: brew install libheif
+      # libaom 3.11's configure greps `nasm -hf` for `-Ox`, which nasm 3
+      # (what brew installs) no longer prints, so the Intel Mac gets the
+      # last nasm 2 from nasm.us instead.
+      - if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          curl -sSL -o nasm.zip https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/macosx/nasm-2.16.03-macosx.zip
+          unzip -q nasm.zip -d "$HOME/nasm"
+          echo "$HOME/nasm/nasm-2.16.03" >> "$GITHUB_PATH"
       - if: runner.os == 'Windows'
         uses: ilammy/setup-nasm@v1
+      # `jpegli-sys` links its library from `build/lib`, which only a
+      # single-config generator produces; Visual Studio's puts it under
+      # `build/lib/Debug`. Ninja needs `cl.exe` on PATH.
+      - if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - if: runner.os == 'Windows'
+        shell: bash
+        run: echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
           key: native
       # `sqzer-cli` names the same features as `sqzer-codecs`, so the
-      # list applies to the binary as is.
-      - run: cargo build -p sqzer-cli --target ${{ matrix.target }} --features ${{ matrix.features }}
-      # Testing several packages needs the `package/feature` spelling.
-      - if: matrix.features == 'native'
-        run: cargo test -p sqzer-codecs -p sqzer -p sqzer-cli --target ${{ matrix.target }} --features sqzer-codecs/native,sqzer/native,sqzer-cli/native
-      - if: matrix.features != 'native'
-        shell: bash
+      # list applies to the binary as is; testing one package at a time
+      # needs the `package/feature` spelling and keeps a crash in one
+      # backend from hiding the other results.
+      - shell: bash
         run: |
-          features=$(echo "${{ matrix.features }}" | tr ',' '\n' | sed 's#^#sqzer-codecs/#' | paste -sd ',' -)
-          features="$features,$(echo "${{ matrix.features }}" | tr ',' '\n' | sed 's#^#sqzer/#' | paste -sd ',' -)"
-          cargo test -p sqzer-codecs -p sqzer --target ${{ matrix.target }} --features "$features"
+          list=$(echo "${{ matrix.features }}" | tr ',' '\n')
+          echo "CODECS_FEATURES=$(echo "$list" | sed 's#^#sqzer-codecs/#' | paste -sd ',' -)" >> "$GITHUB_ENV"
+          echo "SQZER_FEATURES=$(echo "$list" | sed 's#^#sqzer/#' | paste -sd ',' -)" >> "$GITHUB_ENV"
+      - run: cargo build -p sqzer-cli --target ${{ matrix.target }} --features ${{ matrix.features }}
+      - run: cargo test -p sqzer-codecs --target ${{ matrix.target }} --features ${{ env.CODECS_FEATURES }}
+      - run: cargo test -p sqzer --target ${{ matrix.target }} --features ${{ env.SQZER_FEATURES }}
+      # The CLI tests expect the whole tier or none of it.
+      - if: matrix.features == 'native'
+        run: cargo test -p sqzer-cli --target ${{ matrix.target }} --features native
 
   wasm:
     name: wasm32 portable tier
