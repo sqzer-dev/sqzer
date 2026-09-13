@@ -32,6 +32,39 @@ sqzer in.png --json
 
 The default mode is a perceptual target, not a quality slider. `sqzer` searches encoder quality until the output hits a SSIMULACRA2 score (70 by default), so a flat screenshot and a noisy photo get different settings for the same visible result. The search starts from a seed table calibrated per encoder on a corpus of photos, graphics and screenshots, so the first encode is usually close: on a held-out split the search takes two to four encodes instead of four to six, at the same quality and size.
 
+## Install
+
+Release binaries carry the native tier: the portable backends plus every C backend the target can build and run. Nothing to install next to them; HEIC input needs a decoder on the machine, see the note under Formats.
+
+```sh
+# Linux and macOS
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/sqzer-dev/sqzer/releases/latest/download/sqzer-cli-installer.sh | sh
+
+# Windows
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/sqzer-dev/sqzer/releases/latest/download/sqzer-cli-installer.ps1 | iex"
+
+# Homebrew, macOS and Linux. The formula pulls libheif for the runtime loader.
+brew install sqzer-dev/tap/sqzer
+
+# from source, portable tier. --features native adds the C backends; see Development
+cargo install sqzer-cli
+```
+
+The archives on the releases page, and what each one carries:
+
+```
+sqzer-cli-x86_64-unknown-linux-gnu.tar.xz     all five native backends
+sqzer-cli-aarch64-unknown-linux-gnu.tar.xz    no jpegli; JPEG is mozjpeg-rs
+sqzer-cli-x86_64-unknown-linux-musl.tar.xz    static; no jpegli, no JPEG XL encoder, no HEIC
+sqzer-cli-x86_64-apple-darwin.tar.xz          all five
+sqzer-cli-aarch64-apple-darwin.tar.xz         all five
+sqzer-cli-x86_64-pc-windows-msvc.zip          no jpegli; JPEG is mozjpeg-rs
+```
+
+`sqzer --list-codecs` prints what the binary in front of you has. The rows are decided per target in `crates/sqzer-native-tier` and the reasons are in [`docs/adr/0006-release-matrix.md`](docs/adr/0006-release-matrix.md).
+
+> **Note**: No release is tagged yet. Until `v0.0.1` the installer URLs return 404; build from source as under Development.
+
 ## Command line
 
 One flat command. Flags can go anywhere, `-q` means quality everywhere, and codec-specific knobs go through one flag instead of one flag per codec. `sqzer -h` shows the flags most runs need, `sqzer --help` shows all of them.
@@ -122,7 +155,7 @@ agpl       reserved. Never a default dependency, never in the library.
 
 > **Note**: The portable tier cannot write lossy WebP or JPEG XL. No permissive pure-Rust encoder exists for either as of September 2026 (`jixel` is a candidate for JPEG XL, unmeasured). Requesting one in a portable build returns `EncoderUnavailable` with the feature that would provide it, it never silently falls back.
 
-> **Note**: Every native feature vendors and builds its C library from source (`cc` or cmake; nasm on x86; a C++ compiler for `native-jxl` and `native-jpegli`), except `native-heif`, which links nothing. HEIC comes from the OS decoder on macOS (ImageIO, every Mac since 10.13) and Windows (WIC, needs the HEIF Image Extension and HEVC Video Extensions from the Microsoft Store), and from `libheif` (LGPL-3.0, >= 1.17, with an HEVC decoder) loaded at run time everywhere but musl: `libheif1` plus `libheif-plugin-libde265` on Debian and Ubuntu, `libheif-freeworld` on Fedora, `brew install libheif` on a Mac without ImageIO's decoder, or `SQZER_LIBHEIF` pointing at the library. A binary always starts; `sqzer --list-codecs` says which HEIC decoder it has and whether this machine can use it, and a HEIC input on a machine with none gets an error naming the fix. Static musl builds have no HEIC. [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md) has the crate choices and the licence facts, [`docs/adr/0005-heic-through-os-decoders.md`](docs/adr/0005-heic-through-os-decoders.md) the HEIC design, and which targets CI covers: all five on x86_64 Linux and both macOS targets, four on aarch64 Linux (jpegli crashes there), four on Windows (jpegli cannot share a cmake generator with libjxl there), three on musl (no C++ toolchain there yet).
+> **Note**: Every native feature vendors and builds its C library from source (`cc` or cmake; nasm on x86; a C++ compiler for `native-jxl` and `native-jpegli`), except `native-heif`, which links nothing. HEIC comes from the OS decoder on macOS (ImageIO, every Mac since 10.13) and Windows (WIC, needs the HEIF Image Extension and HEVC Video Extensions from the Microsoft Store), and from `libheif` (LGPL-3.0, >= 1.17, with an HEVC decoder) loaded at run time everywhere but musl: `libheif1` plus `libheif-plugin-libde265` on Debian and Ubuntu, `libheif-freeworld` on Fedora, `brew install libheif` on a Mac without ImageIO's decoder, or `SQZER_LIBHEIF` pointing at the library. A binary always starts; `sqzer --list-codecs` says which HEIC decoder it has and whether this machine can use it, and a HEIC input on a machine with none gets an error naming the fix. Static musl builds have no HEIC. [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md) has the crate choices and the licence facts, [`docs/adr/0005-heic-through-os-decoders.md`](docs/adr/0005-heic-through-os-decoders.md) the HEIC design, and which targets CI covers: all five on x86_64 Linux and both macOS targets, four on aarch64 Linux (jpegli crashes there), four on Windows (jpegli cannot share a cmake generator with libjxl there), three on musl (no C++ toolchain there yet). That per-target list is what `--features native` builds on `sqzer` and `sqzer-cli` and what the release binaries carry; a single `native-*` feature is strict and fails to build where the backend cannot ([`docs/adr/0006-release-matrix.md`](docs/adr/0006-release-matrix.md)).
 
 > **Note**: AVIF decoding is desktop only. `rav1d` does not compile for `wasm32`, so the WASM build recognises AVIF input but has no decoder for it. AVIF encoding builds everywhere, but a perceptual target needs the output decoded to score it, so on `wasm32` AVIF takes an explicit quality only and the default output format there is JPEG.
 
@@ -137,7 +170,9 @@ crates/sqzer-metrics   SSIMULACRA2 and the target-quality search
 crates/sqzer           library facade, the thing you depend on
 crates/sqzer-cli       the binary, `sqzer`
 crates/sqzer-wasm      browser build, portable tier only
+crates/sqzer-native-tier  what `native` means per target, no code
 docs/adr               design decisions
+dist-workspace.toml    the release matrix for `cargo-dist`
 ```
 
 ## Development
@@ -150,11 +185,20 @@ cargo build --workspace
 # CMAKE_POLICY_VERSION_MINIMUM=3.5 for the vendored libjpeg-turbo in jpegli's
 # tree. Nothing to install for HEIC at build time; the tests need a libheif
 # with an HEVC decoder at run time (libheif1 + libheif-plugin-libde265 on
-# Ubuntu, `brew install libheif` on macOS, or SQZER_LIBHEIF=/path/to/it). Or one
-# backend at a time, for example --features native-webp,native-avif on a box
-# without a C++ compiler
+# Ubuntu, `brew install libheif` on macOS, or SQZER_LIBHEIF=/path/to/it).
+# `native` is what this target can build and run, the same set a release
+# carries. Or one backend at a time, for example --features
+# native-webp,native-avif on a box without a C++ compiler; a single feature
+# is strict and fails to build where the backend cannot
 cargo build -p sqzer-cli --features native
 cargo test -p sqzer-codecs -p sqzer -p sqzer-cli --features sqzer-codecs/native,sqzer/native,sqzer-cli/native
+
+# what a tag does, without the tag: check the release config, then build this
+# machine's archive into target/distrib. dist is cargo-dist, installed from
+# github.com/axodotdev/cargo-dist; edit dist-workspace.toml, never release.yml,
+# and run `dist generate` after
+dist plan
+dist build --artifacts=local
 
 # prove the portable tier stays C-free
 cargo build -p sqzer-wasm --target wasm32-unknown-unknown

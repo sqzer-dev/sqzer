@@ -13,8 +13,12 @@ readme = "../../README.md"
 default = ["portable"]
 portable = ["sqzer-codecs/portable"]
 # The native tier, all of it or one backend at a time. See ADR-0004 for
-# what each needs at build time.
-native = ["sqzer-codecs/native"]
+# what each needs at build time. `native` is the tier as the release
+# binaries carry it: every backend the target can build and run, decided
+# per target in `sqzer-native-tier`, so one feature list serves all six
+# release targets (ADR-0006). A single `native-*` feature is strict and
+# fails to build where the backend cannot.
+native = ["dep:sqzer-native-tier", "sqzer-native-tier/native"]
 native-webp = ["sqzer-codecs/native-webp"]
 native-jxl = ["sqzer-codecs/native-jxl"]
 native-avif = ["sqzer-codecs/native-avif"]
@@ -25,6 +29,7 @@ native-jpegli = ["sqzer-codecs/native-jpegli"]
 sqzer-core.workspace = true
 sqzer-codecs.workspace = true
 sqzer-metrics.workspace = true
+sqzer-native-tier = { workspace = true, optional = true }
 
 [lints]
 workspace = true

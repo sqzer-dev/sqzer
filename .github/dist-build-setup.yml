@@ -1,0 +1,28 @@
+# Steps `cargo-dist` runs before `dist build` in every local build job of
+# `release.yml` (`github-build-setup` in `dist-workspace.toml`). They
+# mirror the native job in `ci.yml`: the compiler environment the vendored
+# C libraries need, and nasm where the package manager's copy will not do.
+- name: Compiler environment for the vendored C libraries
+  shell: bash
+  run: |
+    # The vendored libjpeg-turbo in jpegli's libjxl tree declares a cmake
+    # floor that cmake 4 refuses; this lifts it.
+    echo "CMAKE_POLICY_VERSION_MINIMUM=3.5" >> "$GITHUB_ENV"
+    # musl: libdeflate, libwebp and libaom are built with the musl-gcc
+    # that dist installs. libaom's cmake project also asks for a C++
+    # compiler and musl-tools ships none; the host g++ only has to pass
+    # cmake's compiler check, no C++ source goes into the library.
+    echo "CC_x86_64_unknown_linux_musl=musl-gcc" >> "$GITHUB_ENV"
+    echo "CXX_x86_64_unknown_linux_musl=g++" >> "$GITHUB_ENV"
+# libaom 3.11's configure greps `nasm -hf` for `-Ox`, which nasm 3 (what
+# brew installs) no longer prints, so the Intel Mac gets the last nasm 2
+# from nasm.us instead.
+- name: nasm 2 for libaom on the Intel Mac
+  if: contains(matrix.targets, 'x86_64-apple-darwin')
+  run: |
+    curl -sSL -o nasm.zip https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/macosx/nasm-2.16.03-macosx.zip
+    unzip -q nasm.zip -d "$HOME/nasm"
+    echo "$HOME/nasm/nasm-2.16.03" >> "$GITHUB_PATH"
+- name: nasm for libaom on Windows
+  if: runner.os == 'Windows'
+  uses: ilammy/setup-nasm@v1
