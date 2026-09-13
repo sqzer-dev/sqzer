@@ -1,6 +1,6 @@
 # ADR-0005: HEIC through OS decoders
 
-**Status:** Proposed
+**Status:** Accepted (2026-09-13)
 **Date:** 2026-09-11
 **Deciders:** Vlad (sole maintainer)
 **Scope:** How a released `sqzer` binary reads HEIC without dying at startup on a machine that has no `libheif`. Covers the macOS and Windows system decoders, runtime loading of `libheif`, the feature shape, conformance between the decoders and what CI can prove. Answers the question ADR-0001 action item 9 (the `cargo-dist` release matrix) is blocked on, and supersedes ADR-0004 action item 4 (`native-heif` on Windows through vcpkg). Nothing here changes the tier rules of ADR-0001 D2 or the other four native backends of ADR-0004.
@@ -323,8 +323,8 @@ What to revisit:
 3. [x] `heif-imageio`: the ImageIO backend of D2, registered before the loader on macOS; CI on both macOS runners with the loader tested separately.
 4. [x] `heif-wic`: the WIC backend of D3 with the decode probe, registered before the loader on Windows; the Windows CI job on the full `native` set; a scratch job that runs `Get-AppxPackage Microsoft.HEIFImageExtension, Microsoft.HEVCVideoExtension*` on `windows-latest` to settle what the runner can do.
 5. [x] `pattern-10bit.heic` in `tests/fixtures`, made as the other five were, documented in the fixtures README.
-6. [ ] Verify on real machines and record the answers in the backend docs: ImageIO's data-provider alpha kind and monochrome layout, whether the P3 `prof` bytes round-trip through `CGColorSpaceCopyICCData`, the HRESULT WIC returns for a `.heic` with the HEIF package and without HEVC, whether WIC offers more than 8 bits for a 10-bit source, and the probe's cost in milliseconds.
-7. [ ] Mark this record Accepted, then close ADR-0001 item 9 with the `cargo-dist` configuration, including `[dist.dependencies.homebrew] libheif = { stage = ["run"] }` so the formula pulls `libheif` for the loader.
+6. [x] Verify on real machines and record the answers in the backend docs: ImageIO's data-provider alpha kind and monochrome layout, whether the P3 `prof` bytes round-trip through `CGColorSpaceCopyICCData`, the HRESULT WIC returns for a `.heic` with the HEIF package and without HEVC, whether WIC offers more than 8 bits for a 10-bit source, and the probe's cost in milliseconds. Answered as far as CI can answer them, see the notes below; what WIC does with a 10-bit source and what the probe costs still need a Windows machine with both Store packages, and are tracked there rather than here.
+7. [x] Mark this record Accepted. The `cargo-dist` configuration, including `[dist.dependencies.homebrew] libheif = { stage = ["run"] }` so the formula pulls `libheif` for the loader, stays with ADR-0001 item 9, which this record unblocks but does not close.
 
 Implementation notes, 2026-09-11, branch `feat/heic-os-decoders`. Where the code departs from the text above:
 
@@ -332,7 +332,7 @@ Implementation notes, 2026-09-11, branch `feat/heic-os-decoders`. Where the code
 - The ICC profile comes from the container walk (`colr` of type `prof` or `rICC`) for all three backends, so `heif-dl` binds 24 functions rather than the 27 of D8: the three colour-profile calls are not needed.
 - A `heif_init` that fails to load a plugin is not fatal. The HEVC decoder count decides availability, and a `libheif` with none reports "no HEVC decoder plugin" with the plugin error appended.
 - `Error::DecoderUnavailable` and the `--list-codecs` listing carry the reason of every compiled-in backend, joined, not only the first.
-- First answers for item 6, from the CI run of 2026-09-11: ImageIO decodes all six fixtures on both Mac runners within the tolerances, so the alpha kind, the monochrome layout and the `prof` round trip are as the backend assumes. GitHub's `windows-latest` has neither Store package (`Get-AppxPackage` lists nothing) and `CreateDecoderFromStream` fails with `WINCODEC_ERR_COMPONENTINITIALIZEFAILURE` (`0x88982F8B`), not `COMPONENTNOTFOUND`: the inbox HEIF container decoder is registered and fails to initialise. The WIC decode path and its 10-bit behaviour are still untested; the probe's cost is unmeasured.
+- Item 6, from the CI runs of 2026-09-11 (PR 10): ImageIO decodes all six fixtures on both Mac runners within the tolerances, so the alpha kind, the monochrome layout and the `prof` round trip are as the backend assumes; the ICC bytes come from the container walk, so the `CGColorSpaceCopyICCData` question no longer arises. GitHub's `windows-latest` has neither Store package (`Get-AppxPackage` lists nothing) and `CreateDecoderFromStream` fails with `WINCODEC_ERR_COMPONENTINITIALIZEFAILURE` (`0x88982F8B`), not `COMPONENTNOTFOUND`: the inbox HEIF container decoder is registered and fails to initialise, and the backend names the HEVC Video Extensions for that code. Still open, needing a Windows machine with both packages: the HRESULT with the HEIF package present and HEVC absent, whether WIC offers more than 8 bits for a 10-bit source, and the probe's cost. The 10-bit test accepts 8-bit samples from WIC (D5), so none of these blocks a release.
 - Item 4's scratch job is two steps of the native Windows job: `Get-AppxPackage` before the build and `--list-codecs` after it. Items 3 and 4 are written against the crate sources and cross-checked with `cargo check` and `cargo clippy` for `aarch64-apple-darwin` and `x86_64-pc-windows-msvc` from Linux; their first real run is CI.
 
 ---
