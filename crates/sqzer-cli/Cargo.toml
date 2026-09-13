@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+homepage.workspace = true
 
 [[bin]]
 name = "sqzer"
@@ -16,9 +17,12 @@ doc = false
 [features]
 default = ["portable"]
 portable = ["sqzer/portable"]
-# The native tier, all of it or one backend at a time. The CLI tests
-# expect either the whole `native` set or none of it; CI runs partial
-# sets against the library crates only.
+# The native tier, all of it or one backend at a time. `native` is the
+# set the release binaries carry: every backend the target can build and
+# run, decided per target in `sqzer-native-tier`'s Cargo.toml. A single
+# `native-*` feature is strict and fails to build where the backend
+# cannot. The tests expect either the `native` set or none of it, and
+# know which backends the set leaves out on which targets.
 native = ["sqzer/native"]
 native-webp = ["sqzer/native-webp"]
 native-jxl = ["sqzer/native-jxl"]

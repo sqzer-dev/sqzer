@@ -14,6 +14,8 @@ mod codecs;
 mod config;
 mod inputs;
 mod job;
+#[cfg(test)]
+mod native_set;
 mod output;
 mod report;
 

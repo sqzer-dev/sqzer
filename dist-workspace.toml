@@ -1,0 +1,51 @@
+# Release configuration for `cargo-dist` (ADR-0001 item 9). `dist init`
+# wrote the skeleton; everything from `features` down is ours. After
+# editing this file run `dist generate` to rewrite
+# `.github/workflows/release.yml`; the `plan` job of that workflow checks
+# on every pull request that the two still agree.
+[workspace]
+members = ["cargo:."]
+
+[dist]
+# The dist version CI installs (Cargo.toml SemVer syntax)
+cargo-dist-version = "0.33.0"
+ci = "github"
+# Curl-pipe-sh, PowerShell and a Homebrew formula. No MSI yet.
+installers = ["shell", "powershell", "homebrew"]
+# The six desktop targets, the same six the native CI job builds.
+targets = [
+    "aarch64-apple-darwin",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "x86_64-pc-windows-msvc",
+]
+install-path = "CARGO_HOME"
+install-updater = false
+# One feature list for every target (ADR-0005 D1): the native tier as
+# `sqzer-cli` defines it, which is every backend the target can build and
+# run. Its Cargo.toml lists the three targets that carry less than all
+# five.
+features = ["native"]
+precise-builds = true
+# `brew install sqzer-dev/tap/sqzer`. The tap is the
+# `sqzer-dev/homebrew-tap` repository; the publish job writes the formula
+# there with the `HOMEBREW_TAP_TOKEN` secret of this repository.
+tap = "sqzer-dev/homebrew-tap"
+publish-jobs = ["homebrew"]
+formula = "sqzer"
+# Compiler environment for the vendored C libraries and the two nasm
+# workarounds, mirrored from the native job in `ci.yml`.
+github-build-setup = "../dist-build-setup.yml"
+
+# libaom needs nasm on x86. apt covers Linux; the Intel Mac and Windows
+# get theirs in the build-setup steps, and aarch64 needs none.
+[dist.dependencies.apt]
+nasm = { stage = ["build"], targets = ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"] }
+
+# ADR-0005 item 7: the formula depends on `libheif` so the runtime loader
+# has a library on a Mac whose ImageIO cannot decode HEVC. Nothing links
+# it; the binary starts without it.
+[dist.dependencies.homebrew]
+libheif = { stage = ["run"] }

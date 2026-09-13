@@ -45,9 +45,11 @@ jobs:
   # Linux and macOS jobs install libheif for the loader's tests and the
   # Windows job proves whichever path the runner has, decode or a clean
   # "unavailable". ADR-0004 lists what each target can and cannot build;
-  # the feature set per target below is that list. Partial sets test the
-  # library crates only: the CLI tests assume the whole tier or none of
-  # it.
+  # the feature set per target below is that list, spelled out for the
+  # `sqzer-codecs` tests. `sqzer` and `sqzer-cli` build with `native`
+  # everywhere: since ADR-0006 that means the same per-target list,
+  # decided in `crates/sqzer-native-tier`, and it is what a release
+  # carries. Keep the two in step.
   native:
     name: native ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -119,24 +121,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: native
-      # `sqzer-cli` names the same features as `sqzer-codecs`, so the
-      # list applies to the binary as is; testing one package at a time
-      # needs the `package/feature` spelling and keeps a crash in one
-      # backend from hiding the other results.
+      # Testing one package at a time needs the `package/feature`
+      # spelling and keeps a crash in one backend from hiding the other
+      # results.
       - shell: bash
         run: |
           list=$(echo "${{ matrix.features }}" | tr ',' '\n')
           echo "CODECS_FEATURES=$(echo "$list" | sed 's#^#sqzer-codecs/#' | paste -sd ',' -)" >> "$GITHUB_ENV"
-          echo "SQZER_FEATURES=$(echo "$list" | sed 's#^#sqzer/#' | paste -sd ',' -)" >> "$GITHUB_ENV"
-      - run: cargo build -p sqzer-cli --target ${{ matrix.target }} --features ${{ matrix.features }}
-      # What this build has and whether this runner can use it; the HEIC
-      # line says which decoder answered the probe.
-      - run: cargo run -p sqzer-cli --target ${{ matrix.target }} --features ${{ matrix.features }} -- --list-codecs
+      # The release build of this target, and what it has and whether
+      # this runner can use it; the HEIC line says which decoder answered
+      # the probe.
+      - run: cargo build -p sqzer-cli --target ${{ matrix.target }} --features native
+      - run: cargo run -p sqzer-cli --target ${{ matrix.target }} --features native -- --list-codecs
       - run: cargo test -p sqzer-codecs --target ${{ matrix.target }} --features ${{ env.CODECS_FEATURES }}
-      - run: cargo test -p sqzer --target ${{ matrix.target }} --features ${{ env.SQZER_FEATURES }}
-      # The CLI tests expect the whole tier or none of it.
-      - if: matrix.features == 'native'
-        run: cargo test -p sqzer-cli --target ${{ matrix.target }} --features native
+      - run: cargo test -p sqzer --target ${{ matrix.target }} --features native
+      # The CLI tests know which backends `native` leaves out on which
+      # target (`crates/sqzer-cli/src/native_set.rs`).
+      - run: cargo test -p sqzer-cli --target ${{ matrix.target }} --features native
 
   wasm:
     name: wasm32 portable tier

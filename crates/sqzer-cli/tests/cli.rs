@@ -13,6 +13,10 @@ use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
+/// Which backends a `native` build carries on this target.
+#[path = "../src/native_set.rs"]
+mod native_set;
+
 struct Sandbox {
     dir: PathBuf,
 }
@@ -261,53 +265,67 @@ fn shape_7_list_codecs() {
     assert_eq!(code, 0);
     assert!(out.contains("jxl-oxide"), "{out}");
     assert!(!out.contains("jpeg:progressive"), "{out}");
+    // The native tier owns WebP and AVIF on every target; JPEG, JPEG XL
+    // and HEIC depend on what the target carries, see `native_set`.
     if cfg!(feature = "native") {
-        // The native tier owns JPEG, WebP, AVIF and JPEG XL and reads HEIC.
         assert!(
             out.contains("tiers in this build: native, portable"),
             "{out}"
         );
-        assert!(out.contains("jpegli (native), lossy"), "{out}");
         assert!(out.contains("webpx (native), lossy and lossless"), "{out}");
-        assert!(
-            out.contains("gamut-jxl (native), lossy and lossless"),
-            "{out}"
-        );
-        let heic = if cfg!(target_os = "macos") {
-            "imageio (native"
-        } else if cfg!(windows) {
-            "wic (native"
-        } else {
-            "libheif (native"
-        };
-        assert!(out.contains(heic), "{out}");
     } else {
         assert!(out.contains("tiers in this build: portable"), "{out}");
-        assert!(out.contains("mozjpeg-rs (portable), lossy"), "{out}");
-        assert!(out.contains("none; needs `native-jxl`"), "{out}");
-        assert!(out.contains("none; needs `native-heif`"), "{out}");
     }
+    let jpeg = if native_set::JPEGLI {
+        "jpegli (native), lossy"
+    } else {
+        "mozjpeg-rs (portable), lossy"
+    };
+    assert!(out.contains(jpeg), "{out}");
+    let jxl = if native_set::JXL {
+        "gamut-jxl (native), lossy and lossless"
+    } else {
+        "none; needs `native-jxl`"
+    };
+    assert!(out.contains(jxl), "{out}");
+    let heic = if !native_set::HEIC {
+        "none; needs `native-heif`"
+    } else if cfg!(target_os = "macos") {
+        "imageio (native"
+    } else if cfg!(windows) {
+        "wic (native"
+    } else {
+        "libheif (native"
+    };
+    assert!(out.contains(heic), "{out}");
     let (code, out, _) = run(sb.sqzer().args(["--list-codecs", "-v"]));
     assert_eq!(code, 0);
     if cfg!(feature = "native") {
         assert!(out.contains("webp:sharp_yuv=false"), "{out}");
-        assert!(out.contains("jxl:container=false"), "{out}");
     } else {
-        assert!(out.contains("jpeg:progressive=true"), "{out}");
         assert!(out.contains("avif:bit_depth=auto"), "{out}");
+    }
+    if native_set::JXL {
+        assert!(out.contains("jxl:container=false"), "{out}");
+    }
+    if !native_set::JPEGLI {
+        assert!(out.contains("jpeg:progressive=true"), "{out}");
     }
     let (code, out, _) = run(sb.sqzer().args(["--list-codecs", "--json"]));
     assert_eq!(code, 0);
     let lines = json_lines(&out);
     let jpeg = lines.iter().find(|l| l["format"] == "jpeg").unwrap();
     let jxl = lines.iter().find(|l| l["format"] == "jxl").unwrap();
-    if cfg!(feature = "native") {
+    if native_set::JPEGLI {
         assert_eq!(jpeg["encoder"]["backend"], "jpegli");
-        assert_eq!(jxl["encoder"]["backend"], "gamut-jxl");
-        assert_eq!(jxl["encoder"]["tier"], "native");
     } else {
         assert_eq!(jpeg["encoder"]["backend"], "mozjpeg-rs");
         assert_eq!(jpeg["encoder"]["options"][0]["key"], "jpeg:progressive");
+    }
+    if native_set::JXL {
+        assert_eq!(jxl["encoder"]["backend"], "gamut-jxl");
+        assert_eq!(jxl["encoder"]["tier"], "native");
+    } else {
         assert!(jxl.get("encoder").is_none());
         assert_eq!(jxl["encoder_features"][0], "native-jxl");
     }
@@ -403,7 +421,7 @@ fn heic_is_never_unrecognised() {
     let (code, out, err) = run(sb.sqzer().args(["photo.heic", "-f", "png", "--json"]));
     assert!(!err.contains("unrecognised"), "{err}");
     let lines = json_lines(&out);
-    if cfg!(feature = "native") {
+    if native_set::HEIC {
         // The decode either works or reports the missing library; a
         // failed file is exit 1, like any other per-file failure.
         if code == 0 {
