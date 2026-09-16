@@ -26,6 +26,8 @@ compile_error!("the native tier is C code and does not build for wasm32; use the
 pub mod avif;
 #[cfg(any(feature = "jpeg", feature = "webp-lossless"))]
 mod exif;
+#[cfg(feature = "gif")]
+pub mod gif;
 #[cfg(feature = "heif")]
 pub mod heif;
 #[cfg(feature = "jpeg")]
@@ -57,6 +59,18 @@ mod opts;
 pub mod oxipng;
 #[cfg(feature = "png")]
 pub mod png;
+#[cfg(any(
+    feature = "bmp",
+    feature = "tga",
+    feature = "ico",
+    feature = "qoi",
+    feature = "pnm"
+))]
+pub mod raster;
+#[cfg(feature = "svg")]
+pub mod svg;
+#[cfg(feature = "tiff")]
+pub mod tiff;
 #[cfg(feature = "webp-lossless")]
 pub mod webp;
 
@@ -101,6 +115,25 @@ pub fn register_portable(reg: &mut Registry) {
     {
         reg.register_decoder(jxl::JxlDecoder);
     }
+    // Input-only formats. TGA registers last of all: it has no magic
+    // number and its probe is a plausibility check, so every format with
+    // one gets asked first.
+    #[cfg(feature = "gif")]
+    reg.register_decoder(gif::GifDecoder);
+    #[cfg(feature = "tiff")]
+    reg.register_decoder(tiff::TiffDecoder);
+    #[cfg(feature = "bmp")]
+    reg.register_decoder(raster::BmpDecoder);
+    #[cfg(feature = "ico")]
+    reg.register_decoder(raster::IcoDecoder);
+    #[cfg(feature = "qoi")]
+    reg.register_decoder(raster::QoiDecoder);
+    #[cfg(feature = "pnm")]
+    reg.register_decoder(raster::PnmDecoder);
+    #[cfg(feature = "svg")]
+    reg.register_decoder(svg::SvgDecoder);
+    #[cfg(feature = "tga")]
+    reg.register_decoder(raster::TgaDecoder);
     // HEIC is recognised in every build so the error for one names the
     // feature that reads it. The sniffer is only consulted when no
     // decoder claims the bytes, so a `native-heif` build is unaffected.

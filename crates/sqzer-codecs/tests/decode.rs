@@ -614,3 +614,263 @@ fn the_same_icc_comes_back_from_every_container() {
     assert_eq!(jpg, webp);
     assert_eq!(jpg, jxl);
 }
+
+// ------------------------------------------------------------------ GIF
+
+#[cfg(feature = "gif")]
+mod gif {
+    use super::*;
+
+    /// The pattern has more colours than a GIF palette holds, so the
+    /// fixtures are quantised and the comparison is bounded.
+    const QUANTISED: f64 = 8.0;
+
+    #[test]
+    fn a_still_opaque_frame_is_rgb() {
+        let reg = registry();
+        let (img, info) = decode(&reg, "pattern-rgb.gif");
+        assert_eq!(info.format, Format::Gif);
+        assert!(!info.animated);
+        assert_eq!(img.color(), ColorType::Rgb);
+        assert_close(
+            &img,
+            &test_image(ColorType::Rgb),
+            QUANTISED,
+            "pattern-rgb.gif",
+        );
+    }
+
+    #[test]
+    fn a_transparent_index_makes_rgba() {
+        let (img, _) = decode(&registry(), "pattern-alpha.gif");
+        assert_eq!(img.color(), ColorType::Rgba);
+        let s = img.samples().as_u8().unwrap();
+        for y in 0..H {
+            for x in 0..W {
+                let i = ((y * W + x) * 4) as usize;
+                let want = if y % 2 == 0 { 255 } else { 0 };
+                assert_eq!(s[i + 3], want, "alpha at {x},{y}");
+            }
+        }
+    }
+
+    #[test]
+    fn animation_is_reported_and_the_first_frame_decoded() {
+        let (img, info) = decode(&registry(), "pattern-anim.gif");
+        assert!(info.animated);
+        assert_eq!(img.color(), ColorType::Rgb);
+        assert_close(
+            &img,
+            &test_image(ColorType::Rgb),
+            QUANTISED,
+            "pattern-anim.gif",
+        );
+    }
+
+    #[test]
+    fn pixel_limit() {
+        assert_too_large(&registry(), "pattern-rgb.gif");
+    }
+}
+
+// ----------------------------------------------------------------- TIFF
+
+#[cfg(feature = "tiff")]
+mod tiff {
+    use super::*;
+
+    #[test]
+    fn rgb_uncompressed() {
+        let reg = registry();
+        let (img, info) = decode(&reg, "pattern-rgb.tif");
+        assert_eq!(info.format, Format::Tiff);
+        assert!(!info.animated);
+        assert_eq!(img.color(), ColorType::Rgb);
+        assert_eq!(img.icc(), None);
+        assert_eq!(img, test_image(ColorType::Rgb));
+    }
+
+    #[test]
+    fn rgba_lzw() {
+        let (img, _) = decode(&registry(), "pattern-rgba.tif");
+        assert_eq!(img, test_image(ColorType::Rgba));
+    }
+
+    #[test]
+    fn gray_stays_gray() {
+        let (img, _) = decode(&registry(), "pattern-gray.tif");
+        assert_eq!(img, test_image(ColorType::Gray));
+    }
+
+    #[test]
+    fn sixteen_bit_stays_wide() {
+        let (img, _) = decode(&registry(), "pattern-rgb16.tif");
+        assert_eq!(img.sample_format(), SampleFormat::U16);
+        assert_eq!(img, test_image_u16(ColorType::Rgb));
+    }
+
+    #[test]
+    fn icc_is_kept() {
+        let (img, _) = decode(&registry(), "pattern-icc.tif");
+        assert!(img.icc().is_some_and(is_icc), "ICC profile missing");
+        assert_eq!(img.with_icc(None), test_image(ColorType::Rgb));
+    }
+
+    #[test]
+    fn orientation_tag_is_applied_unless_disabled() {
+        let reg = registry();
+        let (img, _) = decode(&reg, "pattern-rot90.tif");
+        assert_eq!((img.width(), img.height()), (W, H));
+        assert_eq!(img, test_image(ColorType::Rgb));
+
+        let raw = reg
+            .decode(
+                &fixture("pattern-rot90.tif"),
+                &DecodeOpts {
+                    apply_orientation: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .image;
+        assert_eq!((raw.width(), raw.height()), (H, W));
+    }
+
+    #[test]
+    fn pixel_limit() {
+        assert_too_large(&registry(), "pattern-rgb.tif");
+    }
+}
+
+// ------------------------------------------- BMP, TGA, ICO, QOI, PNM
+
+#[cfg(feature = "bmp")]
+mod bmp {
+    use super::*;
+
+    #[test]
+    fn rgb_and_rgba() {
+        let reg = registry();
+        let (img, info) = decode(&reg, "pattern-rgb.bmp");
+        assert_eq!(info.format, Format::Bmp);
+        assert_eq!(img, test_image(ColorType::Rgb));
+        let (img, _) = decode(&reg, "pattern-rgba.bmp");
+        assert_eq!(img, test_image(ColorType::Rgba));
+        assert_too_large(&reg, "pattern-rgb.bmp");
+    }
+}
+
+#[cfg(feature = "tga")]
+mod tga {
+    use super::*;
+
+    #[test]
+    fn rgb_rgba_and_gray() {
+        let reg = registry();
+        let (img, info) = decode(&reg, "pattern-rgb.tga");
+        assert_eq!(info.format, Format::Tga);
+        assert_eq!(img, test_image(ColorType::Rgb));
+        let (img, _) = decode(&reg, "pattern-rgba.tga");
+        assert_eq!(img, test_image(ColorType::Rgba));
+        let (img, _) = decode(&reg, "pattern-gray.tga");
+        assert_eq!(img, test_image(ColorType::Gray));
+        assert_too_large(&reg, "pattern-rgb.tga");
+    }
+
+    /// TGA has no magic number, so every other fixture must be claimed by
+    /// its own decoder, never by the TGA plausibility check.
+    #[test]
+    fn no_other_fixture_looks_like_a_tga() {
+        let reg = registry();
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures");
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "tga" || e == "md") {
+                continue;
+            }
+            let bytes = std::fs::read(&path).unwrap();
+            if let Some(info) = reg.identify(&bytes) {
+                assert_ne!(info.format, Format::Tga, "{}", path.display());
+            }
+        }
+    }
+}
+
+#[cfg(feature = "ico")]
+mod ico {
+    use super::*;
+
+    #[test]
+    fn rgba_png_entry() {
+        let reg = registry();
+        let (img, info) = decode(&reg, "pattern-rgba.ico");
+        assert_eq!(info.format, Format::Ico);
+        assert_eq!(img, test_image(ColorType::Rgba));
+        assert_too_large(&reg, "pattern-rgba.ico");
+    }
+}
+
+#[cfg(feature = "qoi")]
+mod qoi {
+    use super::*;
+
+    #[test]
+    fn rgb_and_rgba() {
+        let reg = registry();
+        let (img, info) = decode(&reg, "pattern-rgb.qoi");
+        assert_eq!(info.format, Format::Qoi);
+        assert_eq!(img, test_image(ColorType::Rgb));
+        let (img, _) = decode(&reg, "pattern-rgba.qoi");
+        assert_eq!(img, test_image(ColorType::Rgba));
+        assert_too_large(&reg, "pattern-rgb.qoi");
+    }
+}
+
+#[cfg(feature = "pnm")]
+mod pnm {
+    use super::*;
+
+    #[test]
+    fn binary_ascii_gray_and_sixteen_bit() {
+        let reg = registry();
+        let (img, info) = decode(&reg, "pattern-rgb.ppm");
+        assert_eq!(info.format, Format::Pnm);
+        assert_eq!(img, test_image(ColorType::Rgb));
+        let (img, _) = decode(&reg, "pattern-ascii.ppm");
+        assert_eq!(img, test_image(ColorType::Rgb));
+        let (img, _) = decode(&reg, "pattern-gray.pgm");
+        assert_eq!(img, test_image(ColorType::Gray));
+        let (img, _) = decode(&reg, "pattern-rgb16.ppm");
+        assert_eq!(img.sample_format(), SampleFormat::U16);
+        assert_eq!(img, test_image_u16(ColorType::Rgb));
+        assert_too_large(&reg, "pattern-rgb.ppm");
+    }
+}
+
+// ------------------------------------------------------------------ SVG
+
+#[cfg(feature = "svg")]
+mod svg {
+    use super::*;
+
+    #[test]
+    fn one_rect_per_pixel_renders_the_pattern() {
+        let reg = registry();
+        let (img, info) = decode(&reg, "pattern-rgb.svg");
+        assert_eq!(info.format, Format::Svg);
+        assert!(!info.animated);
+        assert_eq!(img.color(), ColorType::Rgb);
+        assert_eq!(img, test_image(ColorType::Rgb));
+        assert_too_large(&reg, "pattern-rgb.svg");
+    }
+
+    #[test]
+    fn translucent_rows_come_back_unpremultiplied() {
+        let (img, _) = decode(&registry(), "pattern-rgba.svg");
+        assert_eq!(img.color(), ColorType::Rgba);
+        // Premultiplying and undoing it at 8 bits costs up to a step.
+        assert_close(&img, &test_image(ColorType::Rgba), 1.0, "pattern-rgba.svg");
+        let err = mae_channel(&img, &test_image(ColorType::Rgba), 3);
+        assert!(err <= 1.0, "alpha error {err}");
+    }
+}

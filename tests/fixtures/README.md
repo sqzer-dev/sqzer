@@ -74,6 +74,42 @@ pattern-rot90.heic        stored rotated so that the container's `irot` (90 degr
 pattern-10bit.heic        10-bit 4:2:0, quality 92, the same way with x265 4.3; the
                           conformance fixture of ADR-0005 for what each HEIC decoder
                           does with a deep source
+
+# GIF: image 0.25.10's GifEncoder (NeuQuant quantisation) for the RGB file, the
+# gif 0.14.2 crate for the other two. The pattern has more colours than a palette
+# holds, so every GIF is quantised and the tests compare within a bound
+pattern-rgb.gif           one frame filling the screen, no transparent index
+pattern-alpha.gif         one frame, odd rows transparent
+pattern-anim.gif          two frames: the pattern, then a 16 x 16 solid patch at (8, 8)
+
+# TIFF: tiff 0.11.3
+pattern-rgb.tif           RGB8, uncompressed
+pattern-rgba.tif          RGBA8, LZW
+pattern-gray.tif          Gray8, uncompressed
+pattern-rgb16.tif         RGB16, uncompressed
+pattern-rot90.tif         RGB8 stored rotated, Orientation tag 6
+pattern-icc.tif           RGB8 with the Display P3 profile in tag 34675
+
+# BMP, TGA, ICO, QOI, PNM: image 0.25.10's encoders, except the 16-bit PPM,
+# which was written by hand (P6, maxval 65535, big-endian)
+pattern-rgb.bmp           24-bit
+pattern-rgba.bmp          32-bit
+pattern-rgb.tga           RLE true colour
+pattern-rgba.tga          RLE true colour with alpha
+pattern-gray.tga          RLE 8-bit gray
+pattern-rgba.ico          one 48 x 32 entry, PNG-compressed
+pattern-rgb.qoi           RGB
+pattern-rgba.qoi          RGBA
+pattern-rgb.ppm           P6, binary
+pattern-ascii.ppm         P3, ASCII
+pattern-gray.pgm          P5, binary
+pattern-rgb16.ppm         P6, maxval 65535
+
+# SVG: written by a script, one 1 x 1 rect per pixel on integer coordinates
+# with shape-rendering="crispEdges", so the rasterised result is the pattern
+# exactly
+pattern-rgb.svg           width and height attributes plus a viewBox
+pattern-rgba.svg          viewBox only; odd rows at fill-opacity 0.50196 (128/255)
 ```
 
 The ICC profile in the `-icc` files is a Display P3 profile synthesised by

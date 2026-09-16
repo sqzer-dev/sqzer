@@ -12,7 +12,22 @@ repository.workspace = true
 default = ["portable"]
 
 # Tier 1: pure Rust, permissive. Must build on wasm32.
-portable = ["png", "jpeg", "webp-lossless", "avif", "jxl-decode", "heif", "gif", "tiff", "svg"]
+portable = [
+    "png",
+    "jpeg",
+    "webp-lossless",
+    "avif",
+    "jxl-decode",
+    "heif",
+    "gif",
+    "tiff",
+    "bmp",
+    "tga",
+    "ico",
+    "qoi",
+    "pnm",
+    "svg",
+]
 # `oxipng` is the PNG writer on desktop targets; on wasm32 it is compiled
 # out (see below) and the plain `png` writer takes its place.
 png = ["dep:png", "dep:oxipng"]
@@ -27,9 +42,17 @@ jxl-decode = ["dep:jxl-oxide"]
 # decoder: a portable build says "needs `native-heif`" for a HEIC instead
 # of "unrecognised". Pure Rust, no dependencies.
 heif = []
-gif = []
-tiff = []
-svg = []
+# Input-only formats. GIF and TIFF have their own crates; BMP, TGA, ICO,
+# QOI and PNM are the simple containers `image` reads, one feature per
+# format so `decoder_features` can name it. SVG is rasterised by `resvg`.
+gif = ["dep:gif"]
+tiff = ["dep:tiff"]
+bmp = ["dep:image", "image/bmp"]
+tga = ["dep:image", "image/tga"]
+ico = ["dep:image", "image/ico"]
+qoi = ["dep:image", "image/qoi"]
+pnm = ["dep:image", "image/pnm"]
+svg = ["dep:resvg"]
 
 # Tier 2: C bindings. Opt-in, desktop targets only; a native feature on
 # wasm32 is a compile error. Each feature vendors its C library and builds
@@ -72,8 +95,27 @@ rgb = { version = "0.8.53", optional = true, default-features = false }
 jxl-oxide = { version = "0.12.6", optional = true, default-features = false }
 # Only the orientation tag is read. BSD-2-Clause.
 kamadak-exif = { version = "0.6.1", optional = true }
+# GIF reader, first frame. MIT OR Apache-2.0. `color_quant` is for the
+# encoder and is off.
+gif = { version = "0.14.2", optional = true, default-features = false, features = ["std"] }
+# TIFF reader. MIT. LZW, Deflate and JPEG-in-TIFF strips; the fax
+# (CCITT) codec would add a crate and is off.
+tiff = { version = "0.11.3", optional = true, default-features = false, features = ["lzw", "deflate", "jpeg"] }
+# The simple raster containers: BMP, TGA, ICO, QOI, PNM. Decoders only;
+# `image`'s encoders are what this project replaces (ADR-0001) and no
+# feature enables one. MIT OR Apache-2.0. The `ico` feature pulls
+# `image`'s PNG reader, over the `png` crate already in the tree.
+image = { version = "0.25.10", optional = true, default-features = false }
+# SVG rasteriser. Apache-2.0 OR MIT. `text` shapes text, `raster-images`
+# renders embedded PNG, JPEG, GIF and WebP through crates already in the
+# tree. System fonts are loaded on desktop targets only, see below.
+resvg = { version = "0.48.1", optional = true, default-features = false, features = ["text", "raster-images"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# `<text>` in an SVG needs fonts; on desktop targets `resvg` reads the
+# system's, memory-mapped. wasm32 has no file system and renders text
+# with whatever is embedded, which is nothing.
+resvg = { version = "0.48.1", optional = true, default-features = false, features = ["system-fonts", "memmap-fonts"] }
 # PNG optimiser. MIT. Its DEFLATE step is `libdeflate`, a vendored C
 # library built by `cc`, which is why it is desktop only: see ADR-0002.
 # `parallel` is off (single-threaded encoders, ADR-0001 D3), `zopfli`
