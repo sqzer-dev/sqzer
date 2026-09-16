@@ -29,6 +29,10 @@ install-updater = false
 # five.
 features = ["native"]
 precise-builds = true
+# Rehearsal only (ADR-0006 item 4): build and upload the six archives on
+# this pull request. Not for main, it would run the C build six times on
+# every PR.
+pr-run-mode = "upload"
 # `brew install sqzer-dev/tap/sqzer`. The tap is the
 # `sqzer-dev/homebrew-tap` repository; the publish job writes the formula
 # there with the `HOMEBREW_TAP_TOKEN` secret of this repository.

@@ -148,6 +148,10 @@ jobs:
       - name: "nasm for libaom on Windows"
         uses: "ilammy/setup-nasm@v1"
         if: "runner.os == 'Windows'"
+      - uses: swatinem/rust-cache@v2
+        with:
+          key: ${{ join(matrix.targets, '-') }}
+          cache-provider: ${{ matrix.cache_provider }}
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
       # Get the dist-manifest
