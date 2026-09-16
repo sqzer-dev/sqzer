@@ -88,6 +88,22 @@ fn feature_registry_lists_the_compiled_backends() {
     if cfg!(feature = "jxl-decode") {
         expected.push((Format::Jxl, Tier::Portable));
     }
+    // Input-only formats, in registration order; TGA last, it has no
+    // magic number.
+    for (on, format) in [
+        (cfg!(feature = "gif"), Format::Gif),
+        (cfg!(feature = "tiff"), Format::Tiff),
+        (cfg!(feature = "bmp"), Format::Bmp),
+        (cfg!(feature = "ico"), Format::Ico),
+        (cfg!(feature = "qoi"), Format::Qoi),
+        (cfg!(feature = "pnm"), Format::Pnm),
+        (cfg!(feature = "svg"), Format::Svg),
+        (cfg!(feature = "tga"), Format::Tga),
+    ] {
+        if on {
+            expected.push((format, Tier::Portable));
+        }
+    }
     // HEIC: the OS decoder and the runtime loader on macOS and Windows,
     // the loader alone on Linux gnu, nothing on musl (ADR-0005).
     if cfg!(all(

@@ -25,6 +25,16 @@ pub enum Format {
     Gif,
     /// TIFF.
     Tiff,
+    /// BMP (input only).
+    Bmp,
+    /// TGA (input only).
+    Tga,
+    /// ICO (input only).
+    Ico,
+    /// QOI (input only).
+    Qoi,
+    /// PNM: PBM, PGM, PPM and PAM (input only).
+    Pnm,
     /// HEIC / HEIF.
     Heic,
     /// SVG (input only).
@@ -41,6 +51,11 @@ impl Format {
         Self::Jxl,
         Self::Gif,
         Self::Tiff,
+        Self::Bmp,
+        Self::Tga,
+        Self::Ico,
+        Self::Qoi,
+        Self::Pnm,
         Self::Heic,
         Self::Svg,
     ];
@@ -56,6 +71,11 @@ impl Format {
             Self::Jxl => "jxl",
             Self::Gif => "gif",
             Self::Tiff => "tiff",
+            Self::Bmp => "bmp",
+            Self::Tga => "tga",
+            Self::Ico => "ico",
+            Self::Qoi => "qoi",
+            Self::Pnm => "pnm",
             Self::Heic => "heic",
             Self::Svg => "svg",
         }
@@ -72,6 +92,11 @@ impl Format {
             Self::Jxl => "image/jxl",
             Self::Gif => "image/gif",
             Self::Tiff => "image/tiff",
+            Self::Bmp => "image/bmp",
+            Self::Tga => "image/x-tga",
+            Self::Ico => "image/vnd.microsoft.icon",
+            Self::Qoi => "image/qoi",
+            Self::Pnm => "image/x-portable-anymap",
             Self::Heic => "image/heic",
             Self::Svg => "image/svg+xml",
         }
@@ -90,6 +115,11 @@ impl Format {
             "jxl" => Self::Jxl,
             "gif" => Self::Gif,
             "tif" | "tiff" => Self::Tiff,
+            "bmp" | "dib" => Self::Bmp,
+            "tga" | "icb" | "vda" | "vst" => Self::Tga,
+            "ico" | "cur" => Self::Ico,
+            "qoi" => Self::Qoi,
+            "pnm" | "pbm" | "pgm" | "ppm" | "pam" => Self::Pnm,
             "heic" | "heif" => Self::Heic,
             "svg" => Self::Svg,
             _ => return None,
@@ -107,14 +137,21 @@ impl Format {
             Self::WebP => &["webp-lossless", "native-webp"],
             Self::Avif => &["avif", "native-avif"],
             Self::Jxl => &["native-jxl"],
-            Self::Gif | Self::Tiff | Self::Heic | Self::Svg => &[],
+            Self::Gif
+            | Self::Tiff
+            | Self::Bmp
+            | Self::Tga
+            | Self::Ico
+            | Self::Qoi
+            | Self::Pnm
+            | Self::Heic
+            | Self::Svg => &[],
         }
     }
 
     /// Cargo features of `sqzer-codecs` that provide a decoder for this
     /// format, the mirror of [`Format::encoder_features`]. This is the
-    /// `available_in` list in [`crate::Error::DecoderUnavailable`]. Empty
-    /// for a format no feature reads yet.
+    /// `available_in` list in [`crate::Error::DecoderUnavailable`].
     #[must_use]
     pub const fn decoder_features(self) -> &'static [&'static str] {
         match self {
@@ -123,8 +160,15 @@ impl Format {
             Self::WebP => &["webp-lossless"],
             Self::Avif => &["avif"],
             Self::Jxl => &["jxl-decode"],
+            Self::Gif => &["gif"],
+            Self::Tiff => &["tiff"],
+            Self::Bmp => &["bmp"],
+            Self::Tga => &["tga"],
+            Self::Ico => &["ico"],
+            Self::Qoi => &["qoi"],
+            Self::Pnm => &["pnm"],
             Self::Heic => &["native-heif"],
-            Self::Gif | Self::Tiff | Self::Svg => &[],
+            Self::Svg => &["svg"],
         }
     }
 }
@@ -139,6 +183,11 @@ impl core::fmt::Display for Format {
             Self::Jxl => "JPEG XL",
             Self::Gif => "GIF",
             Self::Tiff => "TIFF",
+            Self::Bmp => "BMP",
+            Self::Tga => "TGA",
+            Self::Ico => "ICO",
+            Self::Qoi => "QOI",
+            Self::Pnm => "PNM",
             Self::Heic => "HEIC",
             Self::Svg => "SVG",
         })
@@ -299,6 +348,8 @@ mod tests {
         }
         assert_eq!(Format::from_extension("jpeg"), Some(Format::Jpeg));
         assert_eq!(Format::from_extension("tif"), Some(Format::Tiff));
-        assert_eq!(Format::from_extension("bmp"), None);
+        assert_eq!(Format::from_extension("pgm"), Some(Format::Pnm));
+        assert_eq!(Format::from_extension("cur"), Some(Format::Ico));
+        assert_eq!(Format::from_extension("psd"), None);
     }
 }
