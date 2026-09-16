@@ -63,7 +63,7 @@ sqzer-cli-x86_64-pc-windows-msvc.zip          no jpegli; JPEG is mozjpeg-rs
 
 `sqzer --list-codecs` prints what the binary in front of you has. The rows are decided per target in `crates/sqzer-native-tier` and the reasons are in [`docs/adr/0006-release-matrix.md`](docs/adr/0006-release-matrix.md).
 
-> **Note**: No release is tagged yet. Until `v0.0.1` the installer URLs return 404; build from source as under Development.
+> **Note**: No release is tagged yet. Until `v0.1.0` the installer URLs return 404; build from source as under Development.
 
 ## Command line
 
