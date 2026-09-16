@@ -398,6 +398,9 @@ mod tests {
                 "{}",
                 err.message
             );
+        }
+        // Lossy WebP is `webpx`, which every `native` build has.
+        if !cfg!(feature = "native") {
             let err = build_from(&["a.png", "-f", "webp", "-q", "80"]).unwrap_err();
             assert_eq!(err.code, 3);
             assert!(err.message.contains("for lossy output"), "{}", err.message);
