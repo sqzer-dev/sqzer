@@ -1,0 +1,45 @@
+[package]
+name = "sqzer-native-tier"
+description = "The native tier of sqzer as its release binaries carry it, selected per target. Not public API."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# This crate has no code. It exists because Cargo has no per-target
+# features and `cargo-dist` passes one feature list to every release
+# target (ADR-0006): `sqzer/native` turns `native` on here, and the
+# target-specific tables below enable the `sqzer-codecs` backends the
+# target can build and run. Cargo unifies every entry into the one build
+# of `sqzer-codecs`. The `native-*` features of `sqzer` and `sqzer-cli`
+# do not come through here; each asks for its backend on every target and
+# fails to build where it cannot.
+[features]
+# Off by default so a workspace-wide build stays portable.
+native = ["dep:sqzer-codecs"]
+
+# Which HEIC decoder `native-heif` registers is already decided per
+# target inside `sqzer-codecs` (ADR-0005 D6), so it is on everywhere,
+# musl included, where it registers nothing.
+[dependencies]
+sqzer-codecs = { workspace = true, optional = true, features = ["native-webp", "native-avif", "native-heif"] }
+
+# `native-jxl` needs a C++ compiler for musl that `musl-tools` does not
+# provide, so the static musl binary has no JPEG XL encoder.
+[target.'cfg(not(target_env = "musl"))'.dependencies]
+sqzer-codecs = { workspace = true, optional = true, features = ["native-jxl"] }
+
+# `native-jpegli` is out on three targets: musl (the same C++ gap),
+# Windows (`jpegli-sys` wants a single-config cmake generator and
+# `jpegxl-src` the Visual Studio one, so it cannot sit next to
+# `native-jxl` there) and aarch64 Linux (`jpegli-sys`'s libjxl 0.10
+# segfaults on the first encode when built with GCC for Neoverse). JPEG
+# stays with `mozjpeg-rs` on those. `sqzer-cli/src/native_set.rs` mirrors
+# these two `cfg` lines for the tests.
+[target.'cfg(not(any(windows, target_env = "musl", all(target_arch = "aarch64", target_os = "linux"))))'.dependencies]
+sqzer-codecs = { workspace = true, optional = true, features = ["native-jpegli"] }
+
+[lints]
+workspace = true

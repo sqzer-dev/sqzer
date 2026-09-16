@@ -225,39 +225,42 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("png:interlace=false"), "{text}");
-        if cfg!(feature = "native") {
+        // What a `native` build carries depends on the target, see
+        // `native_set`.
+        if crate::native_set::JPEGLI {
             assert!(text.contains("jpegli (native), lossy"), "{text}");
+        } else {
+            assert!(text.contains("mozjpeg-rs (portable), lossy"), "{text}");
+            assert!(text.contains("jpeg:progressive=true"), "{text}");
+        }
+        if crate::native_set::JXL {
             assert!(
                 text.contains("gamut-jxl (native), lossy and lossless"),
                 "{text}"
             );
             assert!(text.contains("jxl:container=false"), "{text}");
-            // Which HEIC decoder a build has depends on the target; the
-            // OS decoder is listed first where there is one.
-            let heic = if cfg!(target_os = "macos") {
-                "HEIC     decode  imageio (native"
-            } else if cfg!(windows) {
-                "HEIC     decode  wic (native"
-            } else {
-                "HEIC     decode  libheif (native"
-            };
-            assert!(text.contains(heic), "{text}");
         } else {
-            assert!(text.contains("mozjpeg-rs (portable), lossy"), "{text}");
-            assert!(text.contains("jpeg:progressive=true"), "{text}");
             assert!(text.contains("none; needs `native-jxl`"), "{text}");
-            assert!(
-                text.contains("HEIC     decode  none; needs `native-heif`"),
-                "{text}"
-            );
         }
+        // Which HEIC decoder a build has depends on the target; the OS
+        // decoder is listed first where there is one.
+        let heic = if !crate::native_set::HEIC {
+            "HEIC     decode  none; needs `native-heif`"
+        } else if cfg!(target_os = "macos") {
+            "HEIC     decode  imageio (native"
+        } else if cfg!(windows) {
+            "HEIC     decode  wic (native"
+        } else {
+            "HEIC     decode  libheif (native"
+        };
+        assert!(text.contains(heic), "{text}");
         assert!(!render(&reg, false).contains("option"));
         for line in render_json(&reg).lines() {
             let v: serde_json::Value = serde_json::from_str(line).unwrap();
             assert!(v["format"].is_string());
             if v["format"] == "heic" {
                 assert_eq!(v["decoder_features"], serde_json::json!(["native-heif"]));
-                if !cfg!(feature = "native") {
+                if !crate::native_set::HEIC {
                     assert!(v["decoder"].is_null(), "{v}");
                 }
             }

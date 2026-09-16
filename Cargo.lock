@@ -1718,6 +1718,7 @@ dependencies = [
  "sqzer-codecs",
  "sqzer-core",
  "sqzer-metrics",
+ "sqzer-native-tier",
 ]
 
 [[package]]
@@ -1780,6 +1781,13 @@ version = "0.0.1"
 dependencies = [
  "fast-ssim2",
  "sqzer-core",
+]
+
+[[package]]
+name = "sqzer-native-tier"
+version = "0.0.1"
+dependencies = [
+ "sqzer-codecs",
 ]
 
 [[package]]

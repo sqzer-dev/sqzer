@@ -368,9 +368,9 @@ mod tests {
 
     #[test]
     fn unknown_codec_opts_are_usage_errors() {
-        // A native build has a JPEG XL encoder, which rejects the key
-        // itself; a portable build has none to ask.
-        let jxl_needle = if cfg!(feature = "native") {
+        // A build with `gamut-jxl` rejects the key itself; one without
+        // has no encoder to ask.
+        let jxl_needle = if crate::native_set::JXL {
             "unknown jxl option `effort`"
         } else {
             "no JPEG XL encoder in this build"
@@ -389,8 +389,8 @@ mod tests {
 
     #[test]
     fn a_format_this_build_cannot_write_is_exit_3() {
-        // A native build writes both; only the portable build refuses.
-        if !cfg!(feature = "native") {
+        // A build with `gamut-jxl` writes it; the others refuse.
+        if !crate::native_set::JXL {
             let err = build_from(&["a.png", "-f", "jxl"]).unwrap_err();
             assert_eq!(err.code, 3);
             assert!(
@@ -398,6 +398,9 @@ mod tests {
                 "{}",
                 err.message
             );
+        }
+        // Lossy WebP is `webpx`, which every `native` build has.
+        if !cfg!(feature = "native") {
             let err = build_from(&["a.png", "-f", "webp", "-q", "80"]).unwrap_err();
             assert_eq!(err.code, 3);
             assert!(err.message.contains("for lossy output"), "{}", err.message);

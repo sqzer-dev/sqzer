@@ -31,6 +31,9 @@ sqzer = { path = "crates/sqzer", version = "0.0.1", default-features = false }
 heif-dl = { path = "crates/heif-dl", version = "0.0.1" }
 heif-imageio = { path = "crates/heif-imageio", version = "0.0.1" }
 heif-wic = { path = "crates/heif-wic", version = "0.0.1" }
+# The per-target selection behind `sqzer/native` (ADR-0006). Not public
+# API; published because `sqzer` depends on it.
+sqzer-native-tier = { path = "crates/sqzer-native-tier", version = "0.0.1" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -45,3 +48,8 @@ module_name_repetitions = "allow"
 lto = "fat"
 codegen-units = 1
 strip = true
+
+# What `cargo-dist` builds the release binaries with: the release profile
+# as is, fat LTO included.
+[profile.dist]
+inherits = "release"

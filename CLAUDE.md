@@ -31,6 +31,8 @@ Three Cargo feature groups in `sqzer-codecs`:
 - `native`: C bindings (`native-webp`, `native-jxl`, `native-avif`, `native-heif`, `native-jpegli`). Opt-in, desktop only. The crate choices are in `docs/adr/0004-native-tier.md`; `jpegxl-rs` is GPL and banned.
 - `agpl`: reserved, empty. When populated it lives in a separate `sqzer-codecs-agpl` crate.
 
+`native` on `sqzer` and `sqzer-cli` means the backends the target can build and run, decided per target in `crates/sqzer-native-tier/Cargo.toml` (ADR-0006); a single `native-*` feature is strict. Release binaries are built with that one feature list on all six desktop targets. The per-target facts live in that manifest and in `crates/sqzer-cli/src/native_set.rs`; change both together.
+
 `deny.toml` enforces this. The allow-list is permissive licences plus MPL-2.0. The ban list names the imazen zen* crates (`zenwebp`, `zenjpeg`, `zenavif`, `zenravif`, `zenjxl`, `jxl-encoder`, `rav1d-safe`, `heic`). Do not add any of them to a permissive crate, do not add AGPL to the allow-list, and do not work around `cargo deny` failures by loosening the config. If a task needs one of those crates, stop and say so.
 
 When a requested output format has no encoder in the current build, return `Error::EncoderUnavailable { format, available_in }`. Never fall back silently to a different format or a worse encoder.
@@ -67,6 +69,7 @@ Run the full set before declaring a change done. CI runs the same commands plus 
 - Squash commit messages use conventional prefixes scoped to the crate: `feat(codecs): mozjpeg-rs encoder`, `fix(cli): exit code on partial batch failure`. Intermediate commits on a branch do not matter.
 - A behaviour change updates `CHANGELOG.md` under Unreleased in the same PR. The file follows the Angular changelog convention: `### Features` / `### Bug Fixes` / `### Performance Improvements` headings, entries as `* **scope:** subject` with the same crate scope as the commit.
 - Architecture changes get a new ADR in `docs/adr`, not a rewrite of an existing one.
+- Releases: push a `v*` tag. `dist-workspace.toml` drives `.github/workflows/release.yml`; edit the TOML and run `dist generate`, never the workflow by hand. The release `plan` job fails a PR when the two disagree.
 - New dependencies: state the licence in the PR description and check it is on the `deny.toml` allow-list. Prefer crates that already speak `imgref` or implement `image`'s traits, since adapters then come cheap.
 
 ## Testing expectations
