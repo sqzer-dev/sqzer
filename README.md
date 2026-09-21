@@ -132,7 +132,7 @@ rimage avif in.jpg                   sqzer -f avif in.jpg
 
 ## Formats
 
-Decode: JPEG, PNG, WebP, AVIF, JPEG XL, GIF, TIFF, BMP, TGA, ICO, QOI, PNM, SVG. HEIC and OpenEXR behind features.
+Decode: JPEG, PNG, WebP, AVIF, JPEG XL, GIF, TIFF, BMP, TGA, ICO, QOI, PNM, SVG. HEIC behind a feature. OpenEXR is not read yet.
 
 Encode: JPEG, PNG, WebP, AVIF, JPEG XL.
 
@@ -142,6 +142,8 @@ Backends come in tiers, mirrored by Cargo features:
 portable   pure Rust, permissive licences, builds on wasm32. Always on.
            JPEG (mozjpeg-rs / zune-jpeg), PNG (oxipng), AVIF (ravif / re_rav1d),
            WebP (image-webp, lossless write), JXL decode (jxl-oxide).
+           Input only: GIF (gif), TIFF (tiff), BMP, TGA, ICO, QOI and PNM (image,
+           decoders only), SVG rasterised by resvg.
 native     C bindings, opt-in, one feature per library, `native` for all five.
            native-webp    libwebp, lossy and lossless WebP (webpx)
            native-jxl     libjxl, JPEG XL encoding (gamut-jxl)
@@ -156,6 +158,8 @@ agpl       reserved. Never a default dependency, never in the library.
 > **Note**: The portable tier cannot write lossy WebP or JPEG XL. No permissive pure-Rust encoder exists for either as of September 2026 (`jixel` is a candidate for JPEG XL, unmeasured). Requesting one in a portable build returns `EncoderUnavailable` with the feature that would provide it, it never silently falls back.
 
 > **Note**: Every native feature vendors and builds its C library from source (`cc` or cmake; nasm on x86; a C++ compiler for `native-jxl` and `native-jpegli`), except `native-heif`, which links nothing. HEIC comes from the OS decoder on macOS (ImageIO, every Mac since 10.13) and Windows (WIC, needs the HEIF Image Extension and HEVC Video Extensions from the Microsoft Store), and from `libheif` (LGPL-3.0, >= 1.17, with an HEVC decoder) loaded at run time everywhere but musl: `libheif1` plus `libheif-plugin-libde265` on Debian and Ubuntu, `libheif-freeworld` on Fedora, `brew install libheif` on a Mac without ImageIO's decoder, or `SQZER_LIBHEIF` pointing at the library. A binary always starts; `sqzer --list-codecs` says which HEIC decoder it has and whether this machine can use it, and a HEIC input on a machine with none gets an error naming the fix. Static musl builds have no HEIC. [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md) has the crate choices and the licence facts, [`docs/adr/0005-heic-through-os-decoders.md`](docs/adr/0005-heic-through-os-decoders.md) the HEIC design, and which targets CI covers: all five on x86_64 Linux and both macOS targets, four on aarch64 Linux (jpegli crashes there), four on Windows (jpegli cannot share a cmake generator with libjxl there), three on musl (no C++ toolchain there yet). That per-target list is what `--features native` builds on `sqzer` and `sqzer-cli` and what the release binaries carry; a single `native-*` feature is strict and fails to build where the backend cannot ([`docs/adr/0006-release-matrix.md`](docs/adr/0006-release-matrix.md)).
+
+> **Note**: Input-only formats decode to their first image: the first frame of an animated GIF, the first page of a TIFF, the largest entry of an ICO. An SVG is rasterised at its own size, one CSS pixel per pixel, with the system's fonts for text (none on wasm32); references to files on disk are ignored, `data:` URLs are rendered, `.svgz` is not read. TIFF files in CMYK or YCbCr are refused rather than converted.
 
 > **Note**: AVIF decoding is desktop only. `rav1d` does not compile for `wasm32`, so the WASM build recognises AVIF input but has no decoder for it. AVIF encoding builds everywhere, but a perceptual target needs the output decoded to score it, so on `wasm32` AVIF takes an explicit quality only and the default output format there is JPEG.
 
