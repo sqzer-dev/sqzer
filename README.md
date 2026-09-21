@@ -2,7 +2,7 @@
 
 Multi-format image optimizer with best-in-class defaults. A library and a CLI, pure Rust by default, C codecs when you want the last few percent.
 
-> **Note**: Pre-alpha. The portable build decodes JPEG, PNG, WebP, AVIF and JPEG XL and writes JPEG, PNG, lossless WebP and AVIF; the native build adds lossy WebP, JPEG XL, `libaom` AVIF, jpegli JPEG and HEIC input through the OS decoder or a runtime-loaded `libheif`. Resize and colour management are still to come. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md), the command line in [`docs/adr/0003-cli-interface.md`](docs/adr/0003-cli-interface.md), the native backends in [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md).
+> **Note**: Pre-alpha. The portable build decodes JPEG, PNG, WebP, AVIF and JPEG XL and writes JPEG, PNG, lossless WebP and AVIF; the native build adds lossy WebP, JPEG XL, `libaom` AVIF, jpegli JPEG and HEIC input through the OS decoder or a runtime-loaded `libheif`. Colour management is still to come. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md), the command line in [`docs/adr/0003-cli-interface.md`](docs/adr/0003-cli-interface.md), the native backends in [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md).
 
 ## What it is for
 
@@ -74,8 +74,12 @@ One flat command. Flags can go anywhere, `-q` means quality everywhere, and code
 sqzer photo.jpg -t 60
 sqzer photo.jpg -q 82 -e 8
 sqzer photo.jpg --lossless -f png
-sqzer photo.jpg --preset thumbnail          # web (70), thumbnail (60), archive (85), lossless
+sqzer photo.jpg --preset thumbnail          # web (70), thumbnail (60, inside 512 x 512), archive (85), lossless
 sqzer photo.jpg --fast                      # one encode at the calibrated seed quality, no search
+
+# resize: fit inside, keep the aspect ratio, never enlarge. the target is scored against the resized image
+sqzer photo.jpg --max-width 1600
+sqzer photo.jpg --max-width 1600 --max-height 1600
 
 # codec-specific options, checked against the backend before anything runs
 sqzer photo.jpg -f jpeg -x jpeg:progressive=false
@@ -126,7 +130,7 @@ rimage avif in.jpg                   sqzer -f avif in.jpg
 -s <suffix>                          --suffix <suffix>
 -t <threads>                         -j <jobs>        (-t is now --target)
 --quantization / --dithering         --codec-opt png:colors=  (once a quantiser lands)
---resize <spec>                      not yet; resize ships with the pipeline stage
+--resize <spec>                      --max-width / --max-height, downscale only; the full grammar is not in yet
 --backup                             --backup, unchanged, with --in-place
 ```
 

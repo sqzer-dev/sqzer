@@ -281,7 +281,7 @@ What to revisit:
 4. [x] Add portable encoders: `oxipng`, `ravif`, `image-webp` lossless. (`oxipng` is desktop only, see ADR-0002.)
 5. [x] Add `sqzer-metrics` with `fast-ssim2` and the bisection loop; write the failure-mode tests (tiny image, flat image, noise).
 6. [x] Build the calibration harness on `codec-eval`; commit seed tables for JPEG, AVIF, WebP. (`codec-eval` pulls in AGPL `dssim-core`, so the harness is a standalone package under `tools/calibrate`, excluded from the workspace. The WebP table is measured through `libwebp` directly until item 8 provides the backend.)
-7. [x] CLI with the six command shapes from D5, JSON output, exit codes. (The grammar is ADR-0003. `--max-width` waits for the resize stage of D3.)
+7. [x] CLI with the six command shapes from D5, JSON output, exit codes. (The grammar is ADR-0003. `--max-width` and `--max-height` arrived with the resize stage of D3.)
 8. [x] Native tier: `libwebp`, `jpegxl-rs`, `libavif` + `libaom`, `libheif`; CI jobs for each on the six desktop targets. (The crates are ADR-0004's: `jpegxl-rs` is GPL-3.0, so JPEG XL goes through `gamut-jxl`; jpegli joined as a fifth backend. Windows lacks `native-heif` and musl lacks the C++ backends in CI, see that record's action items.)
 9. [x] `cargo-dist` release matrix, portable + native artifacts. (ADR-0006. Native artifacts only: since ADR-0005 a native binary starts on every machine and carries everything the portable build does, so a portable artifact would be a second, worse build of the same six targets. `native` now means what the target can build and run, see that record.)
 10. [ ] `sqzer-wasm` package and a minimal browser demo (the "Squoosh replacement" story is not complete without a drag-and-drop page, even if it is a 200-line HTML file).

@@ -1,5 +1,5 @@
 //! One input through the pipeline: read, probe, reserve its pixels,
-//! decode once, then encode and place every requested output.
+//! decode and resize once, then encode and place every requested output.
 
 use std::fs;
 use std::io::{Read, Write};
@@ -63,6 +63,19 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> Tally {
         Ok(d) => d,
         Err(e) => return fail(Record::failed(name, &e)),
     };
+    // The record describes the input; everything after this line sees the
+    // image the encoder will get.
+    let base = describe(input, &decoded, input_len);
+    let (width, height) = (decoded.image.width(), decoded.image.height());
+    if let Some(w) = &worker
+        && cfg.sqzer.resize_bounds().fit(width, height).is_some()
+    {
+        w.stage(Stage::Resize);
+    }
+    let decoded = match cfg.sqzer.transform(decoded) {
+        Ok(d) => d,
+        Err(e) => return fail(base.fail(&e)),
+    };
 
     let formats: Vec<Option<Format>> = if cfg.formats.is_empty() {
         vec![None]
@@ -74,7 +87,7 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> Tally {
             Some(f) => cfg.sqzer.clone().format(f),
             None => cfg.sqzer.clone(),
         };
-        let base = describe(input, &decoded, input_len);
+        let base = base.clone();
         let (record, details) = if cfg.dry_run {
             (plan(input, &decoded, &sqzer, base, ctx), Vec::new())
         } else {
@@ -117,6 +130,8 @@ fn plan(input: &Input, decoded: &Decoded, sqzer: &Sqzer, mut rec: Record, ctx: &
     let format = sqzer.pick_format(decoded);
     rec.format = Some(format_name(format));
     rec.content = Some(content_name(sqzer::core::content::classify(&decoded.image)));
+    rec.output_width = Some(decoded.image.width());
+    rec.output_height = Some(decoded.image.height());
     let caps = match sqzer.registry().encoder(format) {
         Ok(e) => e.caps(),
         Err(e) => return rec.fail(&e),

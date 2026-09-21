@@ -15,17 +15,22 @@
 //! let report = out.report.expect("a perceptual target always reports");
 //! println!("quality {} scored {}", report.quality, report.score);
 //! ```
+//!
+//! The pipeline is ADR-0001 D3: [`Sqzer::decode`], [`Sqzer::transform`],
+//! [`Sqzer::encode`]. [`Sqzer::run`] is the three in order.
 
 pub use sqzer_codecs as codecs;
 pub use sqzer_core as core;
 pub use sqzer_metrics as metrics;
+
+mod resize;
 
 use std::sync::Arc;
 
 use sqzer_core::codec::{Encoder, Format, FormatInfo, Tier};
 use sqzer_core::content::{self, Content};
 use sqzer_core::image::Image;
-use sqzer_core::params::{DecodeOpts, EncodeParams, Preset, Resolved, Subsampling, Target};
+use sqzer_core::params::{DecodeOpts, EncodeParams, Preset, Resize, Resolved, Subsampling, Target};
 use sqzer_core::{Decoded, Error, Registry, Result};
 use sqzer_metrics::{Reference, Search, SearchReport, seeds};
 
@@ -35,13 +40,14 @@ pub struct Sqzer {
     format: Option<Format>,
     params: EncodeParams,
     decode: DecodeOpts,
+    resize: Resize,
     fast: bool,
     registry: Arc<Registry>,
 }
 
 /// A step of [`Sqzer::encode_with`], reported as it happens so a caller
-/// can show live progress. More variants arrive with the resize and
-/// colour stages; match with a wildcard.
+/// can show live progress. More variants may arrive; match with a
+/// wildcard.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum Progress {
@@ -98,6 +104,7 @@ impl std::fmt::Debug for Sqzer {
             .field("format", &self.format)
             .field("params", &self.params)
             .field("decode", &self.decode)
+            .field("resize", &self.resize)
             .field("fast", &self.fast)
             .field("registry", &self.registry)
             .finish()
@@ -119,6 +126,7 @@ impl Sqzer {
             format: None,
             params: EncodeParams::default(),
             decode: DecodeOpts::default(),
+            resize: Resize::NONE,
             fast: false,
             registry: Arc::new(registry),
         }
@@ -142,6 +150,12 @@ impl Sqzer {
         &self.decode
     }
 
+    /// The resize bounds as currently configured.
+    #[must_use]
+    pub fn resize_bounds(&self) -> Resize {
+        self.resize
+    }
+
     /// The output format as currently configured. `None` means a
     /// content-aware default is chosen per image.
     #[must_use]
@@ -149,14 +163,41 @@ impl Sqzer {
         self.format
     }
 
-    /// Start from a preset: its target and effort replace the current
-    /// ones, everything else is kept. Call it before the flags that
-    /// should override it.
+    /// Start from a preset: its target, effort and resize bounds replace
+    /// the current ones, everything else is kept. Call it before the
+    /// flags that should override it.
     #[must_use]
     pub fn preset(mut self, preset: Preset) -> Self {
         let p = preset.params();
         self.params.target = p.target;
         self.params.effort = p.effort;
+        self.resize = preset.resize();
+        self
+    }
+
+    /// Scale down to at most this many pixels wide, keeping the aspect
+    /// ratio. Never enlarges. With [`Sqzer::max_height`] the image fits
+    /// inside both.
+    #[must_use]
+    pub fn max_width(mut self, pixels: u32) -> Self {
+        self.resize.max_width = Some(pixels);
+        self
+    }
+
+    /// Scale down to at most this many pixels tall, keeping the aspect
+    /// ratio. Never enlarges.
+    #[must_use]
+    pub fn max_height(mut self, pixels: u32) -> Self {
+        self.resize.max_height = Some(pixels);
+        self
+    }
+
+    /// Both resize bounds at once, replacing the current ones.
+    /// [`Resize::NONE`] turns the stage off, for example after a preset
+    /// that set it.
+    #[must_use]
+    pub fn resize(mut self, bounds: Resize) -> Self {
+        self.resize = bounds;
         self
     }
 
@@ -224,12 +265,12 @@ impl Sqzer {
         self
     }
 
-    /// Decode, transform, encode. No resize or colour management yet.
-    /// [`Sqzer::decode`] followed by [`Sqzer::encode`].
+    /// Decode, transform, encode: [`Sqzer::decode`], [`Sqzer::transform`],
+    /// [`Sqzer::encode`]. No colour management yet.
     ///
     /// A perceptual target runs the SSIMULACRA2 search of `sqzer-metrics`
     /// over the chosen encoder: up to six encodes, each decoded and scored
-    /// against the input, starting from the calibrated seed in
+    /// against the transformed input, starting from the calibrated seed in
     /// [`sqzer_metrics::seeds`] when the backend has one. A target the
     /// encoder cannot reach is not an error; the best candidate is
     /// returned and [`Output::report`] says the target was missed. An
@@ -245,11 +286,11 @@ impl Sqzer {
     /// Unknown input, input this build recognises but cannot decode
     /// ([`sqzer_core::Error::DecoderUnavailable`], naming the feature or
     /// the missing library), an image over the pixel limit, a decoder
-    /// failure, [`sqzer_core::Error::EncoderUnavailable`] for the chosen
-    /// format, or [`sqzer_core::Error::Unsupported`] for a perceptual
+    /// failure, a zero resize bound, [`sqzer_core::Error::EncoderUnavailable`]
+    /// for the chosen format, or [`sqzer_core::Error::Unsupported`] for a perceptual
     /// target whose output this build cannot decode.
     pub fn run(&self, input: &[u8]) -> Result<Output> {
-        self.encode(&self.decode(input)?)
+        self.encode(&self.transform(self.decode(input)?)?)
     }
 
     /// Probe and decode `input` with the configured decode options.
@@ -262,10 +303,36 @@ impl Sqzer {
         self.registry.decode(input, &self.decode)
     }
 
-    /// Encode an already decoded image. Everything [`Sqzer::run`] says
-    /// about targets and errors applies; a caller that wants several
-    /// output formats from one input decodes once and calls this per
-    /// format.
+    /// The stage between decode and encode, ADR-0001 D3. Today that is
+    /// the resize: fit inside [`Sqzer::max_width`] and
+    /// [`Sqzer::max_height`], aspect ratio kept, never enlarged, Lanczos3
+    /// in linear light with premultiplied alpha. Orientation was applied
+    /// by the decoder, so the bounds are those of the picture as displayed.
+    /// An image that already fits is returned as it came.
+    ///
+    /// The result is what the encoder sees and what a perceptual target is
+    /// scored against.
+    ///
+    /// # Errors
+    /// [`sqzer_core::Error::InvalidParams`] for a bound of zero,
+    /// [`sqzer_core::Error::Transform`] if the resampler refuses the image.
+    pub fn transform(&self, decoded: Decoded) -> Result<Decoded> {
+        if self.resize.max_width == Some(0) || self.resize.max_height == Some(0) {
+            return Err(Error::InvalidParams(
+                "a resize bound must be at least one pixel".into(),
+            ));
+        }
+        Ok(Decoded {
+            image: resize::fit(decoded.image, self.resize)?,
+            info: decoded.info,
+        })
+    }
+
+    /// Encode an already decoded image, as given: the resize is
+    /// [`Sqzer::transform`]'s, not this method's. Everything
+    /// [`Sqzer::run`] says about targets and errors applies; a caller that
+    /// wants several output formats from one input decodes and transforms
+    /// once and calls this per format.
     ///
     /// # Errors
     /// See [`Sqzer::run`].
@@ -574,6 +641,94 @@ mod tests {
         assert!(s.params().keep_icc);
         assert!(!s.decode_opts().apply_orientation);
         assert_eq!(s.format_choice(), None);
+    }
+
+    fn fixture(name: &str) -> Vec<u8> {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures")
+            .join(name);
+        std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    #[test]
+    fn max_width_scales_down_and_the_search_scores_the_resized_image() {
+        let s = portable().format(Format::Jpeg).max_width(32);
+        let out = s.run(&png_bytes(ColorType::Rgb)).unwrap();
+        assert_eq!((out.width, out.height), (32, 32));
+        let report = out.report.expect("a perceptual target reports");
+        // Scored against 32 x 32: against the 64 x 64 source the metric
+        // would have refused the size mismatch.
+        assert!(report.reached, "{report:?}");
+        let back = s.decode(&out.bytes).unwrap();
+        assert_eq!((back.image.width(), back.image.height()), (32, 32));
+        // Both bounds: the tighter one decides.
+        let out = portable()
+            .format(Format::Png)
+            .max_width(32)
+            .max_height(8)
+            .run(&png_bytes(ColorType::Rgba))
+            .unwrap();
+        assert_eq!((out.width, out.height), (8, 8));
+    }
+
+    #[test]
+    fn resize_never_enlarges() {
+        let s = portable()
+            .format(Format::Png)
+            .max_width(1600)
+            .max_height(1600);
+        let decoded = s.decode(&png_bytes(ColorType::Rgb)).unwrap();
+        let same = s.transform(decoded.clone()).unwrap();
+        assert_eq!(same, decoded);
+        let out = s.encode(&same).unwrap();
+        assert_eq!((out.width, out.height), (64, 64));
+    }
+
+    #[test]
+    fn orientation_is_applied_before_the_resize() {
+        // Stored 32 x 48 with EXIF orientation 6, displayed 48 x 32.
+        let bytes = fixture("pattern-rot90.jpg");
+        let s = portable().max_width(24);
+        let upright = s.transform(s.decode(&bytes).unwrap()).unwrap().image;
+        assert_eq!((upright.width(), upright.height()), (24, 16));
+        // The bound is on the displayed width, and the pixels agree: the
+        // same picture decoded upright and resized the same way.
+        let plain = s
+            .transform(s.decode(&fixture("pattern-rgb.jpg")).unwrap())
+            .unwrap()
+            .image;
+        assert_eq!((plain.width(), plain.height()), (24, 16));
+        let (a, b) = (
+            upright.samples().as_u8().unwrap(),
+            plain.samples().as_u8().unwrap(),
+        );
+        let worst = a.iter().zip(b).map(|(x, y)| x.abs_diff(*y)).max().unwrap();
+        assert!(worst <= 40, "two JPEGs of one pattern differ by {worst}");
+        // Without orientation the stored shape is what gets bounded.
+        let s = s.auto_orient(false);
+        let stored = s.transform(s.decode(&bytes).unwrap()).unwrap().image;
+        assert_eq!((stored.width(), stored.height()), (24, 36));
+    }
+
+    #[test]
+    fn thumbnail_preset_resizes_and_flags_override_it() {
+        let s = Sqzer::new().preset(Preset::Thumbnail);
+        assert_eq!(s.resize_bounds(), Preset::Thumbnail.resize());
+        assert_eq!(s.resize_bounds().max_width, Some(512));
+        // A later preset without a resize clears it.
+        assert_eq!(s.clone().preset(Preset::Web).resize_bounds(), Resize::NONE);
+        assert_eq!(s.clone().resize(Resize::NONE).resize_bounds(), Resize::NONE);
+        let s = s.max_width(100);
+        assert_eq!(s.resize_bounds().max_width, Some(100));
+        assert_eq!(s.resize_bounds().max_height, Some(512));
+    }
+
+    #[test]
+    fn a_zero_bound_is_refused() {
+        let s = portable().max_height(0);
+        let decoded = s.decode(&png_bytes(ColorType::Rgb)).unwrap();
+        let err = s.transform(decoded).unwrap_err();
+        assert!(matches!(err, Error::InvalidParams(_)), "{err}");
     }
 
     #[test]

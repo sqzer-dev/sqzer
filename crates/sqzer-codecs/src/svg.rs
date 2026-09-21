@@ -1,10 +1,12 @@
 //! SVG via `resvg` (Apache-2.0 OR MIT). Decoder only: the document is
 //! rasterised at its own size, one CSS pixel per pixel, at 96 dpi: the
 //! `width` and `height` attributes, else the `viewBox`, else the bounds
-//! of what it draws. A scale comes with the resize stage. Embedded raster images (`data:`
-//! URLs) are rendered, references to files on disk are refused. Text is
-//! shaped with the system's fonts on desktop targets and not at all on
-//! wasm32, which has no file system. Compressed `.svgz` is not read.
+//! of what it draws. The resize stage scales that raster down like any
+//! other input; a render scale comes with `--resize`. Embedded raster
+//! images (`data:` URLs) are rendered, references to files on disk are
+//! refused. Text is shaped with the system's fonts on desktop targets and
+//! not at all on wasm32, which has no file system. Compressed `.svgz` is
+//! not read.
 
 use std::sync::OnceLock;
 

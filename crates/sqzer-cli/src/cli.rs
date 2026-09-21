@@ -16,7 +16,7 @@ Examples:
   sqzer photo.jpg -f webp,avif             one input, two outputs
   sqzer ./assets -r -f avif -o ./dist      recurse, mirror the tree into dist
   sqzer *.png --preset lossless -f webp    lossless conversion
-  sqzer in.png --target 60                 lower perceptual target
+  sqzer in.png -t 60 --max-width 1600      lower perceptual target, plus a resize
   sqzer in.png --json                      sizes, scores, chosen params, one line per output
   sqzer --list-codecs                      what this build decodes and encodes, and from which tier
 
@@ -75,9 +75,10 @@ pub struct Args {
     #[arg(short, long, value_name = "0-10", value_parser = clap::value_parser!(u8).range(0..=10), help_heading = "Quality")]
     pub effort: Option<u8>,
 
-    /// Named settings: web (target 70), thumbnail (60), archive (85),
-    /// lossless. Explicit --target, --quality, --lossless and --effort
-    /// override the preset.
+    /// Named settings: web (target 70), thumbnail (60, fit inside 512 x
+    /// 512), archive (85), lossless. Explicit --target, --quality,
+    /// --lossless, --effort, --max-width and --max-height override the
+    /// preset.
     #[arg(long, value_enum, value_name = "NAME", help_heading = "Quality")]
     pub preset: Option<PresetArg>,
 
@@ -107,6 +108,23 @@ pub struct Args {
     /// the target. Needs a seed table for the backend.
     #[arg(long, conflicts_with_all = ["quality", "lossless"], hide_short_help = true, help_heading = "Quality")]
     pub fast: bool,
+
+    // ---- Resize
+    /// Scale down to at most N pixels wide, keeping the aspect ratio.
+    /// Never enlarges. The perceptual target is scored against the
+    /// resized image.
+    ///
+    /// Lanczos3 in linear light, alpha premultiplied. EXIF orientation is
+    /// applied first, so N bounds the picture as displayed. With
+    /// --max-height the image fits inside both. Either flag replaces the
+    /// resize of --preset thumbnail.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..), help_heading = "Resize")]
+    pub max_width: Option<u32>,
+
+    /// Scale down to at most N pixels tall, keeping the aspect ratio.
+    /// Never enlarges.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..), help_heading = "Resize")]
+    pub max_height: Option<u32>,
 
     // ---- Output placement
     /// Output file, when there is one input and one format and PATH has
@@ -284,7 +302,7 @@ impl When {
 pub enum PresetArg {
     /// Target 70, effort 6.
     Web,
-    /// Target 60, effort 6.
+    /// Target 60, effort 6, fit inside 512 x 512.
     Thumbnail,
     /// Target 85, effort 8.
     Archive,
@@ -420,6 +438,7 @@ mod tests {
             "./assets -r -f avif -o ./dist",
             "a.png b.png --preset lossless -f webp",
             "in.png --target 60",
+            "in.png -t 60 --max-width 1600",
             "in.png --json",
             "--list-codecs",
         ] {
@@ -455,6 +474,9 @@ mod tests {
             &["a.png", "-t", "150"],
             &["a.png", "-j", "0"],
             &["a.png", "--max-pixels", "0"],
+            &["a.png", "--max-width", "0"],
+            &["a.png", "--max-height", "0"],
+            &["a.png", "--max-width", "wide"],
         ] {
             let err = parse(bad).unwrap_err();
             assert_eq!(err.exit_code(), 2, "{bad:?}: {err}");
