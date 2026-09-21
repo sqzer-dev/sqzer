@@ -83,6 +83,13 @@ pub struct Record {
     /// Output format, as `-f` spells it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<&'static str>,
+    /// Width of the output: `width`, unless the resize stage scaled the
+    /// image down.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_width: Option<u32>,
+    /// Height of the output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_height: Option<u32>,
     /// Backend crate that wrote the output.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backend: Option<&'static str>,
@@ -142,6 +149,8 @@ impl Record {
     /// Fill in the encode result.
     pub fn with_output(mut self, out: &Output) -> Self {
         self.format = Some(format_name(out.format));
+        self.output_width = Some(out.width);
+        self.output_height = Some(out.height);
         self.backend = Some(out.backend);
         self.tier = Some(out.tier.to_string());
         self.content = Some(content_name(out.content));
@@ -301,6 +310,8 @@ pub enum Stage {
     Read,
     /// Decoding.
     Decode,
+    /// Scaling down to `--max-width` / `--max-height`.
+    Resize,
     /// Encoding once at a known quality, or about to search.
     Encode,
     /// The search scored trial `n` of `max`.
@@ -374,6 +385,7 @@ impl Worker<'_> {
         let (color, message) = match stage {
             Stage::Read => ("cyan", "read".to_string()),
             Stage::Decode => ("cyan", "decode".to_string()),
+            Stage::Resize => ("cyan", "resize".to_string()),
             Stage::Encode => ("magenta", "encode".to_string()),
             Stage::Trial {
                 n,
@@ -618,10 +630,15 @@ impl Printer {
                 )
             }
             Status::Planned => {
-                let dims = match (r.width, r.height) {
+                let mut dims = match (r.width, r.height) {
                     (Some(w), Some(h)) => format!("{w}x{h}"),
                     _ => String::new(),
                 };
+                if let (Some(w), Some(h)) = (r.output_width, r.output_height)
+                    && (Some(w), Some(h)) != (r.width, r.height)
+                {
+                    dims = format!("{dims} -> {w}x{h}");
+                }
                 let alpha = if r.alpha == Some(true) { " alpha" } else { "" };
                 let output = path_cell(r.output.as_deref().unwrap_or("-"), NAME, 0);
                 format!(

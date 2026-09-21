@@ -38,8 +38,9 @@ pub enum Subsampling {
     S420,
 }
 
-/// A named bundle of encode settings, ADR-0001 D4. A preset is a target
-/// plus an effort; codec-specific knobs stay in `codec_specific`.
+/// A named bundle of settings, ADR-0001 D4. A preset is a target plus an
+/// effort, and for `thumbnail` a resize; codec-specific knobs stay in
+/// `codec_specific`.
 ///
 /// The targets are calibrated guesses on the SSIMULACRA2 scale, where 70
 /// is "high quality, no visible artefacts on a normal display" and 50 is
@@ -50,7 +51,8 @@ pub enum Preset {
     /// Target 70, effort 6. The default.
     #[default]
     Web,
-    /// Target 60, effort 6. Images that are displayed small.
+    /// Target 60, effort 6, fit inside 512 x 512. Images that are
+    /// displayed small.
     Thumbnail,
     /// Target 85, effort 8. Keep more than the eye needs, spend the time.
     Archive,
@@ -96,6 +98,70 @@ impl Preset {
             effort,
             ..EncodeParams::default()
         }
+    }
+
+    /// The resize this preset stands for. Only `thumbnail` has one: fit
+    /// inside [`Preset::THUMBNAIL_EDGE`] pixels on both axes.
+    #[must_use]
+    pub const fn resize(self) -> Resize {
+        match self {
+            Self::Thumbnail => Resize {
+                max_width: Some(Self::THUMBNAIL_EDGE),
+                max_height: Some(Self::THUMBNAIL_EDGE),
+            },
+            Self::Web | Self::Archive | Self::Lossless => Resize::NONE,
+        }
+    }
+
+    /// The box the `thumbnail` preset fits into: a 256 px slot on a 2x
+    /// display.
+    pub const THUMBNAIL_EDGE: u32 = 512;
+}
+
+/// Bounds for the resize stage, ADR-0001 D3: fit inside, keep the aspect
+/// ratio, never enlarge. This is the geometry only; the resampling is done
+/// by the pipeline in `sqzer`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Resize {
+    /// Widest output allowed, in pixels.
+    pub max_width: Option<u32>,
+    /// Tallest output allowed, in pixels.
+    pub max_height: Option<u32>,
+}
+
+impl Resize {
+    /// No bounds: every image passes through untouched.
+    pub const NONE: Self = Self {
+        max_width: None,
+        max_height: None,
+    };
+
+    /// The size a `width` x `height` image is scaled to, or `None` when it
+    /// already fits and is left alone. The tighter bound decides the scale,
+    /// the other axis is rounded to the nearest pixel and never drops below
+    /// one. A bound of zero is read as one.
+    #[must_use]
+    pub fn fit(&self, width: u32, height: u32) -> Option<(u32, u32)> {
+        let (w, h) = (u64::from(width.max(1)), u64::from(height.max(1)));
+        let bound =
+            |max: Option<u32>, full: u64| max.map_or(full, |m| u64::from(m.max(1)).min(full));
+        let (max_w, max_h) = (bound(self.max_width, w), bound(self.max_height, h));
+        if (max_w, max_h) == (w, h) {
+            return None;
+        }
+        // `max_w / w <= max_h / h`, cross-multiplied: the width bound is
+        // the tighter one. The rounded axis cannot pass its own bound,
+        // because the exact value is at most that bound, an integer.
+        let (out_w, out_h) = if max_w * h <= max_h * w {
+            (max_w, ((h * max_w + w / 2) / w).max(1))
+        } else {
+            (((w * max_h + h / 2) / h).max(1), max_h)
+        };
+        // Both fit in `u32`: neither exceeds the input's own dimension.
+        Some((
+            u32::try_from(out_w).unwrap_or(width),
+            u32::try_from(out_h).unwrap_or(height),
+        ))
     }
 }
 
@@ -233,6 +299,69 @@ mod tests {
         }
         assert_eq!(Preset::from_name("fast"), None);
         assert_eq!(Preset::Lossless.params().target, Target::Lossless);
+    }
+
+    #[test]
+    fn only_the_thumbnail_preset_resizes() {
+        for &p in Preset::ALL {
+            let expected = if p == Preset::Thumbnail {
+                Resize {
+                    max_width: Some(512),
+                    max_height: Some(512),
+                }
+            } else {
+                Resize::NONE
+            };
+            assert_eq!(p.resize(), expected, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn fit_keeps_the_aspect_ratio_inside_both_bounds() {
+        let both = |w, h| Resize {
+            max_width: Some(w),
+            max_height: Some(h),
+        };
+        let width = |w| Resize {
+            max_width: Some(w),
+            max_height: None,
+        };
+        let height = |h| Resize {
+            max_width: None,
+            max_height: Some(h),
+        };
+        assert_eq!(width(1600).fit(4000, 3000), Some((1600, 1200)));
+        assert_eq!(height(600).fit(4000, 3000), Some((800, 600)));
+        // The tighter bound decides, whichever axis it is on.
+        assert_eq!(both(1600, 600).fit(4000, 3000), Some((800, 600)));
+        assert_eq!(both(400, 3000).fit(4000, 3000), Some((400, 300)));
+        assert_eq!(both(512, 512).fit(3000, 4000), Some((384, 512)));
+        // Rounded to nearest, not truncated.
+        assert_eq!(width(100).fit(300, 200), Some((100, 67)));
+        assert_eq!(width(2).fit(3, 1), Some((2, 1)));
+        // A sliver keeps one pixel.
+        assert_eq!(width(10).fit(10_000, 3), Some((10, 1)));
+        assert_eq!(height(10).fit(3, 10_000), Some((1, 10)));
+        assert_eq!(width(0).fit(8, 8), Some((1, 1)));
+        // Large inputs do not overflow.
+        assert_eq!(
+            both(65_535, 65_535).fit(u32::MAX, u32::MAX),
+            Some((65_535, 65_535))
+        );
+    }
+
+    #[test]
+    fn fit_never_enlarges() {
+        let r = Resize {
+            max_width: Some(1600),
+            max_height: Some(1600),
+        };
+        assert_eq!(r.fit(1600, 1200), None);
+        assert_eq!(r.fit(640, 480), None);
+        assert_eq!(r.fit(1, 1), None);
+        assert_eq!(Resize::NONE.fit(4000, 3000), None);
+        // One axis inside its bound, the other not: still a downscale.
+        assert_eq!(r.fit(3200, 100), Some((1600, 50)));
     }
 
     #[test]

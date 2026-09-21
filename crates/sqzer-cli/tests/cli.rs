@@ -228,6 +228,92 @@ fn shape_5_explicit_target_is_searched_for() {
     assert!(r["score"].as_f64().unwrap() > 50.0, "{r}");
 }
 
+/// Width and height from a PNG's `IHDR`.
+fn png_size(bytes: &[u8]) -> (u32, u32) {
+    assert!(is_png(bytes));
+    let be = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap());
+    (be(16), be(20))
+}
+
+#[test]
+fn max_width_resizes_once_for_every_output() {
+    let sb = Sandbox::new("resize");
+    // Stored 32 x 48 with EXIF orientation 6: the bound is on the 48 wide
+    // picture as displayed.
+    sb.fixture("pattern-rot90.jpg", "in.jpg");
+    let (code, out, err) = run(sb.sqzer().args([
+        "in.jpg",
+        "-t",
+        "60",
+        "--max-width",
+        "24",
+        "-f",
+        "png,jpeg",
+        "--template",
+        "{stem}-{width}w.{ext}",
+        "--force",
+        "--json",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    let lines = json_lines(&out);
+    assert_eq!(lines.len(), 2, "{out}");
+    for r in &lines {
+        assert_eq!(r["status"], "written", "{r}");
+        assert_eq!((&r["width"], &r["height"]), (&48.into(), &32.into()), "{r}");
+        assert_eq!(r["output_width"], 24, "{r}");
+        assert_eq!(r["output_height"], 16, "{r}");
+    }
+    assert_eq!(lines[0]["output"], "in-24w.png");
+    assert_eq!(lines[1]["output"], "in-24w.jpg");
+    // The search ran against the resized image and says so.
+    assert!(lines[1]["score"].is_number(), "{}", lines[1]);
+    assert_eq!(
+        png_size(&fs::read(sb.path("in-24w.png")).unwrap()),
+        (24, 16)
+    );
+    assert!(is_jpeg(&fs::read(sb.path("in-24w.jpg")).unwrap()));
+}
+
+#[test]
+fn resize_never_enlarges_and_the_thumbnail_preset_uses_it() {
+    let sb = Sandbox::new("resize-bounds");
+    sb.fixture("pattern-rgba.webp", "in.webp");
+    let size = |args: &[&str]| {
+        let (code, out, err) = run(sb
+            .sqzer()
+            .args(["in.webp", "-f", "png", "--force", "--json"])
+            .args(args));
+        assert_eq!(code, 0, "{args:?}: {err}");
+        let r = &json_lines(&out)[0];
+        assert_eq!(r["alpha"], true);
+        let reported = (
+            u32::try_from(r["output_width"].as_u64().unwrap()).unwrap(),
+            u32::try_from(r["output_height"].as_u64().unwrap()).unwrap(),
+        );
+        assert_eq!(png_size(&fs::read(sb.path("in.png")).unwrap()), reported);
+        reported
+    };
+    assert_eq!(size(&[]), (48, 32));
+    assert_eq!(size(&["--max-width", "1600"]), (48, 32));
+    assert_eq!(
+        size(&["--max-width", "1600", "--max-height", "16"]),
+        (24, 16)
+    );
+    // 48 x 32 is inside the preset's 512 x 512 box.
+    assert_eq!(size(&["--preset", "thumbnail"]), (48, 32));
+    assert_eq!(
+        size(&["--preset", "thumbnail", "--max-height", "8"]),
+        (12, 8)
+    );
+    // A dry run names the size it would write.
+    let (code, _, err) =
+        run(sb
+            .sqzer()
+            .args(["in.webp", "-n", "--max-width", "24", "--progress", "always"]));
+    assert_eq!(code, 0);
+    assert!(err.contains("48x32 -> 24x16 alpha"), "{err}");
+}
+
 #[test]
 fn shape_6_json_is_the_only_thing_on_stdout() {
     let sb = Sandbox::new("shape6");
@@ -698,6 +784,8 @@ fn dry_run_plans_and_writes_nothing() {
     assert_eq!(r["status"], "planned");
     assert_eq!(r["width"], 48);
     assert_eq!(r["height"], 32);
+    assert_eq!(r["output_width"], 48);
+    assert_eq!(r["output_height"], 32);
     assert_eq!(r["alpha"], true);
     assert_eq!(r["input_format"], "webp");
     assert_eq!(r["format"], "avif");

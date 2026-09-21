@@ -51,6 +51,13 @@ pub enum Error {
     },
     /// A backend failed. The string is the backend's own message.
     Codec(String),
+    /// A pipeline stage between decode and encode failed.
+    Transform {
+        /// The stage, for example `resize`.
+        stage: &'static str,
+        /// The message of the crate that does the work.
+        message: String,
+    },
 }
 
 impl core::fmt::Display for Error {
@@ -93,6 +100,7 @@ impl core::fmt::Display for Error {
                 write!(f, "{format} encoder does not support {what}")
             }
             Self::Codec(msg) => write!(f, "codec error: {msg}"),
+            Self::Transform { stage, message } => write!(f, "{stage} failed: {message}"),
         }
     }
 }

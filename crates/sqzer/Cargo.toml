@@ -30,6 +30,14 @@ sqzer-core.workspace = true
 sqzer-codecs.workspace = true
 sqzer-metrics.workspace = true
 sqzer-native-tier = { workspace = true, optional = true }
+# The resize stage (ADR-0001 D3): SIMD convolution in pure Rust, builds on
+# wasm32. MIT OR Apache-2.0. `rayon` stays off: parallelism is per file in
+# the CLI.
+fast_image_resize = "6.1"
+# Safe casts between typed sample buffers and the byte slices
+# `fast_image_resize` takes. Already in the tree through the codecs.
+# Zlib OR Apache-2.0 OR MIT.
+bytemuck = "1.25"
 
 [lints]
 workspace = true

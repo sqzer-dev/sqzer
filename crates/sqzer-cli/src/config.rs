@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use glob::Pattern;
 use sqzer::Sqzer;
 use sqzer::core::codec::Format;
-use sqzer::core::params::Target;
+use sqzer::core::params::{Resize, Target};
 
 use crate::cli::{Args, OUTPUT_FORMATS, format_name};
 use crate::inputs::Input;
@@ -165,6 +165,14 @@ fn quality_flags(args: &Args, mut sqzer: Sqzer) -> Sqzer {
     }
     if let Some(n) = args.max_pixels {
         sqzer = sqzer.max_pixels(n);
+    }
+    // Either flag replaces the preset's box whole: `--preset thumbnail
+    // --max-width 1600` means 1600 wide, not 1600 wide inside 512 tall.
+    if args.max_width.is_some() || args.max_height.is_some() {
+        sqzer = sqzer.resize(Resize {
+            max_width: args.max_width,
+            max_height: args.max_height,
+        });
     }
     sqzer
         .keep_icc(args.keep_icc)
@@ -364,6 +372,31 @@ mod tests {
         assert_eq!(cfg.sqzer.params().effort, 1);
         let cfg = build_from(&["a.png", "--lossless"]).unwrap();
         assert_eq!(cfg.sqzer.params().target, Target::Lossless);
+    }
+
+    #[test]
+    fn resize_flags_reach_the_builder_and_replace_the_preset_box() {
+        let bounds = |args: &[&str]| {
+            let r = build_from(args).unwrap().sqzer.resize_bounds();
+            (r.max_width, r.max_height)
+        };
+        assert_eq!(bounds(&["a.png"]), (None, None));
+        assert_eq!(
+            bounds(&["a.png", "--max-width", "1600"]),
+            (Some(1600), None)
+        );
+        assert_eq!(
+            bounds(&["a.png", "--max-width", "1600", "--max-height", "900"]),
+            (Some(1600), Some(900))
+        );
+        assert_eq!(
+            bounds(&["a.png", "--preset", "thumbnail"]),
+            (Some(512), Some(512))
+        );
+        assert_eq!(
+            bounds(&["a.png", "--preset", "thumbnail", "--max-height", "128"]),
+            (None, Some(128))
+        );
     }
 
     #[test]
