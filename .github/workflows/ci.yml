@@ -135,6 +135,12 @@ jobs:
           for f in $(find target/${{ matrix.target }} -path "*libavif-sys*" -name CMakeCache.txt); do echo "== $f"; grep -E "^(CMAKE_BUILD_TYPE|CMAKE_SYSTEM_NAME|CMAKE_SYSTEM_PROCESSOR|CMAKE_C_COMPILER|CMAKE_C_FLAGS|CMAKE_C_FLAGS_DEBUG|AOM_TARGET_CPU|ENABLE_NASM|CMAKE_ASM_NASM_COMPILER|CMAKE_CROSSCOMPILING|CONFIG_RUNTIME_CPU_DETECT)[:=]" "$f"; done
           find target/${{ matrix.target }} -name "libaom.a" -o -name "libavif.a" -o -name "libwebp.a" | xargs ls -la
       - run: cargo test -p sqzer --target ${{ matrix.target }} --features native --test golden -- --nocapture --test-threads=1
+      # PROBE 3: where the time goes, by syscall.
+      - run: |
+          sudo apt-get install -y strace
+          B=$(ls -t target/${{ matrix.target }}/debug/deps/golden-* | grep -v "\.d$" | head -1)
+          strace -c -f "$B" --test-threads=1 2>&1 | grep -E "total|mmap|munmap|madvise|brk|mremap|futex|test result" | head -12
+          cat /proc/meminfo | head -3; cat /sys/kernel/mm/transparent_hugepage/enabled
 
   wasm:
     name: wasm32 portable tier
