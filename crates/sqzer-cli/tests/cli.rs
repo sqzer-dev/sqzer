@@ -405,6 +405,26 @@ fn metadata_is_stripped_unless_kept() {
     assert_eq!(code, 1, "{err}");
     assert!(err.contains("XMP"), "{err}");
     assert_eq!(json_lines(&out)[0]["status"], "failed");
+    // A dry run says the same rather than planning an output the encoder
+    // would refuse.
+    let (code, out, err) = run(sb.sqzer().args([
+        "in.jpg",
+        "-f",
+        "avif",
+        "-q",
+        "50",
+        "--keep-metadata",
+        "--json",
+        "-n",
+    ]));
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("XMP"), "{err}");
+    assert_eq!(json_lines(&out)[0]["status"], "failed");
+    let (code, out, _) = run(sb
+        .sqzer()
+        .args(["in.jpg", "-f", "avif", "-q", "50", "--json", "-n"]));
+    assert_eq!(code, 0);
+    assert_eq!(json_lines(&out)[0]["status"], "planned");
 }
 
 #[test]

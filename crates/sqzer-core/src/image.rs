@@ -574,8 +574,10 @@ const EXIF_PREFIX: &[u8] = b"Exif\0\0";
 /// else, including a blob that does not parse, is left alone. Returns
 /// whether an entry was rewritten.
 pub fn reset_exif_orientation(exif: &mut [u8]) -> bool {
+    // Offsets come from the blob, so every sum is checked: on a 32-bit
+    // target a hostile IFD offset would otherwise overflow `usize`.
     let read_u16 = |bytes: &[u8], at: usize, big: bool| -> Option<u16> {
-        let b: [u8; 2] = bytes.get(at..at + 2)?.try_into().ok()?;
+        let b: [u8; 2] = bytes.get(at..at.checked_add(2)?)?.try_into().ok()?;
         Some(if big {
             u16::from_be_bytes(b)
         } else {
@@ -583,7 +585,7 @@ pub fn reset_exif_orientation(exif: &mut [u8]) -> bool {
         })
     };
     let read_u32 = |bytes: &[u8], at: usize, big: bool| -> Option<u32> {
-        let b: [u8; 4] = bytes.get(at..at + 4)?.try_into().ok()?;
+        let b: [u8; 4] = bytes.get(at..at.checked_add(4)?)?.try_into().ok()?;
         Some(if big {
             u32::from_be_bytes(b)
         } else {
@@ -605,14 +607,17 @@ pub fn reset_exif_orientation(exif: &mut [u8]) -> bool {
         return false;
     };
     for i in 0..usize::from(entries) {
-        let at = ifd + 2 + i * 12;
+        let Some(at) = ifd.checked_add(2 + i * 12) else {
+            return false;
+        };
         let entry = (
             read_u16(exif, at, big),
             read_u16(exif, at + 2, big),
             read_u32(exif, at + 4, big),
         );
         if entry == (Some(0x0112), Some(3), Some(1)) {
-            // A SHORT sits in the first two bytes of the value slot.
+            // A SHORT sits in the first two bytes of the value slot, and
+            // the reads above proved the entry is in bounds.
             let value = if big {
                 1u16.to_be_bytes()
             } else {
@@ -835,6 +840,15 @@ mod tests {
         let mut junk = b"not a tiff".to_vec();
         assert!(!reset_exif_orientation(&mut junk));
         assert_eq!(junk, b"not a tiff");
+        // An IFD offset past the end, or one that would wrap `usize`.
+        for offset in [0x0000_1000u32, u32::MAX - 1] {
+            let mut hostile = b"II\x2a\x00".to_vec();
+            hostile.extend_from_slice(&offset.to_le_bytes());
+            hostile.extend_from_slice(&[0xFF; 16]);
+            let before = hostile.clone();
+            assert!(!reset_exif_orientation(&mut hostile));
+            assert_eq!(hostile, before);
+        }
     }
 
     #[test]
