@@ -36,23 +36,41 @@ pub fn left_out(feature: &str) -> Option<&'static str> {
     }
     match feature {
         "native-jxl" if !JXL => Some(
-            "the static musl build has no C++ toolchain for libjxl yet; the x86_64 Linux gnu \
+            "the static musl build has no C++ toolchain for `libjxl` yet; the x86_64 Linux gnu \
              archive carries JPEG XL",
         ),
         "native-jpegli" if !JPEGLI => Some(JPEGLI_WHY),
         "native-heif" if !HEIC => Some(
-            "a static musl binary cannot load libheif; the x86_64 Linux gnu archive reads HEIC \
-             through libheif when the machine has it",
+            "a static musl binary cannot load `libheif`; the x86_64 Linux gnu archive reads HEIC \
+             through `libheif` when the machine has it",
         ),
         _ => None,
     }
 }
 
+/// The features in `features` a user of this build can still enable, and
+/// the reasons for the ones this target leaves out. The two are printed
+/// together: a build without the portable `jpeg` feature on musl needs
+/// both the feature and the reason for `native-jpegli`.
+// `tests/cli.rs` includes this file by path and uses the constants only.
+#[allow(dead_code)]
+pub fn split<'a>(features: &[&'a str]) -> (Vec<&'a str>, Vec<&'static str>) {
+    let mut enable = Vec::new();
+    let mut reasons = Vec::new();
+    for &f in features {
+        match left_out(f) {
+            Some(why) => reasons.push(why),
+            None => enable.push(f),
+        }
+    }
+    (enable, reasons)
+}
+
 #[cfg(windows)]
-const JPEGLI_WHY: &str = "jpegli does not build next to libjxl with the Visual Studio cmake \
-                          generator; JPEG is mozjpeg-rs on Windows";
+const JPEGLI_WHY: &str = "`jpegli` does not build next to `libjxl` with the Visual Studio cmake \
+                          generator; JPEG is `mozjpeg-rs` on Windows";
 #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-const JPEGLI_WHY: &str = "jpegli crashes on aarch64 Linux; JPEG is mozjpeg-rs there";
+const JPEGLI_WHY: &str = "`jpegli` crashes on aarch64 Linux; JPEG is `mozjpeg-rs` there";
 #[cfg(not(any(windows, all(target_arch = "aarch64", target_os = "linux"))))]
-const JPEGLI_WHY: &str = "the static musl build has no C++ toolchain for jpegli yet; JPEG is \
-                          mozjpeg-rs there";
+const JPEGLI_WHY: &str = "the static musl build has no C++ toolchain for `jpegli` yet; JPEG is \
+                          `mozjpeg-rs` there";

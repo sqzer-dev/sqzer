@@ -158,15 +158,13 @@ fn none_because(features: &[&str]) -> String {
     if features.is_empty() {
         return "none".to_string();
     }
-    let left_out: Vec<&str> = features
-        .iter()
-        .filter_map(|f| crate::native_set::left_out(f))
-        .collect();
-    if left_out.is_empty() {
-        format!("none; needs `{}`", features.join("` or `"))
-    } else {
-        format!("none; {}", left_out.join("; "))
+    let (enable, reasons) = crate::native_set::split(features);
+    let mut parts = vec!["none".to_string()];
+    if !enable.is_empty() {
+        parts.push(format!("needs `{}`", enable.join("` or `")));
     }
+    parts.extend(reasons.iter().map(ToString::to_string));
+    parts.join("; ")
 }
 
 /// JSON Lines listing.
@@ -290,6 +288,19 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn none_cell_keeps_the_feature_a_user_can_enable() {
+        use crate::native_set::{JPEGLI, NATIVE, left_out};
+        assert_eq!(none_because(&[]), "none");
+        let cell = none_because(&["jpeg", "native-jpegli"]);
+        assert!(cell.starts_with("none; needs `jpeg`"), "{cell}");
+        assert_eq!(
+            cell.contains(left_out("native-jpegli").unwrap_or("\u{0}")),
+            NATIVE && !JPEGLI,
+            "{cell}"
+        );
     }
 
     #[test]

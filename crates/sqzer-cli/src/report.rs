@@ -767,21 +767,26 @@ pub fn render_unavailable(format: Format, need: Need, registry: &Registry) -> St
     // A native build already is what the releases page offers; when its
     // target leaves the backend out, say why and which archive has it.
     let how = |native: &[&str]| -> String {
-        let left_out: Vec<&str> = native
-            .iter()
-            .filter_map(|f| crate::native_set::left_out(f))
-            .collect();
-        if left_out.is_empty() {
-            format!(
-                "needs the `{}` feature, or a native build from the releases page",
-                native.join("` or `")
-            )
-        } else {
-            format!(
-                "is not in this build for this target: {}",
-                left_out.join("; ")
-            )
+        let (enable, reasons) = crate::native_set::split(native);
+        let mut parts = Vec::new();
+        if !enable.is_empty() {
+            let release = if reasons.is_empty() {
+                ", or a native build from the releases page"
+            } else {
+                ""
+            };
+            parts.push(format!(
+                "needs the `{}` feature{release}",
+                enable.join("` or `")
+            ));
         }
+        if !reasons.is_empty() {
+            parts.push(format!(
+                "is not in this build for this target: {}",
+                reasons.join("; ")
+            ));
+        }
+        parts.join("; ")
     };
     match (existing, native.is_empty()) {
         (Some(c), true) => lines.push(format!(
@@ -868,6 +873,17 @@ mod tests {
         assert_eq!(left_out("native-heif").is_some(), NATIVE && !HEIC);
         assert_eq!(left_out("native-webp"), None);
         assert_eq!(left_out("jpeg"), None);
+        // A list that mixes an enable-able feature with a left-out one
+        // keeps both halves.
+        let (enable, reasons) = crate::native_set::split(&["jpeg", "native-jpegli"]);
+        assert!(enable.contains(&"jpeg"));
+        assert_eq!(!reasons.is_empty(), NATIVE && !JPEGLI);
+        let text = render_unavailable(Format::Jpeg, Need::Any, &sqzer::core::Registry::new());
+        assert!(text.contains("needs the `jpeg`"), "{text}");
+        if NATIVE && !JPEGLI {
+            assert!(text.contains(left_out("native-jpegli").unwrap()), "{text}");
+            assert!(!text.contains("releases page"), "{text}");
+        }
         // No reason mentions the releases page: that is where the user
         // came from.
         for f in ["native-jxl", "native-jpegli", "native-heif"] {
