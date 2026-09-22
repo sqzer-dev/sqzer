@@ -141,6 +141,11 @@ jobs:
           B=$(ls -t target/${{ matrix.target }}/debug/deps/golden-* | grep -v "\.d$" | head -1)
           strace -c -f "$B" --test-threads=1 2>&1 | grep -E "total|mmap|munmap|madvise|brk|mremap|futex|test result" | head -12
           cat /proc/meminfo | head -3; cat /sys/kernel/mm/transparent_hugepage/enabled
+      # PROBE 4: the same test with transparent hugepages off.
+      - run: |
+          echo never | sudo tee /sys/kernel/mm/transparent_hugepage/enabled
+          cargo test -p sqzer --target ${{ matrix.target }} --features native --test golden -- --test-threads=1
+          cargo test -p sqzer --target ${{ matrix.target }} --features native --lib
 
   wasm:
     name: wasm32 portable tier
