@@ -141,11 +141,15 @@ jobs:
           B=$(ls -t target/${{ matrix.target }}/debug/deps/golden-* | grep -v "\.d$" | head -1)
           strace -c -f "$B" --test-threads=1 2>&1 | grep -E "total|mmap|munmap|madvise|brk|mremap|futex|test result" | head -12
           cat /proc/meminfo | head -3; cat /sys/kernel/mm/transparent_hugepage/enabled
-      # PROBE 4: the same test with transparent hugepages off.
+      # PROBE 5: where the musl binary spends its time.
       - run: |
-          echo never | sudo tee /sys/kernel/mm/transparent_hugepage/enabled
-          cargo test -p sqzer --target ${{ matrix.target }} --features native --test golden -- --test-threads=1
-          cargo test -p sqzer --target ${{ matrix.target }} --features native --lib
+          sudo apt-get install -y linux-tools-common "linux-tools-$(uname -r)" || sudo apt-get install -y linux-tools-generic || true
+          which perf || ls /usr/lib/linux-tools/*/perf || true
+          echo 1 | sudo tee /proc/sys/kernel/perf_event_paranoid
+          B=$(ls -t target/${{ matrix.target }}/debug/deps/golden-* | grep -v "\.d$" | head -1)
+          PERF=$(which perf || ls /usr/lib/linux-tools/*/perf | head -1)
+          sudo "$PERF" record -F 999 -g -o perf.data "$B" --test-threads=1 || true
+          sudo "$PERF" report -i perf.data --stdio --no-children --percent-limit 1.5 2>/dev/null | grep -v "^#" | grep -v "^$" | head -70
 
   wasm:
     name: wasm32 portable tier
