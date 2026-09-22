@@ -15,7 +15,7 @@ use crate::cli::format_name;
 use crate::config::Config;
 use crate::inputs::Input;
 use crate::output::{Naming, stem_of};
-use crate::report::{Printer, Record, Stage, Status, Tally, Worker, content_name};
+use crate::report::{Printer, Record, Stage, Status, Tally, Worker, content_name, describe_error};
 
 /// What every job shares.
 pub struct Ctx<'a> {
@@ -61,7 +61,7 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> Tally {
     }
     let decoded = match cfg.sqzer.decode(&bytes) {
         Ok(d) => d,
-        Err(e) => return fail(Record::failed(name, &e)),
+        Err(e) => return fail(Record::failed(name, &describe_error(&e))),
     };
     // The record describes the input; everything after this line sees the
     // image the encoder will get.

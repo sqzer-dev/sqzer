@@ -689,6 +689,28 @@ pub fn fmt_change(input: u64, output: u64) -> String {
     format!("{pct:+.0}%")
 }
 
+/// An error as the user should read it: a decoder this native build
+/// leaves out on this target gets the reason and the archive that has it
+/// appended, so the message does not send the user to the releases page
+/// they came from.
+pub fn describe_error(e: &sqzer::core::Error) -> String {
+    if let sqzer::core::Error::DecoderUnavailable {
+        available_in,
+        reason: None,
+        ..
+    } = e
+    {
+        let left_out: Vec<&str> = available_in
+            .iter()
+            .filter_map(|f| crate::native_set::left_out(f))
+            .collect();
+        if !left_out.is_empty() {
+            return format!("{e}; {}", left_out.join("; "));
+        }
+    }
+    e.to_string()
+}
+
 /// Which mode an encoder was wanted for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Need {
@@ -742,6 +764,25 @@ pub fn render_unavailable(format: Format, need: Need, registry: &Registry) -> St
         Need::Lossy => format!("lossy {format}"),
         Need::Lossless => format!("lossless {format}"),
     };
+    // A native build already is what the releases page offers; when its
+    // target leaves the backend out, say why and which archive has it.
+    let how = |native: &[&str]| -> String {
+        let left_out: Vec<&str> = native
+            .iter()
+            .filter_map(|f| crate::native_set::left_out(f))
+            .collect();
+        if left_out.is_empty() {
+            format!(
+                "needs the `{}` feature, or a native build from the releases page",
+                native.join("` or `")
+            )
+        } else {
+            format!(
+                "is not in this build for this target: {}",
+                left_out.join("; ")
+            )
+        }
+    };
     match (existing, native.is_empty()) {
         (Some(c), true) => lines.push(format!(
             "  {} writes {} only; no build offers {mode}",
@@ -749,16 +790,13 @@ pub fn render_unavailable(format: Format, need: Need, registry: &Registry) -> St
             if c.lossy { "lossy" } else { "lossless" }
         )),
         (Some(c), false) => lines.push(format!(
-            "  {} writes {} only; {mode} needs the `{}` feature, or a native build from the releases page",
+            "  {} writes {} only; {mode} {}",
             c.name,
             if c.lossy { "lossy" } else { "lossless" },
-            native.join("` or `")
+            how(&native)
         )),
         (None, true) => lines.push(format!("  no build offers a {format} encoder")),
-        (None, false) => lines.push(format!(
-            "  {mode} needs the `{}` feature, or a native build from the releases page",
-            native.join("` or `")
-        )),
+        (None, false) => lines.push(format!("  {mode} {}", how(&native))),
     }
     if need != Need::Any && existing.is_some() {
         let fix = match need {
@@ -823,6 +861,39 @@ mod tests {
     }
 
     #[test]
+    fn left_out_matches_the_set() {
+        use crate::native_set::{HEIC, JPEGLI, JXL, NATIVE, left_out};
+        assert_eq!(left_out("native-jxl").is_some(), NATIVE && !JXL);
+        assert_eq!(left_out("native-jpegli").is_some(), NATIVE && !JPEGLI);
+        assert_eq!(left_out("native-heif").is_some(), NATIVE && !HEIC);
+        assert_eq!(left_out("native-webp"), None);
+        assert_eq!(left_out("jpeg"), None);
+        // No reason mentions the releases page: that is where the user
+        // came from.
+        for f in ["native-jxl", "native-jpegli", "native-heif"] {
+            if let Some(why) = left_out(f) {
+                assert!(!why.contains("releases page"), "{why}");
+                assert!(
+                    why.contains("archive") || why.contains("mozjpeg-rs"),
+                    "{why}"
+                );
+            }
+        }
+        // The decode error carries the reason only when there is one.
+        let e = sqzer::core::Error::DecoderUnavailable {
+            format: Format::Heic,
+            available_in: &["native-heif"],
+            reason: None,
+        };
+        let text = describe_error(&e);
+        assert!(
+            text.starts_with("no decoder for HEIC in this build"),
+            "{text}"
+        );
+        assert_eq!(text.contains("archive"), NATIVE && !HEIC, "{text}");
+    }
+
+    #[test]
     fn json_omits_what_does_not_apply() {
         let r = Record::failed("x.png".into(), &"boom");
         let v: serde_json::Value =
@@ -843,7 +914,15 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("mozjpeg-rs"), "{text}");
-        assert!(text.contains("`native-jxl`"), "{text}");
+        // A portable build names the feature and the release; a native
+        // build whose target leaves JPEG XL out says why instead.
+        match crate::native_set::left_out("native-jxl") {
+            Some(why) => {
+                assert!(text.contains(why), "{text}");
+                assert!(!text.contains("releases page"), "{text}");
+            }
+            None => assert!(text.contains("`native-jxl`"), "{text}"),
+        }
         assert!(text.contains("--list-codecs"), "{text}");
         let text = render_unavailable(Format::WebP, Need::Lossy, &reg);
         assert!(text.contains("for lossy output"), "{text}");
