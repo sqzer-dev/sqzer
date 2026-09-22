@@ -42,6 +42,8 @@ static ENC_CAPS: EncoderCaps = EncoderCaps {
     animation: false,
     bit_depth: &[8],
     hdr: false,
+    exif: false,
+    xmp: false,
     quality_range: 1.0..=100.0,
     effort_range: 0..=0,
     tier: Tier::Portable,

@@ -176,6 +176,9 @@ pub struct EncodeParams {
     pub subsampling: Subsampling,
     /// Keep the ICC profile instead of converting to sRGB.
     pub keep_icc: bool,
+    /// Keep EXIF and XMP instead of stripping them. Orientation is applied
+    /// and its tag reset either way.
+    pub keep_metadata: bool,
     /// Escape hatch for backend-specific knobs. Keys are `codec:name`, e.g.
     /// `jpeg:progressive`. Backends reject keys they own but do not know.
     pub codec_specific: BTreeMap<String, String>,
@@ -188,6 +191,7 @@ impl Default for EncodeParams {
             effort: 6,
             subsampling: Subsampling::Auto,
             keep_icc: false,
+            keep_metadata: false,
             codec_specific: BTreeMap::new(),
         }
     }

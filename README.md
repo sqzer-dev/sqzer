@@ -81,6 +81,9 @@ sqzer photo.jpg --fast                      # one encode at the calibrated seed 
 sqzer photo-p3.jpg
 sqzer photo-p3.jpg --keep-icc -f jxl
 
+# metadata: EXIF and XMP are stripped; --keep-metadata carries them over, orientation applied
+sqzer photo.jpg --keep-metadata -f webp
+
 # resize: fit inside, keep the aspect ratio, never enlarge. the target is scored against the resized image
 sqzer photo.jpg --max-width 1600
 sqzer photo.jpg --max-width 1600 --max-height 1600
@@ -106,7 +109,7 @@ sqzer *.jpg --json                          # one JSON Lines object per output, 
 sqzer *.jpg -n --json                       # dimensions, alpha, format and planned outputs, no encode
 ```
 
-Defaults that differ from most optimisers: the output never overwrites the input unless `--in-place` is given, an output larger than its input is not written unless `--force` is, and metadata is stripped with the ICC profile converted to sRGB (`--keep-icc` keeps it). Every such "nothing happened" prints one line saying why and which flag changes it.
+Defaults that differ from most optimisers: the output never overwrites the input unless `--in-place` is given, an output larger than its input is not written unless `--force` is, and metadata is stripped with the ICC profile converted to sRGB (`--keep-metadata` keeps EXIF and XMP, `--keep-icc` keeps the profile; EXIF orientation is applied and its tag reset either way). Every such "nothing happened" prints one line saying why and which flag changes it.
 
 Exit codes, from ADR-0001:
 

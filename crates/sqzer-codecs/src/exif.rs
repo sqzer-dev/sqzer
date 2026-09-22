@@ -1,8 +1,62 @@
 //! EXIF orientation, shared by the decoders whose container carries a TIFF
 //! blob: JPEG (APP1) and WebP (`EXIF` chunk). Only the orientation tag is
-//! read; everything else in EXIF is stripped by policy (ADR-0001 D7).
+//! read here; the blob itself rides on the image for the metadata policy
+//! (ADR-0001 D7) and the JPEG helpers below are for putting it back.
 
+use sqzer_core::codec::Format;
 use sqzer_core::image::Orientation;
+use sqzer_core::{Error, Result};
+
+/// The identifier JPEG's XMP APP1 segment starts with.
+pub(crate) const XMP_APP1_ID: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+
+/// The largest payload one JPEG marker segment holds: 65535 less the two
+/// length bytes.
+const MARKER_MAX: usize = 65_533;
+
+/// An XMP packet as a JPEG APP1 payload, identifier included.
+///
+/// # Errors
+/// [`Error::Unsupported`] when the packet does not fit one marker segment:
+/// Extended XMP, the multi-segment form, is not written.
+pub(crate) fn xmp_app1(xmp: &[u8], format: Format) -> Result<Vec<u8>> {
+    if XMP_APP1_ID.len() + xmp.len() > MARKER_MAX {
+        return Err(Error::Unsupported {
+            format,
+            what: format!(
+                "an XMP packet of {} bytes; one JPEG segment holds {}",
+                xmp.len(),
+                MARKER_MAX - XMP_APP1_ID.len()
+            ),
+        });
+    }
+    let mut out = XMP_APP1_ID.to_vec();
+    out.extend_from_slice(xmp);
+    Ok(out)
+}
+
+/// An EXIF blob as a JPEG APP1 payload, `Exif\0\0` prefix included.
+/// `mozjpeg-rs` adds the prefix itself; `jpegli` takes raw markers.
+///
+/// # Errors
+/// [`Error::Unsupported`] when the blob does not fit one marker segment.
+#[cfg_attr(not(feature = "native-jpegli"), allow(dead_code))]
+pub(crate) fn exif_app1(exif: &[u8], format: Format) -> Result<Vec<u8>> {
+    const PREFIX: &[u8] = b"Exif\0\0";
+    if PREFIX.len() + exif.len() > MARKER_MAX {
+        return Err(Error::Unsupported {
+            format,
+            what: format!(
+                "an EXIF blob of {} bytes; one JPEG segment holds {}",
+                exif.len(),
+                MARKER_MAX - PREFIX.len()
+            ),
+        });
+    }
+    let mut out = PREFIX.to_vec();
+    out.extend_from_slice(exif);
+    Ok(out)
+}
 
 /// Orientation from raw EXIF bytes starting at the TIFF header. A leading
 /// `Exif\0\0` prefix is tolerated since some writers include it in
@@ -46,6 +100,23 @@ mod tests {
         let mut prefixed = b"Exif\0\0".to_vec();
         prefixed.extend_from_slice(&tiff);
         assert_eq!(orientation(&prefixed), Some(Orientation::Rotate90));
+    }
+
+    #[test]
+    fn app1_payloads_carry_their_identifiers_and_refuse_oversize() {
+        let xmp = xmp_app1(b"<x/>", Format::Jpeg).unwrap();
+        assert!(xmp.starts_with(XMP_APP1_ID) && xmp.ends_with(b"<x/>"));
+        let exif = exif_app1(&tiff_with_orientation(1), Format::Jpeg).unwrap();
+        assert!(exif.starts_with(b"Exif\0\0"));
+        let big = vec![b'x'; 70_000];
+        assert!(matches!(
+            xmp_app1(&big, Format::Jpeg),
+            Err(Error::Unsupported { .. })
+        ));
+        assert!(matches!(
+            exif_app1(&big, Format::Jpeg),
+            Err(Error::Unsupported { .. })
+        ));
     }
 
     #[test]

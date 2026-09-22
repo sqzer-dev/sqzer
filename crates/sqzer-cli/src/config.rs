@@ -176,6 +176,7 @@ fn quality_flags(args: &Args, mut sqzer: Sqzer) -> Sqzer {
     }
     sqzer
         .keep_icc(args.keep_icc)
+        .keep_metadata(args.keep_metadata)
         .auto_orient(!args.no_auto_orient)
         .fast(args.fast)
 }
@@ -335,6 +336,7 @@ mod tests {
             "--subsampling",
             "420",
             "--keep-icc",
+            "--keep-metadata",
             "--no-auto-orient",
             "--max-pixels",
             "1M",
@@ -351,6 +353,7 @@ mod tests {
         assert_eq!(p.effort, 9);
         assert_eq!(p.subsampling, Subsampling::S420);
         assert!(p.keep_icc);
+        assert!(p.keep_metadata);
         assert_eq!(
             p.codec_specific.get("png:interlace").map(String::as_str),
             Some("true")

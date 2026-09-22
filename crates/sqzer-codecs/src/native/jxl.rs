@@ -57,6 +57,8 @@ static ENCODER_CAPS: EncoderCaps = EncoderCaps {
     animation: false,
     bit_depth: &[8, 16],
     hdr: false,
+    exif: true,
+    xmp: true,
     quality_range: 0.0..=100.0,
     effort_range: 1..=10,
     tier: Tier::Native,
@@ -94,13 +96,26 @@ impl Encoder for LibjxlEncoder {
             Resolved::Lossless => JxlEncoder::lossless(),
         }
         .with_effort(map_effort(params.effort))
-        .with_container(if container {
-            Container::IsoBmff
-        } else {
-            Container::Codestream
-        });
+        // Metadata lives in container boxes, so it forces the container.
+        .with_container(
+            if container || img.exif().is_some() || img.xmp().is_some() {
+                Container::IsoBmff
+            } else {
+                Container::Codestream
+            },
+        );
         if let Some(icc) = img.icc() {
             encoder = encoder.with_color(ColorSpec::Icc(icc.to_vec()));
+        }
+        if let Some(exif) = img.exif() {
+            encoder = encoder.with_exif(exif);
+        }
+        if let Some(xmp) = img.xmp() {
+            let xmp = std::str::from_utf8(xmp).map_err(|_| Error::Unsupported {
+                format: Format::Jxl,
+                what: "an XMP packet that is not UTF-8".into(),
+            })?;
+            encoder = encoder.with_xmp(xmp);
         }
 
         let dims = Dimensions {

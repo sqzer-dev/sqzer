@@ -26,7 +26,7 @@ pub fn fit(image: Image, bounds: Resize) -> Result<Image> {
     let Some((width, height)) = bounds.fit(image.width(), image.height()) else {
         return Ok(image);
     };
-    let (src_width, src_height, color, samples, icc) = image.into_parts();
+    let (src_width, src_height, color, samples, meta) = image.into_parts();
     let from = (src_width, src_height);
     let to = (width, height);
     let samples = match samples {
@@ -41,7 +41,7 @@ pub fn fit(image: Image, bounds: Resize) -> Result<Image> {
             Samples::F32(out)
         }
     };
-    Ok(Image::new(width, height, color, samples)?.with_icc(icc))
+    Ok(Image::new(width, height, color, samples)?.with_metadata(meta))
 }
 
 /// sRGB-encoded samples to 16-bit linear, resampled, and back to `T`.

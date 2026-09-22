@@ -10,9 +10,11 @@
 
 use jxl_oxide::color::{EnumColourEncoding, RenderingIntent};
 use jxl_oxide::image::BitDepth;
-use jxl_oxide::{InitializeResult, JxlImage, JxlThreadPool, PixelFormat, UninitializedJxlImage};
+use jxl_oxide::{
+    AuxBoxData, InitializeResult, JxlImage, JxlThreadPool, PixelFormat, UninitializedJxlImage,
+};
 use sqzer_core::codec::{Decoder, DecoderCaps, Format, FormatInfo, Tier};
-use sqzer_core::image::{ColorType, Image, Samples};
+use sqzer_core::image::{ColorType, Image, Samples, reset_exif_orientation};
 use sqzer_core::params::DecodeOpts;
 use sqzer_core::{Error, Result};
 
@@ -133,7 +135,31 @@ impl Decoder for JxlDecoder {
         } else {
             None
         };
-        Ok(Image::new(width, height, color, samples)?.with_icc(icc))
+        // Metadata boxes of the container, when there is one. A bare
+        // codestream has none.
+        let boxes = image.aux_boxes();
+        let exif = match boxes.first_exif() {
+            Ok(AuxBoxData::Data(raw)) => {
+                let at = usize::try_from(raw.tiff_header_offset()).unwrap_or(usize::MAX);
+                raw.payload().get(at..).map(<[u8]>::to_vec)
+            }
+            _ => None,
+        };
+        // The codestream's own orientation field is authoritative and
+        // `jxl-oxide` has applied it; an `Orientation` tag in the Exif box
+        // is reset so it cannot rotate the picture a second time.
+        let exif = exif.map(|mut e| {
+            reset_exif_orientation(&mut e);
+            e
+        });
+        let xmp = match boxes.first_xml() {
+            AuxBoxData::Data(xml) => Some(xml.to_vec()),
+            _ => None,
+        };
+        Ok(Image::new(width, height, color, samples)?
+            .with_icc(icc)
+            .with_exif(exif)
+            .with_xmp(xmp))
     }
 }
 

@@ -362,6 +362,52 @@ fn icc_is_converted_to_srgb_unless_kept() {
 }
 
 #[test]
+fn metadata_is_stripped_unless_kept() {
+    let sb = Sandbox::new("metadata");
+    sb.fixture("pattern-meta.jpg", "in.jpg");
+    let has = |bytes: &[u8], needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+    let (code, out, err) =
+        run(sb
+            .sqzer()
+            .args(["in.jpg", "-f", "png", "--lossless", "--force", "--json"]));
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(json_lines(&out)[0]["output_width"], 48, "oriented");
+    let png = fs::read(sb.path("in.png")).unwrap();
+    assert!(
+        !has(&png, b"eXIf") && !has(&png, b"test pattern"),
+        "default keeps metadata"
+    );
+    let (code, _, err) = run(sb.sqzer().args([
+        "in.jpg",
+        "-f",
+        "png",
+        "--lossless",
+        "--force",
+        "--keep-metadata",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    let png = fs::read(sb.path("in.png")).unwrap();
+    assert!(has(&png, b"eXIf") && has(&png, b"sqzer"), "EXIF missing");
+    assert!(
+        has(&png, b"XML:com.adobe.xmp") && has(&png, b"test pattern"),
+        "XMP missing"
+    );
+    // The portable AVIF encoder carries EXIF but not XMP: refused per file.
+    let (code, out, err) = run(sb.sqzer().args([
+        "in.jpg",
+        "-f",
+        "avif",
+        "-q",
+        "50",
+        "--keep-metadata",
+        "--json",
+    ]));
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("XMP"), "{err}");
+    assert_eq!(json_lines(&out)[0]["status"], "failed");
+}
+
+#[test]
 fn shape_6_json_is_the_only_thing_on_stdout() {
     let sb = Sandbox::new("shape6");
     sb.fixture("pattern-rgb.jpg", "in.jpg");

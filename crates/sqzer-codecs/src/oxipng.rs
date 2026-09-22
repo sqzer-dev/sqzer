@@ -42,6 +42,8 @@ static CAPS: EncoderCaps = EncoderCaps {
     animation: false,
     bit_depth: &[8, 16],
     hdr: false,
+    exif: true,
+    xmp: true,
     quality_range: 100.0..=100.0,
     effort_range: 0..=10,
     tier: Tier::Portable,
@@ -106,8 +108,24 @@ impl Encoder for OxipngEncoder {
         if let Some(icc) = img.icc() {
             raw.add_icc_profile(icc);
         }
+        if let Some(exif) = img.exif() {
+            raw.add_png_chunk(*b"eXIf", exif.to_vec());
+        }
+        if let Some(xmp) = img.xmp() {
+            raw.add_png_chunk(*b"iTXt", itxt_xmp(&crate::png::xmp_text(xmp)?));
+        }
         raw.create_optimized_png(&opts).map_err(codec_err)
     }
+}
+
+/// The body of an uncompressed `iTXt` chunk carrying XMP: keyword, NUL,
+/// compression flag and method, empty language tag and translated keyword,
+/// then the packet.
+fn itxt_xmp(xmp: &str) -> Vec<u8> {
+    let mut body = crate::png::XMP_KEYWORD.as_bytes().to_vec();
+    body.extend_from_slice(&[0, 0, 0, 0, 0]);
+    body.extend_from_slice(xmp.as_bytes());
+    body
 }
 
 /// Effort `0..=10` to an `oxipng` preset. The default effort, 6, lands on

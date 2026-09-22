@@ -12,7 +12,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use jpegli::{ColorSpace, Compress};
+use jpegli::{ColorSpace, Compress, Marker};
 use sqzer_core::codec::{Encoder, EncoderCaps, Format, Tier};
 use sqzer_core::image::{ColorType, Image};
 use sqzer_core::params::{EncodeParams, Resolved, Subsampling};
@@ -46,6 +46,8 @@ static ENCODER_CAPS: EncoderCaps = EncoderCaps {
     animation: false,
     bit_depth: &[8],
     hdr: false,
+    exif: true,
+    xmp: true,
     quality_range: 1.0..=100.0,
     effort_range: 0..=0,
     tier: Tier::Native,
@@ -87,6 +89,14 @@ impl Encoder for JpegliEncoder {
             ColorType::GrayAlpha | ColorType::Rgba => unreachable!("alpha dropped above"),
         };
         let icc = img.icc();
+        let exif = img
+            .exif()
+            .map(|e| crate::exif::exif_app1(e, Format::Jpeg))
+            .transpose()?;
+        let xmp = img
+            .xmp()
+            .map(|x| crate::exif::xmp_app1(x, Format::Jpeg))
+            .transpose()?;
 
         let encoded = catch_unwind(AssertUnwindSafe(|| -> std::io::Result<Vec<u8>> {
             let mut comp = Compress::new(color_space);
@@ -100,6 +110,9 @@ impl Encoder for JpegliEncoder {
             let mut started = comp.start_compress(Vec::new())?;
             if let Some(icc) = icc {
                 started.write_icc_profile(icc);
+            }
+            for payload in [&exif, &xmp].into_iter().flatten() {
+                started.write_marker(Marker::APP(1), payload);
             }
             started.write_scanlines(samples)?;
             started.finish()

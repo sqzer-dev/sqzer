@@ -219,6 +219,15 @@ impl Sqzer {
         self
     }
 
+    /// Keep EXIF and XMP on the output instead of stripping them. EXIF
+    /// orientation is applied and its tag reset either way. An encoder
+    /// that cannot embed a blob refuses the image.
+    #[must_use]
+    pub fn keep_metadata(mut self, keep: bool) -> Self {
+        self.params.keep_metadata = keep;
+        self
+    }
+
     /// Apply EXIF orientation while decoding. On by default.
     #[must_use]
     pub fn auto_orient(mut self, apply: bool) -> Self {
@@ -313,7 +322,11 @@ impl Sqzer {
     ///    set, in which case samples and profile pass through untouched. A
     ///    profile that does not fit the image's layout is dropped without
     ///    a conversion; one that cannot be parsed is an error.
-    /// 2. Resize: fit inside [`Sqzer::max_width`] and [`Sqzer::max_height`],
+    /// 2. Metadata (ADR-0001 D7): EXIF and XMP are dropped unless
+    ///    [`Sqzer::keep_metadata`] is set. Orientation was applied by the
+    ///    decoder and the EXIF tag reset there, so kept EXIF never
+    ///    contradicts the pixels.
+    /// 3. Resize: fit inside [`Sqzer::max_width`] and [`Sqzer::max_height`],
     ///    aspect ratio kept, never enlarged, Lanczos3 in linear light with
     ///    premultiplied alpha. An image that already fits is left alone.
     ///
@@ -333,11 +346,14 @@ impl Sqzer {
                 "a resize bound must be at least one pixel".into(),
             ));
         }
-        let image = if self.params.keep_icc {
+        let mut image = if self.params.keep_icc {
             decoded.image
         } else {
             color::to_srgb(decoded.image)?
         };
+        if !self.params.keep_metadata {
+            image.strip_metadata();
+        }
         Ok(Decoded {
             image: resize::fit(image, self.resize)?,
             info: decoded.info,
@@ -617,6 +633,8 @@ mod tests {
             animation: false,
             bit_depth: &[8],
             hdr: false,
+            exif: false,
+            xmp: false,
             quality_range: 0.0..=100.0,
             effort_range: 0..=0,
             tier: Tier::Portable,
@@ -826,6 +844,56 @@ mod tests {
         let back = s.decode(&out.bytes).unwrap().image;
         assert_eq!(back.icc(), None);
         assert_ne!(back.samples(), src.image.samples());
+    }
+
+    #[test]
+    fn metadata_is_stripped_unless_kept_and_orientation_is_reset_either_way() {
+        use sqzer_core::image::reset_exif_orientation;
+        let s = portable().format(Format::Png);
+        let src = s.decode(&fixture("pattern-meta.jpg")).unwrap().image;
+        assert!(src.exif().is_some() && src.xmp().is_some());
+        let out = s.run(&fixture("pattern-meta.jpg")).unwrap();
+        assert_eq!((out.width, out.height), (48, 32));
+        let back = s.decode(&out.bytes).unwrap().image;
+        assert_eq!((back.exif(), back.xmp()), (None, None));
+
+        let s = s.keep_metadata(true);
+        let out = s.run(&fixture("pattern-meta.jpg")).unwrap();
+        let back = s.decode(&out.bytes).unwrap().image;
+        assert_eq!(back.exif(), src.exif());
+        assert_eq!(back.xmp(), src.xmp());
+        // The tag is already 1: resetting it changes nothing.
+        let mut copy = back.exif().unwrap().to_vec();
+        assert!(reset_exif_orientation(&mut copy));
+        assert_eq!(copy.as_slice(), back.exif().unwrap());
+
+        // Not oriented: pixels as stored, tag as stored.
+        let s = s.auto_orient(false);
+        let out = s.run(&fixture("pattern-meta.jpg")).unwrap();
+        assert_eq!((out.width, out.height), (32, 48));
+        let back = s.decode(&out.bytes).unwrap().image;
+        let mut copy = back.exif().unwrap().to_vec();
+        assert!(reset_exif_orientation(&mut copy));
+        assert_ne!(copy.as_slice(), back.exif().unwrap());
+
+        // An encoder that cannot carry a blob refuses rather than drops.
+        let err = portable()
+            .format(Format::Avif)
+            .target(Target::Quality(50.0))
+            .keep_metadata(true)
+            .run(&fixture("pattern-meta.jpg"))
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::Unsupported {
+                    format: Format::Avif,
+                    ..
+                }
+            ),
+            "{err}"
+        );
+        assert!(err.to_string().contains("XMP"), "{err}");
     }
 
     #[test]

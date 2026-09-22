@@ -42,6 +42,8 @@ static ENCODER_CAPS: EncoderCaps = EncoderCaps {
     animation: false,
     bit_depth: &[8],
     hdr: false,
+    exif: true,
+    xmp: true,
     quality_range: 0.0..=100.0,
     effort_range: 0..=6,
     tier: Tier::Native,
@@ -122,9 +124,17 @@ impl Encoder for LibwebpEncoder {
         if let Some(icc) = img.icc() {
             encoder = encoder.icc_profile(icc);
         }
-        encoder
+        let mut bytes = encoder
             .encode(Unstoppable)
-            .map_err(|e| Error::Codec(e.to_string()))
+            .map_err(|e| Error::Codec(e.to_string()))?;
+        // Metadata chunks go in through the mux, after the encode.
+        if let Some(exif) = img.exif() {
+            bytes = webpx::embed_exif(&bytes, exif).map_err(|e| Error::Codec(e.to_string()))?;
+        }
+        if let Some(xmp) = img.xmp() {
+            bytes = webpx::embed_xmp(&bytes, xmp).map_err(|e| Error::Codec(e.to_string()))?;
+        }
+        Ok(bytes)
     }
 }
 

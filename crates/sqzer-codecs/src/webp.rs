@@ -73,11 +73,11 @@ impl Decoder for WebPDecoder {
         decoder.read_image(&mut buf).map_err(codec_err)?;
 
         let icc = decoder.icc_profile().map_err(codec_err)?;
+        let exif = decoder.exif_metadata().map_err(codec_err)?;
+        let xmp = decoder.xmp_metadata().map_err(codec_err)?;
         let orientation = if opts.apply_orientation {
-            decoder
-                .exif_metadata()
-                .map_err(codec_err)?
-                .and_then(|raw| crate::exif::orientation(&raw))
+            exif.as_deref()
+                .and_then(crate::exif::orientation)
                 .unwrap_or_default()
         } else {
             Orientation::default()
@@ -85,6 +85,8 @@ impl Decoder for WebPDecoder {
 
         Ok(Image::from_u8(width, height, color, buf)?
             .with_icc(icc)
+            .with_exif(exif)
+            .with_xmp(xmp)
             .apply_orientation(orientation))
     }
 }
@@ -110,6 +112,8 @@ static ENCODER_CAPS: EncoderCaps = EncoderCaps {
     animation: false,
     bit_depth: &[8],
     hdr: false,
+    exif: true,
+    xmp: true,
     quality_range: 100.0..=100.0,
     effort_range: 0..=0,
     tier: Tier::Portable,
@@ -156,6 +160,12 @@ impl Encoder for WebPLosslessEncoder {
         encoder.set_params(encoder_params);
         if let Some(icc) = img.icc() {
             encoder.set_icc_profile(icc.to_vec());
+        }
+        if let Some(exif) = img.exif() {
+            encoder.set_exif_metadata(exif.to_vec());
+        }
+        if let Some(xmp) = img.xmp() {
+            encoder.set_xmp_metadata(xmp.to_vec());
         }
         encoder
             .encode(samples, img.width(), img.height(), color)

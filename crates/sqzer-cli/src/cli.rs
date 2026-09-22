@@ -220,6 +220,12 @@ pub struct Args {
     pub exclude: Vec<String>,
 
     // ---- Metadata and colour
+    /// Keep EXIF and XMP instead of stripping them. Orientation is still
+    /// applied and its tag reset. Refused, not dropped, by an encoder that
+    /// cannot embed them.
+    #[arg(long, hide_short_help = true, help_heading = "Metadata and colour")]
+    pub keep_metadata: bool,
+
     /// Keep the ICC profile instead of converting to sRGB.
     #[arg(long, hide_short_help = true, help_heading = "Metadata and colour")]
     pub keep_icc: bool,

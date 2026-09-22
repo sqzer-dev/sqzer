@@ -93,7 +93,7 @@ fn unavailable(name: &str, reason: &str) -> Error {
 /// Undo premultiplied alpha so the colour channels mean the same thing as
 /// in every other decoder's output.
 fn unpremultiply(image: Image) -> Image {
-    let (width, height, color, samples, icc) = image.into_parts();
+    let (width, height, color, samples, meta) = image.into_parts();
     let ch = color.channels();
     let samples = match samples {
         Samples::U8(mut v) => {
@@ -122,7 +122,7 @@ fn unpremultiply(image: Image) -> Image {
     };
     Image::new(width, height, color, samples)
         .expect("same shape as before")
-        .with_icc(icc)
+        .with_metadata(meta)
 }
 
 // ---------------------------------------------------------------- libheif

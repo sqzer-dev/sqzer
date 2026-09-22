@@ -74,7 +74,13 @@ pub fn render(registry: &Registry, verbose: bool) -> String {
                     }
                     (false, false) => "no mode".to_string(),
                 };
-                format!("{} ({}), {mode}", c.name, c.tier)
+                let metadata = match (c.exif, c.xmp) {
+                    (true, true) => "EXIF and XMP",
+                    (true, false) => "EXIF only",
+                    (false, true) => "XMP only",
+                    (false, false) => "none",
+                };
+                format!("{} ({}), {mode}, metadata: {metadata}", c.name, c.tier)
             }
         } else {
             let features = format.encoder_features();
@@ -141,6 +147,10 @@ struct EncoderLine {
     lossless: bool,
     alpha: bool,
     animation: bool,
+    /// Can embed EXIF under `--keep-metadata`.
+    exif: bool,
+    /// Can embed XMP under `--keep-metadata`.
+    xmp: bool,
     bit_depth: &'static [u8],
     options: Vec<OptionLine>,
 }
@@ -180,6 +190,8 @@ pub fn render_json(registry: &Registry) -> String {
                 lossless: c.lossless,
                 alpha: c.alpha,
                 animation: c.animation,
+                exif: c.exif,
+                xmp: c.xmp,
                 bit_depth: c.bit_depth,
                 options: c
                     .options

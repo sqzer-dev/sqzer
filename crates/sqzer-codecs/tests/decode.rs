@@ -6,7 +6,10 @@
 
 mod common;
 
-use common::{H, W, assert_close, fixture, is_icc, mae_channel, test_image, test_image_u16};
+use common::{
+    H, W, assert_close, assert_pixels, contains, exif_orientation, fixture, is_icc, mae_channel,
+    test_image, test_image_u16,
+};
 use sqzer_codecs::registry;
 use sqzer_core::codec::Format;
 use sqzer_core::image::{ColorType, Image, SampleFormat};
@@ -40,11 +43,13 @@ fn header_dimensions_match_the_decode() {
         let dims = decoder.dimensions(&bytes);
         let img = decoder.decode(&bytes, &DecodeOpts::default()).unwrap();
         // Stored dimensions; a rotated fixture comes out with the axes
-        // swapped once orientation is applied. HEIF is the exception: its
+        // swapped once orientation is applied. HEIF is an exception: its
         // header reports the displayed size, after the container's own
         // rotation, so header and decode agree as they are.
         let name = path.to_string_lossy();
-        let stored = if name.contains("rot90") && !name.ends_with(".heic") {
+        // JPEG XL is another: `jxl-oxide` reports the oriented size too.
+        let rotated = name.contains("rot90") || name.contains("meta");
+        let stored = if rotated && !name.ends_with(".heic") && !name.ends_with(".jxl") {
             (img.height(), img.width())
         } else {
             (img.width(), img.height())
@@ -96,6 +101,34 @@ mod jpeg {
         let (img, _) = decode(&registry(), "pattern-gray.jpg");
         assert_eq!(img.color(), ColorType::Gray);
         assert_close(&img, &test_image(ColorType::Gray), 3.0, "pattern-gray.jpg");
+    }
+
+    #[test]
+    fn exif_and_xmp_ride_on_the_image_with_the_orientation_reset() {
+        let reg = registry();
+        let (img, _) = decode(&reg, "pattern-meta.jpg");
+        assert_eq!((img.width(), img.height()), (W, H));
+        let exif = img.exif().expect("EXIF kept");
+        assert!(!exif.starts_with(b"Exif"), "prefix stripped");
+        assert_eq!(exif_orientation(exif), Some(1), "tag reset once applied");
+        assert!(contains(exif, b"sqzer"), "Artist survives");
+        assert!(contains(img.xmp().expect("XMP kept"), b"test pattern"));
+        // Orientation not applied: the tag says what the pixels need.
+        let raw = reg
+            .decode(
+                &fixture("pattern-meta.jpg"),
+                &DecodeOpts {
+                    apply_orientation: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .image;
+        assert_eq!((raw.width(), raw.height()), (H, W));
+        assert_eq!(exif_orientation(raw.exif().unwrap()), Some(6));
+        // An untagged file carries nothing.
+        let (plain, _) = decode(&reg, "pattern-rgb.jpg");
+        assert_eq!((plain.exif(), plain.xmp()), (None, None));
     }
 
     #[test]
@@ -156,9 +189,9 @@ mod webp {
         let (img, info) = decode(&reg, "pattern-rgb.webp");
         assert_eq!(info.format, Format::WebP);
         assert!(!info.animated);
-        assert_eq!(img, test_image(ColorType::Rgb));
+        assert_pixels(&img, &test_image(ColorType::Rgb));
         let (img, _) = decode(&reg, "pattern-rgba.webp");
-        assert_eq!(img, test_image(ColorType::Rgba));
+        assert_pixels(&img, &test_image(ColorType::Rgba));
     }
 
     #[test]
@@ -180,13 +213,34 @@ mod webp {
         let reg = registry();
         let (img, info) = decode(&reg, "pattern-anim.webp");
         assert!(info.animated);
-        assert_eq!(img, test_image(ColorType::Rgba));
+        assert_pixels(&img, &test_image(ColorType::Rgba));
     }
 
     #[test]
     fn exif_orientation_is_applied() {
         let (img, _) = decode(&registry(), "pattern-rot90.webp");
-        assert_eq!(img, test_image(ColorType::Rgb));
+        assert_pixels(&img, &test_image(ColorType::Rgb));
+    }
+
+    #[test]
+    fn exif_and_xmp_ride_on_the_image_with_the_orientation_reset() {
+        let reg = registry();
+        let (img, _) = decode(&reg, "pattern-meta.webp");
+        assert_pixels(&img, &test_image(ColorType::Rgb));
+        assert_eq!(exif_orientation(img.exif().unwrap()), Some(1));
+        assert!(contains(img.exif().unwrap(), b"sqzer"));
+        assert!(contains(img.xmp().unwrap(), b"test pattern"));
+        let raw = reg
+            .decode(
+                &fixture("pattern-meta.webp"),
+                &DecodeOpts {
+                    apply_orientation: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .image;
+        assert_eq!(exif_orientation(raw.exif().unwrap()), Some(6));
     }
 
     #[test]
@@ -214,18 +268,18 @@ mod jxl {
         let (img, info) = decode(&reg, "pattern-rgb.jxl");
         assert_eq!(info.format, Format::Jxl);
         assert!(!info.animated);
-        assert_eq!(img, test_image(ColorType::Rgb));
+        assert_pixels(&img, &test_image(ColorType::Rgb));
         let (img, _) = decode(&reg, "pattern-rgba.jxl");
-        assert_eq!(img, test_image(ColorType::Rgba));
+        assert_pixels(&img, &test_image(ColorType::Rgba));
         let (img, _) = decode(&reg, "pattern-gray.jxl");
-        assert_eq!(img, test_image(ColorType::Gray));
+        assert_pixels(&img, &test_image(ColorType::Gray));
     }
 
     #[test]
     fn sixteen_bit_stays_sixteen_bit() {
         let (img, _) = decode(&registry(), "pattern-rgb16.jxl");
         assert_eq!(img.sample_format(), SampleFormat::U16);
-        assert_eq!(img, test_image_u16(ColorType::Rgb));
+        assert_pixels(&img, &test_image_u16(ColorType::Rgb));
     }
 
     #[test]
@@ -233,6 +287,22 @@ mod jxl {
         let (img, _) = decode(&registry(), "pattern-lossy.jxl");
         assert_eq!(img.icc(), None);
         assert_close(&img, &test_image(ColorType::Rgb), 4.0, "pattern-lossy.jxl");
+    }
+
+    /// Made by `cjxl` from `pattern-rot90.jpg`: the codestream carries the
+    /// orientation, which `jxl-oxide` applies, and the Exif box repeats it,
+    /// which the decoder resets so an output cannot rotate twice.
+    #[test]
+    fn container_exif_and_xmp_ride_on_the_image() {
+        let (img, _) = decode(&registry(), "pattern-meta.jxl");
+        assert_eq!((img.width(), img.height()), (W, H));
+        assert_close(&img, &test_image(ColorType::Rgb), 3.0, "pattern-meta.jxl");
+        assert_eq!(exif_orientation(img.exif().unwrap()), Some(1));
+        assert!(contains(img.exif().unwrap(), b"sqzer"));
+        assert!(contains(img.xmp().unwrap(), b"test pattern"));
+        // A bare codestream has no boxes to carry any.
+        let (plain, _) = decode(&registry(), "pattern-rgb.jxl");
+        assert_eq!((plain.exif(), plain.xmp()), (None, None));
     }
 
     #[test]
@@ -252,7 +322,7 @@ mod jxl {
         );
         let (img, info) = decode(&registry(), "pattern-container.jxl");
         assert_eq!(info.format, Format::Jxl);
-        assert_eq!(img, test_image(ColorType::Rgb));
+        assert_pixels(&img, &test_image(ColorType::Rgb));
     }
 
     #[test]
@@ -687,26 +757,36 @@ mod tiff {
         assert!(!info.animated);
         assert_eq!(img.color(), ColorType::Rgb);
         assert_eq!(img.icc(), None);
-        assert_eq!(img, test_image(ColorType::Rgb));
+        assert_pixels(&img, &test_image(ColorType::Rgb));
     }
 
     #[test]
     fn rgba_lzw() {
         let (img, _) = decode(&registry(), "pattern-rgba.tif");
-        assert_eq!(img, test_image(ColorType::Rgba));
+        assert_pixels(&img, &test_image(ColorType::Rgba));
     }
 
     #[test]
     fn gray_stays_gray() {
         let (img, _) = decode(&registry(), "pattern-gray.tif");
-        assert_eq!(img, test_image(ColorType::Gray));
+        assert_pixels(&img, &test_image(ColorType::Gray));
     }
 
     #[test]
     fn sixteen_bit_stays_wide() {
         let (img, _) = decode(&registry(), "pattern-rgb16.tif");
         assert_eq!(img.sample_format(), SampleFormat::U16);
-        assert_eq!(img, test_image_u16(ColorType::Rgb));
+        assert_pixels(&img, &test_image_u16(ColorType::Rgb));
+    }
+
+    /// TIFF's EXIF is the file's own IFD, not a blob, so only the XMP tag
+    /// rides along.
+    #[test]
+    fn xmp_rides_on_the_image() {
+        let (img, _) = decode(&registry(), "pattern-meta.tif");
+        assert_pixels(&img, &test_image(ColorType::Rgb));
+        assert!(contains(img.xmp().unwrap(), b"test pattern"));
+        assert_eq!(img.exif(), None);
     }
 
     #[test]
@@ -721,7 +801,7 @@ mod tiff {
         let reg = registry();
         let (img, _) = decode(&reg, "pattern-rot90.tif");
         assert_eq!((img.width(), img.height()), (W, H));
-        assert_eq!(img, test_image(ColorType::Rgb));
+        assert_pixels(&img, &test_image(ColorType::Rgb));
 
         let raw = reg
             .decode(
@@ -753,9 +833,9 @@ mod bmp {
         let reg = registry();
         let (img, info) = decode(&reg, "pattern-rgb.bmp");
         assert_eq!(info.format, Format::Bmp);
-        assert_eq!(img, test_image(ColorType::Rgb));
+        assert_pixels(&img, &test_image(ColorType::Rgb));
         let (img, _) = decode(&reg, "pattern-rgba.bmp");
-        assert_eq!(img, test_image(ColorType::Rgba));
+        assert_pixels(&img, &test_image(ColorType::Rgba));
         assert_too_large(&reg, "pattern-rgb.bmp");
     }
 }
@@ -769,11 +849,11 @@ mod tga {
         let reg = registry();
         let (img, info) = decode(&reg, "pattern-rgb.tga");
         assert_eq!(info.format, Format::Tga);
-        assert_eq!(img, test_image(ColorType::Rgb));
+        assert_pixels(&img, &test_image(ColorType::Rgb));
         let (img, _) = decode(&reg, "pattern-rgba.tga");
-        assert_eq!(img, test_image(ColorType::Rgba));
+        assert_pixels(&img, &test_image(ColorType::Rgba));
         let (img, _) = decode(&reg, "pattern-gray.tga");
-        assert_eq!(img, test_image(ColorType::Gray));
+        assert_pixels(&img, &test_image(ColorType::Gray));
         assert_too_large(&reg, "pattern-rgb.tga");
     }
 
@@ -805,7 +885,7 @@ mod ico {
         let reg = registry();
         let (img, info) = decode(&reg, "pattern-rgba.ico");
         assert_eq!(info.format, Format::Ico);
-        assert_eq!(img, test_image(ColorType::Rgba));
+        assert_pixels(&img, &test_image(ColorType::Rgba));
         assert_too_large(&reg, "pattern-rgba.ico");
     }
 }
@@ -819,9 +899,9 @@ mod qoi {
         let reg = registry();
         let (img, info) = decode(&reg, "pattern-rgb.qoi");
         assert_eq!(info.format, Format::Qoi);
-        assert_eq!(img, test_image(ColorType::Rgb));
+        assert_pixels(&img, &test_image(ColorType::Rgb));
         let (img, _) = decode(&reg, "pattern-rgba.qoi");
-        assert_eq!(img, test_image(ColorType::Rgba));
+        assert_pixels(&img, &test_image(ColorType::Rgba));
         assert_too_large(&reg, "pattern-rgb.qoi");
     }
 }
@@ -835,14 +915,14 @@ mod pnm {
         let reg = registry();
         let (img, info) = decode(&reg, "pattern-rgb.ppm");
         assert_eq!(info.format, Format::Pnm);
-        assert_eq!(img, test_image(ColorType::Rgb));
+        assert_pixels(&img, &test_image(ColorType::Rgb));
         let (img, _) = decode(&reg, "pattern-ascii.ppm");
-        assert_eq!(img, test_image(ColorType::Rgb));
+        assert_pixels(&img, &test_image(ColorType::Rgb));
         let (img, _) = decode(&reg, "pattern-gray.pgm");
-        assert_eq!(img, test_image(ColorType::Gray));
+        assert_pixels(&img, &test_image(ColorType::Gray));
         let (img, _) = decode(&reg, "pattern-rgb16.ppm");
         assert_eq!(img.sample_format(), SampleFormat::U16);
-        assert_eq!(img, test_image_u16(ColorType::Rgb));
+        assert_pixels(&img, &test_image_u16(ColorType::Rgb));
         assert_too_large(&reg, "pattern-rgb.ppm");
     }
 }
@@ -860,7 +940,7 @@ mod svg {
         assert_eq!(info.format, Format::Svg);
         assert!(!info.animated);
         assert_eq!(img.color(), ColorType::Rgb);
-        assert_eq!(img, test_image(ColorType::Rgb));
+        assert_pixels(&img, &test_image(ColorType::Rgb));
         assert_too_large(&reg, "pattern-rgb.svg");
     }
 

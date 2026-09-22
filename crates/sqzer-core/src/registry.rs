@@ -202,6 +202,8 @@ mod tests {
             animation: false,
             bit_depth: &[8],
             hdr: false,
+            exif: false,
+            xmp: false,
             quality_range: 0.0..=100.0,
             effort_range: 0..=10,
             tier,

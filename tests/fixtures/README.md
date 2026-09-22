@@ -112,6 +112,18 @@ pattern-rgb.svg           width and height attributes plus a viewBox
 pattern-rgba.svg          viewBox only; odd rows at fill-opacity 0.50196 (128/255)
 ```
 
+```
+# metadata: exiftool 13.55 over the rotated fixtures, so EXIF orientation 6,
+# EXIF Artist "sqzer" and an XMP packet with dc:creator "sqzer" and dc:title
+# "test pattern" sit beside stored-rotated pixels
+pattern-meta.jpg          pattern-rot90.jpg plus the tags
+pattern-meta.webp         pattern-rot90.webp plus the tags, EXIF and XMP chunks
+pattern-meta.tif          pattern-rot90.tif plus the tags; the EXIF is the file's own IFD, XMP is tag 700
+pattern-meta.jxl          cjxl 0.12 --lossless_jpeg=1 --compress_boxes=0 from pattern-rot90.jpg,
+                          so the codestream carries the orientation and the Exif box repeats it;
+                          the tags added by exiftool after
+```
+
 The ICC profile in the `-icc` files is a Display P3 profile synthesised by
 `jxl-color` 0.9.0; the same bytes are embedded in all three containers so a
 test can compare them. The EXIF blob is a minimal little-endian TIFF with a

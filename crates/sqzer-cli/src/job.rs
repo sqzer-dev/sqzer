@@ -186,12 +186,13 @@ fn run(
         rec.target = Some(t);
     }
     let details = vec![format!(
-        "params: backend {} ({}), effort {}, subsampling {:?}, keep_icc {}, opts {}",
+        "params: backend {} ({}), effort {}, subsampling {:?}, keep_icc {}, keep_metadata {}, opts {}",
         out.backend,
         out.tier,
         sqzer.params().effort,
         sqzer.params().subsampling,
         sqzer.params().keep_icc,
+        sqzer.params().keep_metadata,
         if sqzer.params().codec_specific.is_empty() {
             "none".to_string()
         } else {

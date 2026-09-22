@@ -140,6 +140,83 @@ pub fn assert_close(decoded: &Image, expected: &Image, limit: f64, what: &str) {
     );
 }
 
+/// Same dimensions, layout and samples. Metadata is not compared: a
+/// fixture may carry EXIF or XMP the reference image does not.
+pub fn assert_pixels(img: &Image, expected: &Image) {
+    assert_eq!(
+        (img.width(), img.height()),
+        (expected.width(), expected.height())
+    );
+    assert_eq!(img.color(), expected.color());
+    assert_eq!(img.samples(), expected.samples());
+}
+
+/// A minimal little-endian TIFF: `Orientation = orientation` and
+/// `Artist = "sqzer"`, so a blob can be found in an output by its text.
+pub fn exif_blob(orientation: u16) -> Vec<u8> {
+    let mut t = Vec::new();
+    t.extend_from_slice(b"II");
+    t.extend_from_slice(&42u16.to_le_bytes());
+    t.extend_from_slice(&8u32.to_le_bytes());
+    t.extend_from_slice(&2u16.to_le_bytes());
+    t.extend_from_slice(&0x0112u16.to_le_bytes());
+    t.extend_from_slice(&3u16.to_le_bytes());
+    t.extend_from_slice(&1u32.to_le_bytes());
+    t.extend_from_slice(&orientation.to_le_bytes());
+    t.extend_from_slice(&[0, 0]);
+    t.extend_from_slice(&0x013Bu16.to_le_bytes());
+    t.extend_from_slice(&2u16.to_le_bytes());
+    t.extend_from_slice(&6u32.to_le_bytes());
+    // 8 + 2 + 2 * 12 + 4 = 38: right after the IFD.
+    t.extend_from_slice(&38u32.to_le_bytes());
+    t.extend_from_slice(&0u32.to_le_bytes());
+    t.extend_from_slice(b"sqzer\0");
+    t
+}
+
+/// An XMP packet with a title to look for.
+pub const XMP: &[u8] = b"<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
+<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
+<rdf:Description rdf:about=\"\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\
+<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">test pattern</rdf:li></rdf:Alt></dc:title>\
+</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
+
+/// The `Orientation` entry of the first IFD, from either byte order.
+pub fn exif_orientation(exif: &[u8]) -> Option<u16> {
+    let big = match exif.get(..2)? {
+        b"MM" => true,
+        b"II" => false,
+        _ => return None,
+    };
+    let u16_at = |at: usize| -> Option<u16> {
+        let b: [u8; 2] = exif.get(at..at + 2)?.try_into().ok()?;
+        Some(if big {
+            u16::from_be_bytes(b)
+        } else {
+            u16::from_le_bytes(b)
+        })
+    };
+    let u32_at = |at: usize| -> Option<u32> {
+        let b: [u8; 4] = exif.get(at..at + 4)?.try_into().ok()?;
+        Some(if big {
+            u32::from_be_bytes(b)
+        } else {
+            u32::from_le_bytes(b)
+        })
+    };
+    let ifd = usize::try_from(u32_at(4)?).ok()?;
+    let entries = u16_at(ifd)?;
+    (0..usize::from(entries))
+        .map(|i| ifd + 2 + i * 12)
+        .find(|&at| u16_at(at) == Some(0x0112) && u16_at(at + 2) == Some(3))
+        .and_then(|at| u16_at(at + 8))
+}
+
+/// `needle` occurs in `haystack`.
+pub fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
 pub fn is_icc(bytes: &[u8]) -> bool {
     bytes.len() > 128 && &bytes[36..40] == b"acsp"
 }

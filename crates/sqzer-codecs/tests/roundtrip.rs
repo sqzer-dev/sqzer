@@ -12,7 +12,9 @@
 
 mod common;
 
-use common::{H, IntoParams, W, assert_close, quality, test_image, test_image_u16};
+use common::{
+    H, IntoParams, W, XMP, assert_close, contains, exif_blob, quality, test_image, test_image_u16,
+};
 // The portable JPEG writer itself: a native build's registry hands out
 // `jpegli` for this format.
 use sqzer_codecs::jpeg::MozjpegEncoder;
@@ -148,6 +150,8 @@ fn encoder_caps_are_truthful() {
             assert!(back.has_alpha(), "{name}: alpha claimed but not preserved");
         }
 
+        metadata_claims_are_truthful(&reg, enc);
+
         // Every claimed bit depth encodes.
         for &depth in caps.bit_depth {
             let img = match depth {
@@ -207,6 +211,58 @@ fn encoder_caps_are_truthful() {
 }
 
 #[cfg(not(feature = "native-jxl"))]
+/// A claimed blob comes back out of the file, an unclaimed one is refused,
+/// never dropped.
+fn metadata_claims_are_truthful(reg: &sqzer_core::Registry, enc: &dyn Encoder) {
+    let caps = enc.caps();
+    let name = caps.format;
+    let params = if caps.lossless {
+        Target::Lossless.into_params()
+    } else {
+        quality(90.0)
+    };
+    let exif = exif_blob(1);
+    let tagged = [
+        (
+            "EXIF",
+            caps.exif,
+            test_image(ColorType::Rgb).with_exif(Some(exif.clone())),
+            &b"sqzer"[..],
+        ),
+        (
+            "XMP",
+            caps.xmp,
+            test_image(ColorType::Rgb).with_xmp(Some(XMP.to_vec())),
+            &b"test pattern"[..],
+        ),
+    ];
+    for (what, claimed, img, needle) in tagged {
+        match enc.encode(&img, &params) {
+            Ok(bytes) => {
+                assert!(claimed, "{name}: embeds {what} without claiming it");
+                assert!(contains(&bytes, needle), "{name}: {what} not in the output");
+                if reg.has_decoder(caps.format) {
+                    let back = reg.decode(&bytes, &DecodeOpts::default()).unwrap().image;
+                    let (got, want) = if what == "EXIF" {
+                        (back.exif(), img.exif())
+                    } else {
+                        (back.xmp(), img.xmp())
+                    };
+                    // A decoder that does not read the blob yet is not
+                    // the encoder's fault; one that does must agree.
+                    if got.is_some() {
+                        assert_eq!(got, want, "{name}: {what} changed on the way through");
+                    }
+                }
+            }
+            Err(Error::Unsupported { .. }) => {
+                assert!(!claimed, "{name}: claims {what} but refuses it");
+            }
+            Err(e) => panic!("{name}: {what}: {e}"),
+        }
+    }
+}
+
 #[test]
 fn unavailable_encoder_is_reported_not_substituted() {
     let reg = registry();

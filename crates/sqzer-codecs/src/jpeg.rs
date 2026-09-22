@@ -65,10 +65,11 @@ impl Decoder for JpegDecoder {
         let mut decoder = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(bytes), options);
         let pixels = decoder.decode().map_err(codec_err)?;
         let icc = decoder.icc_profile();
+        let exif = decoder.exif().cloned();
+        let xmp = decoder.xmp().cloned();
         let orientation = if opts.apply_orientation {
-            decoder
-                .exif()
-                .and_then(|raw| crate::exif::orientation(raw))
+            exif.as_deref()
+                .and_then(crate::exif::orientation)
                 .unwrap_or_default()
         } else {
             Orientation::default()
@@ -76,6 +77,8 @@ impl Decoder for JpegDecoder {
 
         Ok(Image::from_u8(width, height, color, pixels)?
             .with_icc(icc)
+            .with_exif(exif)
+            .with_xmp(xmp)
             .apply_orientation(orientation))
     }
 }
@@ -120,6 +123,8 @@ static CAPS: EncoderCaps = EncoderCaps {
     animation: false,
     bit_depth: &[8],
     hdr: false,
+    exif: true,
+    xmp: true,
     quality_range: 1.0..=100.0,
     effort_range: 0..=10,
     tier: Tier::Portable,
@@ -173,6 +178,12 @@ impl Encoder for MozjpegEncoder {
 
         if let Some(icc) = img.icc() {
             encoder = encoder.icc_profile(icc.to_vec());
+        }
+        if let Some(exif) = img.exif() {
+            encoder = encoder.exif_data(exif.to_vec());
+        }
+        if let Some(xmp) = img.xmp() {
+            encoder = encoder.add_marker(1, crate::exif::xmp_app1(xmp, Format::Jpeg)?);
         }
 
         let img = img.to_u8(Format::Jpeg)?;
