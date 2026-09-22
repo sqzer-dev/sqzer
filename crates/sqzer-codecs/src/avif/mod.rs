@@ -51,6 +51,8 @@ static ENCODER_CAPS: EncoderCaps = EncoderCaps {
     animation: false,
     bit_depth: &[8],
     hdr: false,
+    exif: true,
+    xmp: false,
     quality_range: 1.0..=100.0,
     effort_range: 0..=10,
     tier: Tier::Portable,
@@ -92,6 +94,9 @@ impl Encoder for RavifEncoder {
         if img.icc().is_some() {
             return Err(unsupported("an embedded ICC profile"));
         }
+        if img.xmp().is_some() {
+            return Err(unsupported("an XMP packet"));
+        }
 
         // Single-threaded until the thread budget lands (ADR-0001 D3).
         let mut encoder = ravif::Encoder::new()
@@ -100,6 +105,9 @@ impl Encoder for RavifEncoder {
             .with_speed(map_effort(params.effort))
             .with_alpha_color_mode(AlphaColorMode::UnassociatedClean)
             .with_num_threads(Some(1));
+        if let Some(exif) = img.exif() {
+            encoder = encoder.with_exif(exif.to_vec());
+        }
 
         for (key, value) in params.codec_opts("avif") {
             encoder = match key {

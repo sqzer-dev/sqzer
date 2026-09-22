@@ -9,7 +9,7 @@
 use std::borrow::Cow;
 
 use sqzer_core::codec::{Decoder, DecoderCaps, Encoder, EncoderCaps, Format, FormatInfo, Tier};
-use sqzer_core::image::{ColorType, Image, Samples};
+use sqzer_core::image::{ColorType, Image, Metadata, Samples};
 use sqzer_core::params::{DecodeOpts, EncodeParams};
 use sqzer_core::{Error, Result};
 
@@ -61,11 +61,20 @@ impl Decoder for PngDecoder {
         });
         let mut reader = decoder.read_info().map_err(codec_err)?;
 
-        let (width, height, icc) = {
+        let (width, height, meta) = {
             let info = reader.info();
             opts.check_pixels(info.width, info.height)?;
-            let icc = info.icc_profile.as_ref().map(|c| c.to_vec());
-            (info.width, info.height, icc)
+            let meta = Metadata {
+                icc: info.icc_profile.as_ref().map(|c| c.to_vec()),
+                exif: info.exif_metadata.as_ref().map(|c| c.to_vec()),
+                xmp: info
+                    .utf8_text
+                    .iter()
+                    .find(|t| t.keyword == XMP_KEYWORD)
+                    .and_then(|t| t.get_text().ok())
+                    .map(String::into_bytes),
+            };
+            (info.width, info.height, meta)
         };
 
         let (color_type, bit_depth) = reader.output_color_type();
@@ -100,8 +109,22 @@ impl Decoder for PngDecoder {
             }
         };
 
-        Ok(Image::new(width, height, color, samples)?.with_icc(icc))
+        Ok(Image::new(width, height, color, samples)?.with_metadata(meta))
     }
+}
+
+/// The `iTXt` keyword that carries XMP in a PNG.
+pub(crate) const XMP_KEYWORD: &str = "XML:com.adobe.xmp";
+
+/// An XMP packet as UTF-8 for an `iTXt` chunk.
+///
+/// # Errors
+/// [`Error::Unsupported`] for a packet that is not UTF-8.
+pub(crate) fn xmp_text(xmp: &[u8]) -> Result<String> {
+    String::from_utf8(xmp.to_vec()).map_err(|_| Error::Unsupported {
+        format: Format::Png,
+        what: "an XMP packet that is not UTF-8".into(),
+    })
 }
 
 /// Walk chunk headers up to the first IDAT looking for an acTL chunk.
@@ -141,6 +164,8 @@ static ENCODER_CAPS: EncoderCaps = EncoderCaps {
     animation: false,
     bit_depth: &[8, 16],
     hdr: false,
+    exif: true,
+    xmp: true,
     quality_range: 100.0..=100.0,
     effort_range: 0..=10,
     tier: Tier::Portable,
@@ -184,9 +209,16 @@ impl Encoder for PngEncoder {
         info.color_type = color;
         info.bit_depth = bit_depth;
         info.icc_profile = img.icc().map(Cow::Borrowed);
+        info.exif_metadata = img.exif().map(Cow::Borrowed);
+        let xmp = img.xmp().map(xmp_text).transpose()?;
 
         let mut out = Vec::new();
         let mut encoder = png::Encoder::with_info(&mut out, info).map_err(codec_err)?;
+        if let Some(xmp) = xmp {
+            encoder
+                .add_itxt_chunk(XMP_KEYWORD.to_string(), xmp)
+                .map_err(codec_err)?;
+        }
         encoder.set_compression(match params.effort {
             0 => png::Compression::Fastest,
             1..=3 => png::Compression::Fast,

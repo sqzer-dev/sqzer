@@ -54,6 +54,8 @@ static ENCODER_CAPS: EncoderCaps = EncoderCaps {
     animation: false,
     bit_depth: &[8],
     hdr: false,
+    exif: false,
+    xmp: false,
     quality_range: 0.0..=100.0,
     effort_range: 0..=10,
     tier: Tier::Native,
@@ -76,6 +78,9 @@ impl Encoder for LibavifEncoder {
         };
         if img.icc().is_some() {
             return Err(unsupported("an embedded ICC profile"));
+        }
+        if img.exif().is_some() || img.xmp().is_some() {
+            return Err(unsupported("EXIF or XMP metadata"));
         }
         let mut alpha_quality = quality;
         for (key, value) in params.codec_opts("avif") {

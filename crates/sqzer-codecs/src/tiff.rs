@@ -27,6 +27,8 @@ static CAPS: DecoderCaps = DecoderCaps {
 
 /// `InterColorProfile`, the ICC tag.
 const ICC_TAG: u16 = 34675;
+/// The XMP packet, tag 700.
+const XMP_TAG: u16 = 700;
 
 impl Decoder for TiffDecoder {
     fn caps(&self) -> &DecoderCaps {
@@ -81,6 +83,11 @@ impl Decoder for TiffDecoder {
             .ok()
             .flatten()
             .and_then(|v| v.into_u8_vec().ok());
+        let xmp = d
+            .find_tag(Tag::Unknown(XMP_TAG))
+            .ok()
+            .flatten()
+            .and_then(|v| v.into_u8_vec().ok());
         let orient = if opts.apply_orientation {
             orientation(&mut d)
         } else {
@@ -110,6 +117,7 @@ impl Decoder for TiffDecoder {
         };
         Ok(Image::new(width, height, color, samples)?
             .with_icc(icc)
+            .with_xmp(xmp)
             .apply_orientation(orient))
     }
 }

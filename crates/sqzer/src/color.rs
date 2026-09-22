@@ -27,12 +27,15 @@ pub fn to_srgb(image: Image) -> Result<Image> {
         return Ok(image);
     };
     let profile = ColorProfile::new_from_slice(icc).map_err(failed)?;
-    let (width, height, color, samples, _) = image.into_parts();
+    let (width, height, color, samples, mut meta) = image.into_parts();
+    // Converted or not, the profile goes; EXIF and XMP stay for the
+    // metadata policy to decide.
+    meta.icc = None;
     let layout = layout(color);
     let target = match (profile.color_space, color) {
         (DataColorSpace::Rgb, ColorType::Rgb | ColorType::Rgba) => ColorProfile::new_srgb(),
         (DataColorSpace::Gray, ColorType::Gray | ColorType::GrayAlpha) => gray_srgb(),
-        _ => return Image::new(width, height, color, samples),
+        _ => return Ok(Image::new(width, height, color, samples)?.with_metadata(meta)),
     };
     let options = TransformOptions {
         rendering_intent: profile.rendering_intent,
@@ -53,7 +56,7 @@ pub fn to_srgb(image: Image) -> Result<Image> {
         }
         Samples::F32(v) => Samples::F32(linear_matrix(&profile, &target, color, v)?),
     };
-    Image::new(width, height, color, samples)
+    Ok(Image::new(width, height, color, samples)?.with_metadata(meta))
 }
 
 fn run<T: Copy + Default>(t: &dyn TransformExecutor<T>, src: &[T]) -> Result<Vec<T>> {

@@ -362,6 +362,74 @@ fn icc_is_converted_to_srgb_unless_kept() {
 }
 
 #[test]
+fn metadata_is_stripped_unless_kept() {
+    let sb = Sandbox::new("metadata");
+    sb.fixture("pattern-meta.jpg", "in.jpg");
+    let has = |bytes: &[u8], needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+    let (code, out, err) =
+        run(sb
+            .sqzer()
+            .args(["in.jpg", "-f", "png", "--lossless", "--force", "--json"]));
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(json_lines(&out)[0]["output_width"], 48, "oriented");
+    let png = fs::read(sb.path("in.png")).unwrap();
+    assert!(
+        !has(&png, b"eXIf") && !has(&png, b"test pattern"),
+        "default keeps metadata"
+    );
+    let (code, _, err) = run(sb.sqzer().args([
+        "in.jpg",
+        "-f",
+        "png",
+        "--lossless",
+        "--force",
+        "--keep-metadata",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    let png = fs::read(sb.path("in.png")).unwrap();
+    assert!(has(&png, b"eXIf") && has(&png, b"sqzer"), "EXIF missing");
+    assert!(
+        has(&png, b"XML:com.adobe.xmp") && has(&png, b"test pattern"),
+        "XMP missing"
+    );
+    // Neither AVIF encoder carries everything: `ravif` takes EXIF but not
+    // XMP, `libavif` takes neither. Refused per file, whichever it is.
+    let refused = |err: &str| err.contains("EXIF") || err.contains("XMP");
+    let (code, out, err) = run(sb.sqzer().args([
+        "in.jpg",
+        "-f",
+        "avif",
+        "-q",
+        "50",
+        "--keep-metadata",
+        "--json",
+    ]));
+    assert_eq!(code, 1, "{err}");
+    assert!(refused(&err), "{err}");
+    assert_eq!(json_lines(&out)[0]["status"], "failed");
+    // A dry run says the same rather than planning an output the encoder
+    // would refuse.
+    let (code, out, err) = run(sb.sqzer().args([
+        "in.jpg",
+        "-f",
+        "avif",
+        "-q",
+        "50",
+        "--keep-metadata",
+        "--json",
+        "-n",
+    ]));
+    assert_eq!(code, 1, "{err}");
+    assert!(refused(&err), "{err}");
+    assert_eq!(json_lines(&out)[0]["status"], "failed");
+    let (code, out, _) = run(sb
+        .sqzer()
+        .args(["in.jpg", "-f", "avif", "-q", "50", "--json", "-n"]));
+    assert_eq!(code, 0);
+    assert_eq!(json_lines(&out)[0]["status"], "planned");
+}
+
+#[test]
 fn shape_6_json_is_the_only_thing_on_stdout() {
     let sb = Sandbox::new("shape6");
     sb.fixture("pattern-rgb.jpg", "in.jpg");

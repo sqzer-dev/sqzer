@@ -138,6 +138,22 @@ fn plan(input: &Input, decoded: &Decoded, sqzer: &Sqzer, mut rec: Record, ctx: &
     };
     rec.backend = Some(caps.name);
     rec.tier = Some(caps.tier.to_string());
+    // What the encoder would refuse, refused here too, so a plan is one
+    // the run can carry out.
+    let img = &decoded.image;
+    for (blob, can) in [("EXIF", caps.exif), ("XMP", caps.xmp)] {
+        let carried = if blob == "EXIF" {
+            img.exif().is_some()
+        } else {
+            img.xmp().is_some()
+        };
+        if carried && !can {
+            return rec.fail(&format!(
+                "{} does not support {blob} metadata; drop --keep-metadata or pick another format",
+                caps.name
+            ));
+        }
+    }
     let quality = match sqzer.params().target {
         Target::Quality(q) => Some(Resolved::Quality(q)),
         Target::Lossless => Some(Resolved::Lossless),
@@ -186,12 +202,13 @@ fn run(
         rec.target = Some(t);
     }
     let details = vec![format!(
-        "params: backend {} ({}), effort {}, subsampling {:?}, keep_icc {}, opts {}",
+        "params: backend {} ({}), effort {}, subsampling {:?}, keep_icc {}, keep_metadata {}, opts {}",
         out.backend,
         out.tier,
         sqzer.params().effort,
         sqzer.params().subsampling,
         sqzer.params().keep_icc,
+        sqzer.params().keep_metadata,
         if sqzer.params().codec_specific.is_empty() {
             "none".to_string()
         } else {

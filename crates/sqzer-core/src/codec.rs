@@ -271,6 +271,11 @@ pub struct EncoderCaps {
     pub bit_depth: &'static [u8],
     /// Accepts HDR / float input.
     pub hdr: bool,
+    /// Can embed an EXIF blob. An encoder that cannot refuses an image
+    /// carrying one rather than dropping it.
+    pub exif: bool,
+    /// Can embed an XMP packet. Same rule.
+    pub xmp: bool,
     /// Range of the backend's own quality knob, after mapping from 0..=100.
     pub quality_range: RangeInclusive<f32>,
     /// Range of the backend's effort / speed knob.
