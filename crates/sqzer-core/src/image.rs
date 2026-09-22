@@ -523,6 +523,42 @@ impl Image {
         }))
     }
 
+    /// The image with integer samples, at most 16 bits wide. Borrows when
+    /// it already is.
+    ///
+    /// Float samples are linear light by the [`Image`] contract; they are
+    /// encoded with the sRGB curve into 16 bits, clipped to `0.0..=1.0`
+    /// first. That is the whole HDR policy for now: nothing above display
+    /// white survives, no tone mapping is attempted (ADR-0001 D7 names
+    /// `OpenEXR` as an input, not HDR output). Alpha is scaled, not encoded.
+    #[must_use]
+    pub fn to_u16(&self) -> Cow<'_, Self> {
+        let Samples::F32(v) = &self.samples else {
+            return Cow::Borrowed(self);
+        };
+        let channels = self.channels();
+        let alpha_at = self.color.has_alpha().then_some(channels - 1);
+        let converted = v
+            .iter()
+            .enumerate()
+            .map(|(i, &s)| {
+                let unit = if Some(i % channels) == alpha_at {
+                    s
+                } else {
+                    linear_to_srgb(s)
+                };
+                unit_to_u16(unit)
+            })
+            .collect();
+        Cow::Owned(Self {
+            width: self.width,
+            height: self.height,
+            color: self.color,
+            samples: Samples::U16(converted),
+            meta: self.meta.clone(),
+        })
+    }
+
     /// The image with the alpha channel dropped. Borrows when there is none.
     ///
     /// Alpha is discarded, not composited: an encoder without alpha support
@@ -630,6 +666,29 @@ pub fn reset_exif_orientation(exif: &mut [u8]) -> bool {
     false
 }
 
+/// Linear light to the sRGB transfer curve, both on `0.0..=1.0`. Input
+/// outside that range is clipped; NaN reads as black.
+#[must_use]
+pub fn linear_to_srgb(linear: f32) -> f32 {
+    let l = if linear.is_nan() {
+        0.0
+    } else {
+        linear.clamp(0.0, 1.0)
+    };
+    if l <= 0.003_130_8 {
+        12.92 * l
+    } else {
+        1.055 * l.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+/// `0.0..=1.0` to a 16-bit sample, rounded to nearest, out of range clipped.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn unit_to_u16(unit: f32) -> u16 {
+    let unit = if unit.is_nan() { 0.0 } else { unit };
+    (unit.clamp(0.0, 1.0) * 65535.0).round() as u16
+}
+
 /// Round-to-nearest 16-bit to 8-bit, so that 0xFFFF maps to 0xFF exactly.
 #[allow(clippy::cast_possible_truncation)]
 fn u16_to_u8(s: u16) -> u8 {
@@ -685,6 +744,33 @@ mod tests {
         let img = Image::from_u16(1, 1, ColorType::Gray, vec![0xFFFF]).unwrap();
         let out = img.to_u8(Format::Png).unwrap();
         assert_eq!(out.samples().as_u8(), Some(&[0xFF][..]));
+    }
+
+    #[test]
+    fn to_u16_encodes_linear_float_with_clipping() {
+        let img = Image::new(
+            3,
+            1,
+            ColorType::GrayAlpha,
+            Samples::F32(vec![0.0, 1.0, 0.214_04, 0.5, 4.0, -1.0]),
+        )
+        .unwrap()
+        .with_xmp(Some(b"<x/>".to_vec()));
+        let out = img.to_u16();
+        let v = out.samples().as_u16().unwrap();
+        // Black, and mid-gray: linear 0.214 is sRGB 0.5.
+        assert_eq!(v[0], 0);
+        assert_eq!(v[1], 65_535, "alpha is scaled, not encoded");
+        assert!(v[2].abs_diff(32_768) <= 2, "{}", v[2]);
+        assert_eq!(v[3], 32_768);
+        // Above white clips, negative clips, both quietly.
+        assert_eq!(v[4], 65_535);
+        assert_eq!(v[5], 0);
+        assert_eq!(out.xmp(), Some(&b"<x/>"[..]));
+        // Integer samples borrow.
+        let img = Image::from_u8(1, 1, ColorType::Gray, vec![7]).unwrap();
+        assert!(matches!(img.to_u16(), Cow::Borrowed(_)));
+        assert!((linear_to_srgb(f32::NAN) - 0.0).abs() < f32::EPSILON);
     }
 
     #[test]

@@ -929,6 +929,75 @@ mod pnm {
 
 // ------------------------------------------------------------------ SVG
 
+#[cfg(feature = "exr")]
+mod exr {
+    use super::*;
+    use sqzer_core::image::{SampleFormat, linear_to_srgb};
+
+    /// Linear float samples back to the 8-bit sRGB pattern.
+    fn as_u8(img: &Image) -> Vec<u8> {
+        let alpha_at = img.has_alpha().then_some(img.channels() - 1);
+        img.samples()
+            .as_f32()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .map(|(i, &s)| {
+                let unit = if Some(i % img.channels()) == alpha_at {
+                    s
+                } else {
+                    linear_to_srgb(s)
+                };
+                // `unit` is on 0..=1 after the curve.
+                #[allow(clippy::cast_sign_loss)]
+                {
+                    (unit * 255.0).round() as u8
+                }
+            })
+            .collect()
+    }
+
+    /// The fixtures hold the pattern in linear light as half floats,
+    /// written by `ImageMagick`; a half float keeps the 8-bit values to
+    /// within one step once re-encoded.
+    fn check(name: &str, color: ColorType) {
+        let (img, info) = decode(&registry(), name);
+        assert_eq!(info.format, Format::Exr);
+        assert!(!info.animated);
+        assert_eq!((img.width(), img.height()), (W, H), "{name}");
+        assert_eq!(img.color(), color, "{name}");
+        assert_eq!(img.sample_format(), SampleFormat::F32, "{name}");
+        let expected = test_image(color);
+        let worst = as_u8(&img)
+            .iter()
+            .zip(expected.samples().as_u8().unwrap())
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        assert!(worst <= 1, "{name}: worst step {worst}");
+    }
+
+    #[test]
+    fn rgb_is_linear_light() {
+        check("pattern-rgb.exr", ColorType::Rgb);
+    }
+
+    #[test]
+    fn alpha_is_read_as_stored() {
+        check("pattern-rgba.exr", ColorType::Rgba);
+    }
+
+    #[test]
+    fn a_luminance_layer_is_gray() {
+        check("pattern-gray.exr", ColorType::Gray);
+    }
+
+    #[test]
+    fn pixel_limit() {
+        assert_too_large(&registry(), "pattern-rgb.exr");
+    }
+}
+
 #[cfg(feature = "svg")]
 mod svg {
     use super::*;

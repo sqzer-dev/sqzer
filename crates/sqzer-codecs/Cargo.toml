@@ -26,6 +26,7 @@ portable = [
     "ico",
     "qoi",
     "pnm",
+    "exr",
     "svg",
 ]
 # `oxipng` is the PNG writer on desktop targets; on wasm32 it is compiled
@@ -52,6 +53,8 @@ tga = ["dep:image", "image/tga"]
 ico = ["dep:image", "image/ico"]
 qoi = ["dep:image", "image/qoi"]
 pnm = ["dep:image", "image/pnm"]
+# OpenEXR input over `exr`. Threads off: parallelism is per file (ADR-0001 D3).
+exr = ["dep:exr"]
 svg = ["dep:resvg"]
 
 # Tier 2: C bindings. Opt-in, desktop targets only; a native feature on
@@ -101,6 +104,8 @@ gif = { version = "0.14.2", optional = true, default-features = false, features 
 # TIFF reader. MIT. LZW, Deflate and JPEG-in-TIFF strips; the fax
 # (CCITT) codec would add a crate and is off.
 tiff = { version = "0.11.3", optional = true, default-features = false, features = ["lzw", "deflate", "jpeg"] }
+# OpenEXR decoder. BSD-3-Clause. `rayon` off: the CLI parallelises per file.
+exr = { version = "1.74", optional = true, default-features = false }
 # The simple raster containers: BMP, TGA, ICO, QOI, PNM. Decoders only;
 # `image`'s encoders are what this project replaces (ADR-0001) and no
 # feature enables one. MIT OR Apache-2.0. The `ico` feature pulls

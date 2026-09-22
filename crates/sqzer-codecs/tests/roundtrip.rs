@@ -99,6 +99,7 @@ fn feature_registry_lists_the_compiled_backends() {
         (cfg!(feature = "ico"), Format::Ico),
         (cfg!(feature = "qoi"), Format::Qoi),
         (cfg!(feature = "pnm"), Format::Pnm),
+        (cfg!(feature = "exr"), Format::Exr),
         (cfg!(feature = "svg"), Format::Svg),
         (cfg!(feature = "tga"), Format::Tga),
     ] {

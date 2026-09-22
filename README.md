@@ -143,7 +143,7 @@ rimage avif in.jpg                   sqzer -f avif in.jpg
 
 ## Formats
 
-Decode: JPEG, PNG, WebP, AVIF, JPEG XL, GIF, TIFF, BMP, TGA, ICO, QOI, PNM, SVG. HEIC behind a feature. OpenEXR is not read yet.
+Decode: JPEG, PNG, WebP, AVIF, JPEG XL, GIF, TIFF, BMP, TGA, ICO, QOI, PNM, OpenEXR, SVG. HEIC behind a feature. OpenEXR is read as linear light and encoded to 16-bit sRGB with anything above display white clipped; there is no tone mapping.
 
 Encode: JPEG, PNG, WebP, AVIF, JPEG XL.
 
