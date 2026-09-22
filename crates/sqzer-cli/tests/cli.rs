@@ -315,6 +315,53 @@ fn resize_never_enlarges_and_the_thumbnail_preset_uses_it() {
 }
 
 #[test]
+fn icc_is_converted_to_srgb_unless_kept() {
+    let sb = Sandbox::new("icc");
+    sb.fixture("pattern-icc.webp", "p3.webp");
+    sb.fixture("pattern-rgb.webp", "plain.webp");
+    let png = |args: &[&str], out: &str| {
+        let (code, _, err) = run(sb
+            .sqzer()
+            .args(["p3.webp", "-f", "png", "--lossless", "--force", "-o", out])
+            .args(args));
+        assert_eq!(code, 0, "{args:?}: {err}");
+        fs::read(sb.path(out)).unwrap()
+    };
+    let has_profile = |bytes: &[u8]| bytes.windows(4).any(|w| w == b"iCCP");
+    // Default: untagged sRGB, and the samples moved.
+    let converted = png(&[], "converted.png");
+    assert!(
+        !has_profile(&converted),
+        "the default output carries a profile"
+    );
+    // `--keep-icc`: the profile is embedded and the samples are as decoded,
+    // so the PNG matches a lossless conversion of the untagged pattern
+    // plus the profile bytes.
+    let kept = png(&["--keep-icc"], "kept.png");
+    assert!(has_profile(&kept), "--keep-icc dropped the profile");
+    let (code, _, err) = run(sb.sqzer().args([
+        "plain.webp",
+        "-f",
+        "png",
+        "--lossless",
+        "--force",
+        "-o",
+        "plain.png",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    let plain = fs::read(sb.path("plain.png")).unwrap();
+    // Same IHDR and image size, different IDAT only through the profile:
+    // compare the decoded pictures through the library instead of bytes.
+    let decode = |bytes: &[u8]| sqzer::Sqzer::new().decode(bytes).unwrap().image;
+    let (kept, plain, converted) = (decode(&kept), decode(&plain), decode(&converted));
+    assert_eq!(kept.samples(), plain.samples());
+    assert!(kept.icc().is_some());
+    assert_eq!(plain.icc(), None);
+    assert_ne!(converted.samples(), plain.samples());
+    assert_eq!(converted.icc(), None);
+}
+
+#[test]
 fn shape_6_json_is_the_only_thing_on_stdout() {
     let sb = Sandbox::new("shape6");
     sb.fixture("pattern-rgb.jpg", "in.jpg");

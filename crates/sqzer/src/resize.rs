@@ -8,9 +8,10 @@
 //! resampling and divided out after, so a transparent pixel's colour does
 //! not bleed into its neighbours. The filter is Lanczos3.
 //!
-//! > **Note**: an image that keeps a non-sRGB ICC profile is still
-//! > linearised with the sRGB curve. For Display P3 that is exact; for a
-//! > profile with another curve it is an approximation, and a closer one
+//! > **Note**: the colour stage runs first, so integer samples are sRGB
+//! > here unless `keep_icc` left a profile on the image. Such an image is
+//! > still linearised with the sRGB curve: exact for Display P3, an
+//! > approximation for a profile with another curve, and a closer one
 //! > than resampling the encoded values.
 
 use fast_image_resize::images::{Image as Buffer, ImageRef};
