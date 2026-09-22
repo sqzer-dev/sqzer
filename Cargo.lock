@@ -2140,6 +2140,7 @@ dependencies = [
  "jxl-oxide",
  "kamadak-exif",
  "libavif",
+ "moxcms",
  "mozjpeg-rs",
  "oxipng",
  "png",

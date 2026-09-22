@@ -7,11 +7,13 @@
 //! do not premultiply, and there is no flag in the file that says which.
 //!
 //! A `chromaticities` attribute other than Rec.709 (the format's default,
-//! and sRGB's primaries) is honoured for RGB layers: the samples are
-//! rotated to sRGB primaries in linear light through one matrix, with a
-//! Bradford adaptation when the white point is not D65. Values outside
-//! sRGB's gamut come out negative or above one, which the range stage
-//! clips.
+//! and sRGB's primaries) is honoured for RGB layers by attaching a
+//! matrix-shaper ICC profile with those primaries and white, synthesised
+//! with `moxcms`. The colour stage of the pipeline then rotates the
+//! samples to sRGB primaries in linear light, the same path every other
+//! profiled input takes; values outside sRGB's gamut come out negative or
+//! above one there, which the range stage clips. Malformed chromaticities
+//! are an error, not a fallback to Rec.709.
 //!
 //! Not handled: deep data, resolution levels other than the largest,
 //! channels that are neither `RGB(A)` nor `Y(A)`, subsampled channels and
@@ -22,6 +24,7 @@ use std::io::Cursor;
 
 use exr::meta::attribute::Chromaticities;
 use exr::prelude::*;
+use moxcms::{Chromaticity, ColorPrimaries, ColorProfile};
 use sqzer_core::codec::{Decoder, DecoderCaps, Format, FormatInfo, Tier};
 use sqzer_core::image::{ColorType, Image, Samples};
 use sqzer_core::params::DecodeOpts;
@@ -47,146 +50,75 @@ enum Channels {
     Gray { alpha: bool },
 }
 
-/// A 3 x 3 matrix, row major.
-type Matrix = [[f64; 3]; 3];
+/// What the first header says, before any pixel is read.
+struct Header {
+    width: u32,
+    height: u32,
+    channels: Channels,
+    /// A profile for the layer's primaries when they are not sRGB's.
+    icc: Option<Vec<u8>>,
+}
 
 /// CIE xy of Rec.709 / sRGB, the `OpenEXR` default.
-const REC709: [(f64, f64); 4] = [(0.64, 0.33), (0.30, 0.60), (0.15, 0.06), (0.3127, 0.3290)];
+const REC709: [(f32, f32); 4] = [(0.64, 0.33), (0.30, 0.60), (0.15, 0.06), (0.3127, 0.3290)];
 
-const IDENTITY: Matrix = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-
-/// The linear matrix taking RGB in `chroma`'s primaries and white to sRGB
-/// primaries at D65, or `None` when `chroma` is Rec.709 already or is
-/// degenerate.
-fn to_srgb_matrix(chroma: &Chromaticities) -> Option<Matrix> {
-    let xy = |v: Vec2<f32>| (f64::from(v.0), f64::from(v.1));
-    let prim = [
+/// An ICC profile with `chroma`'s primaries and white, or `None` when
+/// `chroma` is Rec.709 already and the samples need no rotation.
+///
+/// # Errors
+/// [`Error::Codec`] for chromaticities that are not finite or whose `y` is
+/// not positive: no primaries can be built from them.
+fn primaries_profile(chroma: &Chromaticities) -> Result<Option<Vec<u8>>> {
+    let xy = |v: Vec2<f32>| (v.0, v.1);
+    let points = [
         xy(chroma.red),
         xy(chroma.green),
         xy(chroma.blue),
         xy(chroma.white),
     ];
-    let same = prim
+    if points
+        .iter()
+        .any(|(x, y)| !x.is_finite() || !y.is_finite() || *y <= 0.0)
+    {
+        return Err(Error::Codec(
+            "OpenEXR chromaticities attribute is malformed".into(),
+        ));
+    }
+    let same = points
         .iter()
         .zip(REC709)
         .all(|(a, b)| (a.0 - b.0).abs() < 1e-4 && (a.1 - b.1).abs() < 1e-4);
     if same {
-        return None;
+        return Ok(None);
     }
-    let src = rgb_to_xyz(prim)?;
-    let adapt = bradford(prim[3], REC709[3]);
-    let dst = invert(rgb_to_xyz(REC709)?)?;
-    Some(mul(mul(dst, adapt), src))
-}
-
-/// RGB to XYZ for primaries and white given as CIE xy, the textbook
-/// construction: the primaries' XYZ scaled so that RGB (1, 1, 1) is the
-/// white. `None` for degenerate chromaticities.
-fn rgb_to_xyz([red, green, blue, white]: [(f64, f64); 4]) -> Option<Matrix> {
-    let xyz = |(x, y): (f64, f64)| {
-        if y.abs() < 1e-9 {
-            None
-        } else {
-            Some([x / y, 1.0, (1.0 - x - y) / y])
-        }
-    };
-    let (red, green, blue, white) = (xyz(red)?, xyz(green)?, xyz(blue)?, xyz(white)?);
-    let primaries = [
-        [red[0], green[0], blue[0]],
-        [red[1], green[1], blue[1]],
-        [red[2], green[2], blue[2]],
-    ];
-    let scale = mul_vec(invert(primaries)?, white);
-    let mut out = primaries;
-    for row in &mut out {
-        for (cell, k) in row.iter_mut().zip(scale) {
-            *cell *= k;
-        }
+    let point = |(x, y): (f32, f32)| Chromaticity::new(x, y);
+    let mut profile = ColorProfile::new_srgb();
+    profile.update_rgb_colorimetry(
+        point(points[3]).to_xyyb(),
+        ColorPrimaries {
+            red: point(points[0]),
+            green: point(points[1]),
+            blue: point(points[2]),
+        },
+    );
+    // Three primaries on a line, or two the same, give colorants that
+    // cannot be inverted: the colour stage would divide by zero.
+    let m = profile.colorant_matrix().v;
+    let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    if !det.is_finite() || det.abs() < 1e-6 {
+        return Err(Error::Codec(
+            "OpenEXR chromaticities attribute is degenerate".into(),
+        ));
     }
-    Some(out)
-}
-
-/// Bradford chromatic adaptation from white `from` to white `to`, both as
-/// CIE xy. The identity when they agree.
-fn bradford(from: (f64, f64), to: (f64, f64)) -> Matrix {
-    const B: Matrix = [
-        [0.8951, 0.2664, -0.1614],
-        [-0.7502, 1.7135, 0.0367],
-        [0.0389, -0.0685, 1.0296],
-    ];
-    const B_INV: Matrix = [
-        [0.986_993, -0.147_054, 0.159_963],
-        [0.432_305, 0.518_360, 0.049_291],
-        [-0.008_529, 0.040_043, 0.968_487],
-    ];
-    if (from.0 - to.0).abs() < 1e-6 && (from.1 - to.1).abs() < 1e-6 {
-        return IDENTITY;
-    }
-    let white = |(x, y): (f64, f64)| [x / y, 1.0, (1.0 - x - y) / y];
-    let s = mul_vec(B, white(from));
-    let d = mul_vec(B, white(to));
-    let scale = [
-        [d[0] / s[0], 0.0, 0.0],
-        [0.0, d[1] / s[1], 0.0],
-        [0.0, 0.0, d[2] / s[2]],
-    ];
-    mul(mul(B_INV, scale), B)
-}
-
-fn mul(a: Matrix, b: Matrix) -> Matrix {
-    let mut out = [[0.0; 3]; 3];
-    for (i, row) in out.iter_mut().enumerate() {
-        for (j, cell) in row.iter_mut().enumerate() {
-            *cell = (0..3).map(|k| a[i][k] * b[k][j]).sum();
-        }
-    }
-    out
-}
-
-fn mul_vec(m: Matrix, v: [f64; 3]) -> [f64; 3] {
-    [
-        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
-        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
-        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
-    ]
-}
-
-/// Inverse by cofactors; `None` when singular.
-fn invert(m: Matrix) -> Option<Matrix> {
-    let c = |r: usize, c: usize| -> f64 {
-        let (r1, r2) = ((r + 1) % 3, (r + 2) % 3);
-        let (c1, c2) = ((c + 1) % 3, (c + 2) % 3);
-        m[r1][c1] * m[r2][c2] - m[r1][c2] * m[r2][c1]
-    };
-    let det = m[0][0] * c(0, 0) + m[0][1] * c(0, 1) + m[0][2] * c(0, 2);
-    if det.abs() < 1e-12 {
-        return None;
-    }
-    let mut out = [[0.0; 3]; 3];
-    for (i, row) in out.iter_mut().enumerate() {
-        for (j, cell) in row.iter_mut().enumerate() {
-            // Transposed cofactor over the determinant.
-            *cell = c(j, i) / det;
-        }
-    }
-    Some(out)
-}
-
-/// Rotate interleaved linear RGB(A) samples through `m`, alpha untouched.
-fn apply(m: Matrix, samples: &mut [f32], channels: usize) {
-    for px in samples.chunks_exact_mut(channels) {
-        let v = mul_vec(m, [f64::from(px[0]), f64::from(px[1]), f64::from(px[2])]);
-        #[allow(clippy::cast_possible_truncation)]
-        for (out, s) in px.iter_mut().zip(v) {
-            *out = s as f32;
-        }
-    }
+    profile.encode().map(Some).map_err(codec_err)
 }
 
 impl ExrDecoder {
-    /// The first header's size, channel layout and the matrix that brings
-    /// its primaries to sRGB, without reading pixels.
-    fn header(bytes: &[u8]) -> Result<((u32, u32), Channels, Option<Matrix>)> {
+    /// The first header's size, channel layout and a profile for its
+    /// primaries when they are not sRGB's, without reading pixels.
+    fn header(bytes: &[u8]) -> Result<Header> {
         let meta = MetaData::read_from_buffered(Cursor::new(bytes), false).map_err(codec_err)?;
         let header = meta
             .headers
@@ -195,10 +127,8 @@ impl ExrDecoder {
         if header.deep {
             return Err(Error::Codec("deep OpenEXR data is not supported".into()));
         }
-        let size = (
-            u32::try_from(header.layer_size.0).map_err(|_| too_wide())?,
-            u32::try_from(header.layer_size.1).map_err(|_| too_wide())?,
-        );
+        let width = u32::try_from(header.layer_size.0).map_err(|_| too_wide())?;
+        let height = u32::try_from(header.layer_size.1).map_err(|_| too_wide())?;
         let has = |name: &str| header.channels.list.iter().any(|c| c.name == *name);
         let channels = if has("R") && has("G") && has("B") {
             Channels::Rgb { alpha: has("A") }
@@ -216,15 +146,16 @@ impl ExrDecoder {
                 names.join(", ")
             )));
         };
-        let matrix = match channels {
-            Channels::Rgb { .. } => header
-                .shared_attributes
-                .chromaticities
-                .as_ref()
-                .and_then(to_srgb_matrix),
-            Channels::Gray { .. } => None,
+        let icc = match (&channels, &header.shared_attributes.chromaticities) {
+            (Channels::Rgb { .. }, Some(chroma)) => primaries_profile(chroma)?,
+            _ => None,
         };
-        Ok((size, channels, matrix))
+        Ok(Header {
+            width,
+            height,
+            channels,
+            icc,
+        })
     }
 }
 
@@ -246,11 +177,16 @@ impl Decoder for ExrDecoder {
 
     fn dimensions(&self, bytes: &[u8]) -> Option<(u32, u32)> {
         self.probe(bytes)?;
-        Self::header(bytes).ok().map(|(size, _, _)| size)
+        Self::header(bytes).ok().map(|h| (h.width, h.height))
     }
 
     fn decode(&self, bytes: &[u8], opts: &DecodeOpts) -> Result<Image> {
-        let ((width, height), channels, matrix) = Self::header(bytes)?;
+        let Header {
+            width,
+            height,
+            channels,
+            icc,
+        } = Self::header(bytes)?;
         opts.check_pixels(width, height)?;
         let (w, h) = (width as usize, height as usize);
         // The pixel guard bounds `w * h`; the sample count still has to fit
@@ -289,11 +225,7 @@ impl Decoder for ExrDecoder {
                 } else {
                     ColorType::Rgb
                 };
-                let mut pixels = image.layer_data.channel_data.pixels;
-                if let Some(m) = matrix {
-                    apply(m, &mut pixels, ch);
-                }
-                (color, pixels)
+                (color, image.layer_data.channel_data.pixels)
             }
             Channels::Gray { alpha } => {
                 let ch = if alpha { 2 } else { 1 };
@@ -327,7 +259,7 @@ impl Decoder for ExrDecoder {
                 (color, image.layer_data.channel_data.pixels)
             }
         };
-        Image::new(width, height, color, Samples::F32(samples))
+        Ok(Image::new(width, height, color, Samples::F32(samples))?.with_icc(icc))
     }
 }
 
@@ -361,57 +293,58 @@ mod tests {
     }
 
     #[test]
-    fn rec709_needs_no_matrix_and_p3_matches_the_published_one() {
+    fn rec709_needs_no_profile_and_p3_matches_moxcms_own() {
         assert!(
-            to_srgb_matrix(&chroma([
+            primaries_profile(&chroma([
                 (0.64, 0.33),
                 (0.30, 0.60),
                 (0.15, 0.06),
                 (0.3127, 0.3290)
             ]))
+            .unwrap()
             .is_none()
         );
-        // Display P3 to sRGB, both D65, as Lindbloom and colour-science
-        // publish it.
-        let m = to_srgb_matrix(&chroma([
+        // Display P3 from its chromaticities lands on the colorants moxcms
+        // ships for Display P3.
+        let bytes = primaries_profile(&chroma([
             (0.680, 0.320),
             (0.265, 0.690),
             (0.150, 0.060),
             (0.3127, 0.3290),
         ]))
+        .unwrap()
         .unwrap();
-        let published: Matrix = [
-            [1.2249, -0.2247, 0.0],
-            [-0.0420, 1.0419, 0.0],
-            [-0.0197, -0.0786, 1.0979],
-        ];
-        for (row, want) in m.iter().zip(published) {
-            for (a, b) in row.iter().zip(want) {
-                assert!((a - b).abs() < 2e-3, "{m:?}");
-            }
+        let ours = ColorProfile::new_from_slice(&bytes)
+            .unwrap()
+            .colorant_matrix();
+        let theirs = ColorProfile::new_display_p3().colorant_matrix();
+        for (a, b) in ours.v.iter().flatten().zip(theirs.v.iter().flatten()) {
+            assert!((a - b).abs() < 1e-3, "{ours:?} vs {theirs:?}");
         }
-        // A different white goes through Bradford: ACES AP0 at D60 keeps
-        // white as white, to the precision of the adaptation.
-        let m = to_srgb_matrix(&chroma([
-            (0.7347, 0.2653),
-            (0.0, 1.0),
-            (0.0001, -0.0770),
-            (0.32168, 0.33767),
-        ]))
-        .unwrap();
-        let white = mul_vec(m, [1.0, 1.0, 1.0]);
-        assert!(white.iter().all(|c| (c - 1.0).abs() < 2e-3), "{white:?}");
-        // Degenerate chromaticities do not panic.
-        assert!(
-            to_srgb_matrix(&chroma([(0.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, 0.0)])).is_none()
-        );
+        // Malformed or degenerate chromaticities are errors, never Rec.709.
+        for bad in [
+            [(0.64, 0.0), (0.30, 0.60), (0.15, 0.06), (0.3127, 0.3290)],
+            [
+                (f32::NAN, 0.33),
+                (0.30, 0.60),
+                (0.15, 0.06),
+                (0.3127, 0.3290),
+            ],
+            [(0.3, 0.3), (0.3, 0.3), (0.3, 0.3), (0.3, 0.3)],
+        ] {
+            assert!(
+                matches!(primaries_profile(&chroma(bad)), Err(Error::Codec(_))),
+                "{bad:?}"
+            );
+        }
     }
 
-    /// An EXR written by `exr` itself with Display P3 chromaticities: a
-    /// pure P3 red decodes to more red than sRGB can show and negative
-    /// green, a neutral stays neutral.
+    /// An EXR written by `exr` itself with Display P3 chromaticities comes
+    /// back with a profile that the colour stage turns into: pure P3 red
+    /// is more red than sRGB can show and negative in green, a neutral
+    /// stays neutral.
     #[test]
-    fn a_p3_tagged_file_is_rotated_to_srgb_primaries() {
+    fn a_p3_tagged_file_carries_its_primaries_as_a_profile() {
         let mut image = exr::image::Image::from_layer(Layer::new(
             (2, 1),
             LayerAttributes::named("main"),
@@ -439,9 +372,27 @@ mod tests {
         let img = ExrDecoder
             .decode(bytes.get_ref(), &DecodeOpts::default())
             .unwrap();
+        let profile = ColorProfile::new_from_slice(img.icc().expect("profile")).unwrap();
+        // The linear matrix the colour stage applies to float samples.
+        let m = profile.transform_matrix(&ColorProfile::new_srgb()).v;
         let v = img.samples().as_f32().unwrap();
-        assert!(v[0] > 1.2 && v[1] < -0.03 && v[2].abs() < 0.03, "{v:?}");
-        assert!(v[3..6].iter().all(|s| (s - 0.5).abs() < 1e-3), "{v:?}");
+        let red = [
+            m[0][0] * f64::from(v[0]) + m[0][1] * f64::from(v[1]) + m[0][2] * f64::from(v[2]),
+            m[1][0] * f64::from(v[0]) + m[1][1] * f64::from(v[1]) + m[1][2] * f64::from(v[2]),
+            m[2][0] * f64::from(v[0]) + m[2][1] * f64::from(v[1]) + m[2][2] * f64::from(v[2]),
+        ];
+        assert!(
+            red[0] > 1.2 && red[1] < -0.03 && red[2].abs() < 0.03,
+            "{red:?}"
+        );
+        let gray: f64 = m
+            .iter()
+            .map(|row| row.iter().sum::<f64>() * 0.5)
+            .sum::<f64>()
+            / 3.0;
+        assert!((gray - 0.5).abs() < 1e-3, "{gray}");
+        // Untagged fixtures carry none.
+        assert_eq!(v.len(), 6);
     }
 
     #[test]
