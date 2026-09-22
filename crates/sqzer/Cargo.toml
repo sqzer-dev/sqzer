@@ -34,6 +34,10 @@ sqzer-native-tier = { workspace = true, optional = true }
 # wasm32. MIT OR Apache-2.0. `rayon` stays off: parallelism is per file in
 # the CLI.
 fast_image_resize = "6.1"
+# The colour stage (ADR-0007): ICC to sRGB in pure Rust, every sample
+# depth and layout, builds on wasm32. BSD-3-Clause OR Apache-2.0. The
+# same requirement `image` carries, so the lock file holds one copy.
+moxcms = "0.8"
 # Safe casts between typed sample buffers and the byte slices
 # `fast_image_resize` takes. Already in the tree through the codecs.
 # Zlib OR Apache-2.0 OR MIT.

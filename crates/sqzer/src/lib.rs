@@ -23,6 +23,7 @@ pub use sqzer_codecs as codecs;
 pub use sqzer_core as core;
 pub use sqzer_metrics as metrics;
 
+mod color;
 mod resize;
 
 use std::sync::Arc;
@@ -210,6 +211,8 @@ impl Sqzer {
     }
 
     /// Keep the ICC profile on the output instead of converting to sRGB.
+    /// Samples and profile bytes then pass through untouched, and an
+    /// encoder that cannot embed a profile refuses the image.
     #[must_use]
     pub fn keep_icc(mut self, keep: bool) -> Self {
         self.params.keep_icc = keep;
@@ -266,7 +269,7 @@ impl Sqzer {
     }
 
     /// Decode, transform, encode: [`Sqzer::decode`], [`Sqzer::transform`],
-    /// [`Sqzer::encode`]. No colour management yet.
+    /// [`Sqzer::encode`].
     ///
     /// A perceptual target runs the SSIMULACRA2 search of `sqzer-metrics`
     /// over the chosen encoder: up to six encodes, each decoded and scored
@@ -303,27 +306,40 @@ impl Sqzer {
         self.registry.decode(input, &self.decode)
     }
 
-    /// The stage between decode and encode, ADR-0001 D3. Today that is
-    /// the resize: fit inside [`Sqzer::max_width`] and
-    /// [`Sqzer::max_height`], aspect ratio kept, never enlarged, Lanczos3
-    /// in linear light with premultiplied alpha. Orientation was applied
-    /// by the decoder, so the bounds are those of the picture as displayed.
-    /// An image that already fits is returned as it came.
+    /// The stages between decode and encode, ADR-0001 D3, in this order:
     ///
-    /// The result is what the encoder sees and what a perceptual target is
-    /// scored against.
+    /// 1. Colour (ADR-0007): an image carrying an ICC profile is converted
+    ///    to sRGB and the profile dropped, unless [`Sqzer::keep_icc`] is
+    ///    set, in which case samples and profile pass through untouched. A
+    ///    profile that does not fit the image's layout is dropped without
+    ///    a conversion; one that cannot be parsed is an error.
+    /// 2. Resize: fit inside [`Sqzer::max_width`] and [`Sqzer::max_height`],
+    ///    aspect ratio kept, never enlarged, Lanczos3 in linear light with
+    ///    premultiplied alpha. An image that already fits is left alone.
+    ///
+    /// Orientation was applied by the decoder, so the bounds are those of
+    /// the picture as displayed. The result is what the encoder sees and
+    /// what a perceptual target is scored against; the metric reads
+    /// integer samples as sRGB, which under `keep_icc` is an
+    /// approximation applied to both sides of the comparison.
     ///
     /// # Errors
     /// [`sqzer_core::Error::InvalidParams`] for a bound of zero,
-    /// [`sqzer_core::Error::Transform`] if the resampler refuses the image.
+    /// [`sqzer_core::Error::Transform`] for a profile that cannot be
+    /// parsed, a LUT profile on float samples, or a resampler refusal.
     pub fn transform(&self, decoded: Decoded) -> Result<Decoded> {
         if self.resize.max_width == Some(0) || self.resize.max_height == Some(0) {
             return Err(Error::InvalidParams(
                 "a resize bound must be at least one pixel".into(),
             ));
         }
+        let image = if self.params.keep_icc {
+            decoded.image
+        } else {
+            color::to_srgb(decoded.image)?
+        };
         Ok(Decoded {
-            image: resize::fit(decoded.image, self.resize)?,
+            image: resize::fit(image, self.resize)?,
             info: decoded.info,
         })
     }
@@ -491,8 +507,9 @@ fn default_format(img: &Image, content: Content, target: &Target, registry: &Reg
 }
 
 #[cfg(all(test, feature = "portable"))]
-// Synthetic pixel data: the truncating casts are the point.
-#[allow(clippy::cast_possible_truncation)]
+// Synthetic pixel data: the truncating casts are the point, and the
+// averages over it are small.
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 mod tests {
     use super::*;
     use sqzer_core::image::ColorType;
@@ -721,6 +738,94 @@ mod tests {
         let s = s.max_width(100);
         assert_eq!(s.resize_bounds().max_width, Some(100));
         assert_eq!(s.resize_bounds().max_height, Some(512));
+    }
+
+    /// The P3-tagged pattern in every container that carries one, decoded
+    /// and converted, against the untagged pattern in the same container.
+    #[test]
+    fn a_p3_source_is_converted_to_srgb_and_loses_its_profile() {
+        for (tagged, plain) in [
+            ("pattern-icc.jpg", "pattern-rgb.jpg"),
+            ("pattern-icc.webp", "pattern-rgb.webp"),
+            ("pattern-icc.jxl", "pattern-rgb.jxl"),
+            ("pattern-icc.tif", "pattern-rgb.tif"),
+        ] {
+            let s = portable();
+            let src = s.decode(&fixture(tagged)).unwrap();
+            assert!(
+                src.image.icc().is_some(),
+                "{tagged} lost its profile in decode"
+            );
+            let out = s.transform(src.clone()).unwrap().image;
+            assert_eq!(out.icc(), None, "{tagged}");
+            let before = src.image.samples().as_u8().unwrap();
+            let after = out.samples().as_u8().unwrap();
+            // The tagged file holds the same samples as the untagged one
+            // (to JPEG noise): the profile is the only difference.
+            let plain = s.decode(&fixture(plain)).unwrap();
+            let plain = plain.image.samples().as_u8().unwrap();
+            let mae = plain
+                .iter()
+                .zip(before)
+                .map(|(a, b)| f64::from(a.abs_diff(*b)))
+                .sum::<f64>()
+                / plain.len() as f64;
+            assert!(
+                mae <= 3.0,
+                "{tagged}: mean difference {mae} to the untagged pattern"
+            );
+            // The pattern's ramps are saturated colours: in sRGB they read
+            // more saturated than the same numbers did in P3, so the
+            // spread between a pixel's channels grows on average.
+            let spread = |v: &[u8]| -> f64 {
+                let px = v.as_chunks::<3>().0;
+                px.iter()
+                    .map(|px| f64::from(px.iter().max().unwrap() - px.iter().min().unwrap()))
+                    .sum::<f64>()
+                    / px.len() as f64
+            };
+            assert!(
+                spread(after) > spread(before) + 4.0,
+                "{tagged}: spread {} -> {}",
+                spread(before),
+                spread(after)
+            );
+            // Gray-balanced pixels stay put: same white, same curve.
+            let is_neutral = |px: &[u8]| px[0].abs_diff(px[1]) <= 6 && px[1].abs_diff(px[2]) <= 6;
+            let mut neutrals = 0;
+            for (a, b) in before
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .zip(after.as_chunks::<3>().0)
+            {
+                if is_neutral(a) {
+                    neutrals += 1;
+                    for c in 0..3 {
+                        assert!(a[c].abs_diff(b[c]) <= 6, "{tagged}: neutral {a:?} -> {b:?}");
+                    }
+                }
+            }
+            assert!(neutrals > 0, "{tagged}: the pattern has neutral pixels");
+        }
+    }
+
+    #[test]
+    fn keep_icc_leaves_bytes_and_samples_alone() {
+        let s = portable().keep_icc(true).format(Format::Png);
+        let src = s.decode(&fixture("pattern-icc.webp")).unwrap();
+        let out = s.run(&fixture("pattern-icc.webp")).unwrap();
+        let back = s.decode(&out.bytes).unwrap().image;
+        assert_eq!(back.icc(), src.image.icc());
+        assert_eq!(back.samples(), src.image.samples());
+        // And without it the PNG is untagged with converted samples.
+        let out = portable()
+            .format(Format::Png)
+            .run(&fixture("pattern-icc.webp"))
+            .unwrap();
+        let back = s.decode(&out.bytes).unwrap().image;
+        assert_eq!(back.icc(), None);
+        assert_ne!(back.samples(), src.image.samples());
     }
 
     #[test]
