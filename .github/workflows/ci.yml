@@ -127,16 +127,14 @@ jobs:
       # The release build of this target, and what it has and whether
       # this runner can use it; the HEIC line says which decoder answered
       # the probe.
-      # PROBE: what the runner's toolchain is and how libaom gets configured.
+      # PROBE 2: how libaom and libwebp were configured, from the files
+      # cmake left behind, and where the golden test spends its time.
+      - run: cargo build -p sqzer --target ${{ matrix.target }} --features native
       - run: |
-          nproc; lscpu | grep -E "Model name|Flags" | cut -c1-200
-          nasm -v; musl-gcc --version | head -1; cmake --version | head -1
-          cargo clean -p libavif-sys --target ${{ matrix.target }}
-          cargo build -p sqzer-cli --target ${{ matrix.target }} --features native -vv 2>&1 | grep -iE "AOM_TARGET_CPU|nasm|yasm|RUNTIME_CPU_DETECT|ENABLE_SSE|ENABLE_AVX|CMAKE_BUILD_TYPE|CMAKE_SYSTEM_PROCESSOR|CMAKE_SYSTEM_NAME|The C compiler identification|CMAKE_C_FLAGS|Could not|WARNING|libavif" | grep -v "^\s*Running" | head -80
-      - run: cargo run -p sqzer-cli --target ${{ matrix.target }} --features native -- --list-codecs
-      # PROBE: the facade tests, default threads and single thread.
-      - run: cargo test -p sqzer --target ${{ matrix.target }} --features native
-      - run: cargo test -p sqzer --target ${{ matrix.target }} --features native -- --test-threads=1
+          for f in $(find target/${{ matrix.target }} -name aom_config.h); do echo "== $f"; grep -E "define (HAVE_SSE2|HAVE_SSE4_1|HAVE_AVX2|CONFIG_RUNTIME_CPU_DETECT|AOM_ARCH_X86_64|HAVE_NASM|HAVE_YASM) " "$f"; done
+          for f in $(find target/${{ matrix.target }} -path "*libavif-sys*" -name CMakeCache.txt); do echo "== $f"; grep -E "^(CMAKE_BUILD_TYPE|CMAKE_SYSTEM_NAME|CMAKE_SYSTEM_PROCESSOR|CMAKE_C_COMPILER|CMAKE_C_FLAGS|CMAKE_C_FLAGS_DEBUG|AOM_TARGET_CPU|ENABLE_NASM|CMAKE_ASM_NASM_COMPILER|CMAKE_CROSSCOMPILING|CONFIG_RUNTIME_CPU_DETECT)[:=]" "$f"; done
+          find target/${{ matrix.target }} -name "libaom.a" -o -name "libavif.a" -o -name "libwebp.a" | xargs ls -la
+      - run: cargo test -p sqzer --target ${{ matrix.target }} --features native --test golden -- --nocapture --test-threads=1
 
   wasm:
     name: wasm32 portable tier
