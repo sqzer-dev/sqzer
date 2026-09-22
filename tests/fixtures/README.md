@@ -110,6 +110,13 @@ pattern-rgb16.ppm         P6, maxval 65535
 # exactly
 pattern-rgb.svg           width and height attributes plus a viewBox
 pattern-rgba.svg          viewBox only; odd rows at fill-opacity 0.50196 (128/255)
+
+# OpenEXR: ImageMagick 7.1.2 from the PNM and QOI fixtures, `-set colorspace
+# sRGB -colorspace RGB -depth 16`, so the pattern in linear light as half
+# floats, uncompressed. Alpha is written straight, not premultiplied.
+pattern-rgb.exr           R, G, B
+pattern-rgba.exr          R, G, B, A
+pattern-gray.exr          Y only, `-define exr:color-type=Y`
 ```
 
 ```

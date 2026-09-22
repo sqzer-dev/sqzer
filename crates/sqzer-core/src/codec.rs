@@ -35,6 +35,8 @@ pub enum Format {
     Qoi,
     /// PNM: PBM, PGM, PPM and PAM (input only).
     Pnm,
+    /// `OpenEXR` (input only). Linear-light float samples.
+    Exr,
     /// HEIC / HEIF.
     Heic,
     /// SVG (input only).
@@ -56,6 +58,7 @@ impl Format {
         Self::Ico,
         Self::Qoi,
         Self::Pnm,
+        Self::Exr,
         Self::Heic,
         Self::Svg,
     ];
@@ -76,6 +79,7 @@ impl Format {
             Self::Ico => "ico",
             Self::Qoi => "qoi",
             Self::Pnm => "pnm",
+            Self::Exr => "exr",
             Self::Heic => "heic",
             Self::Svg => "svg",
         }
@@ -97,6 +101,7 @@ impl Format {
             Self::Ico => "image/vnd.microsoft.icon",
             Self::Qoi => "image/qoi",
             Self::Pnm => "image/x-portable-anymap",
+            Self::Exr => "image/x-exr",
             Self::Heic => "image/heic",
             Self::Svg => "image/svg+xml",
         }
@@ -120,6 +125,7 @@ impl Format {
             "ico" | "cur" => Self::Ico,
             "qoi" => Self::Qoi,
             "pnm" | "pbm" | "pgm" | "ppm" | "pam" => Self::Pnm,
+            "exr" => Self::Exr,
             "heic" | "heif" => Self::Heic,
             "svg" => Self::Svg,
             _ => return None,
@@ -144,6 +150,7 @@ impl Format {
             | Self::Ico
             | Self::Qoi
             | Self::Pnm
+            | Self::Exr
             | Self::Heic
             | Self::Svg => &[],
         }
@@ -167,6 +174,7 @@ impl Format {
             Self::Ico => &["ico"],
             Self::Qoi => &["qoi"],
             Self::Pnm => &["pnm"],
+            Self::Exr => &["exr"],
             Self::Heic => &["native-heif"],
             Self::Svg => &["svg"],
         }
@@ -188,6 +196,7 @@ impl core::fmt::Display for Format {
             Self::Ico => "ICO",
             Self::Qoi => "QOI",
             Self::Pnm => "PNM",
+            Self::Exr => "OpenEXR",
             Self::Heic => "HEIC",
             Self::Svg => "SVG",
         })

@@ -26,6 +26,8 @@ compile_error!("the native tier is C code and does not build for wasm32; use the
 pub mod avif;
 #[cfg(any(feature = "jpeg", feature = "webp-lossless"))]
 mod exif;
+#[cfg(feature = "exr")]
+pub mod exr;
 #[cfg(feature = "gif")]
 pub mod gif;
 #[cfg(feature = "heif")]
@@ -130,6 +132,8 @@ pub fn register_portable(reg: &mut Registry) {
     reg.register_decoder(raster::QoiDecoder);
     #[cfg(feature = "pnm")]
     reg.register_decoder(raster::PnmDecoder);
+    #[cfg(feature = "exr")]
+    reg.register_decoder(exr::ExrDecoder);
     #[cfg(feature = "svg")]
     reg.register_decoder(svg::SvgDecoder);
     #[cfg(feature = "tga")]
