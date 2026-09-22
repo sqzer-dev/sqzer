@@ -76,7 +76,7 @@ With `keep_icc` true: nothing is touched. The samples stay in the profile's enco
 
 A crate under a year old with one maintainer, against a stalled one and a C binding. The mitigation is the interface: the stage is one function over `Image`, and `moxcms` is not visible outside `color.rs`. The version is tied to `image`'s so that a bump there is a bump here, in the same PR.
 
-Every tagged image pays one full-frame transform, including sRGB-tagged JPEGs from cameras. Measured on a 2000 x 1500 PNG with the release binary: 188 ms for decode and JPEG encode untagged, 204 ms with a Display P3 tag, so the stage costs about 15 ms on 3 megapixels, a tenth of the cheapest encode. If that ever matters, the shortcut in D3 is the lever.
+Every tagged image pays one full-frame transform, including sRGB-tagged JPEGs from cameras. Measured on a 2000 x 1500 PNG with the release binary: 188 ms for decode and JPEG encode untagged, 204 ms with a Display P3 tag, so the stage costs about 15 ms on 3 megapixels, under a tenth of the untagged run. If that ever matters, the shortcut in D3 is the lever.
 
 ## 5. Consequences
 
