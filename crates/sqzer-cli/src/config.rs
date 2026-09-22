@@ -434,6 +434,14 @@ mod tests {
                 "{}",
                 err.message
             );
+            // A native build on musl explains the gap; a portable build
+            // names the feature and the release.
+            if crate::native_set::NATIVE {
+                assert!(err.message.contains("musl"), "{}", err.message);
+                assert!(!err.message.contains("releases page"), "{}", err.message);
+            } else {
+                assert!(err.message.contains("releases page"), "{}", err.message);
+            }
         }
         // Lossy WebP is `webpx`, which every `native` build has.
         if !cfg!(feature = "native") {

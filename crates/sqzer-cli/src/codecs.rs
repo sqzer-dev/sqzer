@@ -44,12 +44,7 @@ pub fn render(registry: &Registry, verbose: bool) -> String {
             })
             .collect::<Vec<_>>();
         let decode = if decode.is_empty() {
-            let features = format.decoder_features();
-            if features.is_empty() {
-                "none".to_string()
-            } else {
-                format!("none; needs `{}`", features.join("` or `"))
-            }
+            none_because(format.decoder_features())
         } else {
             decode.join(", ")
         };
@@ -83,12 +78,7 @@ pub fn render(registry: &Registry, verbose: bool) -> String {
                 format!("{} ({}), {mode}, metadata: {metadata}", c.name, c.tier)
             }
         } else {
-            let features = format.encoder_features();
-            if features.is_empty() {
-                "none".to_string()
-            } else {
-                format!("none; needs `{}`", features.join("` or `"))
-            }
+            none_because(format.encoder_features())
         };
         out.push(format!(
             "{:<8} decode  {:<28} encode  {encode}",
@@ -160,6 +150,21 @@ struct OptionLine {
     key: String,
     default: &'static str,
     help: &'static str,
+}
+
+/// The `none` cell: which feature would add the backend, or, in a native
+/// build whose target leaves it out, why and which archive has it.
+fn none_because(features: &[&str]) -> String {
+    if features.is_empty() {
+        return "none".to_string();
+    }
+    let (enable, reasons) = crate::native_set::split(features);
+    let mut parts = vec!["none".to_string()];
+    if !enable.is_empty() {
+        parts.push(format!("needs `{}`", enable.join("` or `")));
+    }
+    parts.extend(reasons.iter().map(ToString::to_string));
+    parts.join("; ")
 }
 
 /// JSON Lines listing.
@@ -251,12 +256,18 @@ mod tests {
                 "{text}"
             );
             assert!(text.contains("jxl:container=false"), "{text}");
+        } else if crate::native_set::NATIVE {
+            // musl: the reason, not the feature the user cannot enable.
+            assert!(text.contains("none; the static musl build"), "{text}");
+            assert!(!text.contains("needs `native-jxl`"), "{text}");
         } else {
             assert!(text.contains("none; needs `native-jxl`"), "{text}");
         }
         // Which HEIC decoder a build has depends on the target; the OS
         // decoder is listed first where there is one.
-        let heic = if !crate::native_set::HEIC {
+        let heic = if !crate::native_set::HEIC && crate::native_set::NATIVE {
+            "HEIC     decode  none; a static musl binary"
+        } else if !crate::native_set::HEIC {
             "HEIC     decode  none; needs `native-heif`"
         } else if cfg!(target_os = "macos") {
             "HEIC     decode  imageio (native"
@@ -277,6 +288,19 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn none_cell_keeps_the_feature_a_user_can_enable() {
+        use crate::native_set::{JPEGLI, NATIVE, left_out};
+        assert_eq!(none_because(&[]), "none");
+        let cell = none_because(&["jpeg", "native-jpegli"]);
+        assert!(cell.starts_with("none; needs `jpeg`"), "{cell}");
+        assert_eq!(
+            cell.contains(left_out("native-jpegli").unwrap_or("\u{0}")),
+            NATIVE && !JPEGLI,
+            "{cell}"
+        );
     }
 
     #[test]
