@@ -83,7 +83,12 @@ jobs:
       # The vendored libjpeg-turbo inside jpegli's libjxl tree declares a
       # cmake floor that cmake 4 refuses; this lifts it.
       CMAKE_POLICY_VERSION_MINIMUM: "3.5"
-      RUST_BACKTRACE: "1"
+      # Not on musl. With the variable set, `re_rav1d`'s debug-build borrow
+      # tracking captures a backtrace on every borrow, and unwinding a
+      # static musl binary is slow enough that the facade tests take 440 s
+      # instead of 7 (measured 2026-09-22; the same binary runs in 0.6 s
+      # with the variable unset). Release builds have no such tracking.
+      RUST_BACKTRACE: ${{ matrix.target == 'x86_64-unknown-linux-musl' && '0' || '1' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
