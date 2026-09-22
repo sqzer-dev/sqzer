@@ -1,0 +1,42 @@
+{
+  "files": [
+    {
+      "path": "CLAUDE.md",
+      "description": "The rules of the repository: layout, dependency direction, codec tiers and the licence line, core design rules, workflow, testing expectations, writing style"
+    },
+    {
+      "path": "docs/adr/0001-system-design.md",
+      "description": "The architecture: crate topology, backend tiers, pipeline model, defaults policy, CLI surface, metadata policy"
+    },
+    {
+      "path": "deny.toml",
+      "description": "The licence allow-list and the banned crates that cargo deny enforces",
+      "scope": ["**/Cargo.toml", "deny.toml"]
+    },
+    {
+      "path": "docs/adr/0003-cli-interface.md",
+      "description": "The CLI grammar: flags, path handling, output placement, feedback channels, exit codes",
+      "scope": ["crates/sqzer-cli/**"]
+    },
+    {
+      "path": "docs/adr/0004-native-tier.md",
+      "description": "Which crate backs each native feature, why not jpegxl-rs, what each needs at build time",
+      "scope": ["crates/sqzer-codecs/src/native/**", "crates/sqzer-codecs/Cargo.toml", "crates/heif-*/**", "crates/sqzer-native-tier/**"]
+    },
+    {
+      "path": "docs/adr/0005-heic-through-os-decoders.md",
+      "description": "HEIC through ImageIO, WIC and a runtime-loaded libheif; the three binding crates that hold the workspace's unsafe",
+      "scope": ["crates/heif-*/**", "crates/sqzer-codecs/src/heif.rs", "crates/sqzer-codecs/src/native/heif.rs"]
+    },
+    {
+      "path": "docs/adr/0006-release-matrix.md",
+      "description": "The cargo-dist release matrix, the per-target native set and the Homebrew tap",
+      "scope": [".github/**", "dist-workspace.toml", "crates/sqzer-native-tier/**", "crates/sqzer-cli/src/native_set.rs"]
+    },
+    {
+      "path": "docs/adr/0007-colour-management.md",
+      "description": "The colour stage: moxcms, the order of the pipeline stages, what keep_icc does",
+      "scope": ["crates/sqzer/src/**", "crates/sqzer-metrics/**"]
+    }
+  ]
+}
