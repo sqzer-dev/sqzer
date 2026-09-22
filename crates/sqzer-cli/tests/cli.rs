@@ -392,7 +392,9 @@ fn metadata_is_stripped_unless_kept() {
         has(&png, b"XML:com.adobe.xmp") && has(&png, b"test pattern"),
         "XMP missing"
     );
-    // The portable AVIF encoder carries EXIF but not XMP: refused per file.
+    // Neither AVIF encoder carries everything: `ravif` takes EXIF but not
+    // XMP, `libavif` takes neither. Refused per file, whichever it is.
+    let refused = |err: &str| err.contains("EXIF") || err.contains("XMP");
     let (code, out, err) = run(sb.sqzer().args([
         "in.jpg",
         "-f",
@@ -403,7 +405,7 @@ fn metadata_is_stripped_unless_kept() {
         "--json",
     ]));
     assert_eq!(code, 1, "{err}");
-    assert!(err.contains("XMP"), "{err}");
+    assert!(refused(&err), "{err}");
     assert_eq!(json_lines(&out)[0]["status"], "failed");
     // A dry run says the same rather than planning an output the encoder
     // would refuse.
@@ -418,7 +420,7 @@ fn metadata_is_stripped_unless_kept() {
         "-n",
     ]));
     assert_eq!(code, 1, "{err}");
-    assert!(err.contains("XMP"), "{err}");
+    assert!(refused(&err), "{err}");
     assert_eq!(json_lines(&out)[0]["status"], "failed");
     let (code, out, _) = run(sb
         .sqzer()
