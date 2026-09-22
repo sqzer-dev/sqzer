@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 use sqzer_core::codec::{Encoder, Format, FormatInfo, Tier};
 use sqzer_core::content::{self, Content};
-use sqzer_core::image::Image;
+use sqzer_core::image::{Image, SampleFormat};
 use sqzer_core::params::{DecodeOpts, EncodeParams, Preset, Resize, Resolved, Subsampling, Target};
 use sqzer_core::{Decoded, Error, Registry, Result};
 use sqzer_metrics::{Reference, Search, SearchReport, seeds};
@@ -325,7 +325,10 @@ impl Sqzer {
     /// 2. Range: float samples, which are linear light, are encoded with
     ///    the sRGB curve into 16 bits, clipped at display white. No
     ///    encoder in this build takes float input, and the metric then
-    ///    scores what the encoder gets. See [`Image::to_u16`].
+    ///    scores what the encoder gets. See [`Image::to_u16`]. A float
+    ///    image that keeps its ICC profile under [`Sqzer::keep_icc`] is
+    ///    refused: the curve would leave the profile describing samples
+    ///    it no longer matches.
     /// 3. Metadata (ADR-0001 D7): EXIF and XMP are dropped unless
     ///    [`Sqzer::keep_metadata`] is set. Orientation was applied by the
     ///    decoder and the EXIF tag reset there, so kept EXIF never
@@ -343,7 +346,8 @@ impl Sqzer {
     /// # Errors
     /// [`sqzer_core::Error::InvalidParams`] for a bound of zero,
     /// [`sqzer_core::Error::Transform`] for a profile that cannot be
-    /// parsed, a LUT profile on float samples, or a resampler refusal.
+    /// parsed, a LUT profile on float samples, a kept profile on float
+    /// samples, or a resampler refusal.
     pub fn transform(&self, decoded: Decoded) -> Result<Decoded> {
         if self.resize.max_width == Some(0) || self.resize.max_height == Some(0) {
             return Err(Error::InvalidParams(
@@ -355,6 +359,15 @@ impl Sqzer {
         } else {
             color::to_srgb(decoded.image)?
         };
+        if image.icc().is_some() && image.sample_format() == SampleFormat::F32 {
+            return Err(Error::Transform {
+                stage: "range",
+                message: "float samples cannot keep their ICC profile: encoding them for an \
+                          integer codec would leave the profile describing other values; drop \
+                          keep_icc"
+                    .into(),
+            });
+        }
         let mut image = image.to_u16().into_owned();
         if !self.params.keep_metadata {
             image.strip_metadata();
@@ -940,6 +953,35 @@ mod tests {
             .run(&fixture("pattern-rgb.exr"))
             .unwrap();
         assert!(out.report.expect("searched").reached);
+    }
+
+    #[test]
+    fn a_float_image_cannot_keep_its_profile() {
+        use sqzer_core::image::{ColorType, Samples};
+        let img = Image::new(1, 1, ColorType::Rgb, Samples::F32(vec![0.5; 3]))
+            .unwrap()
+            .with_icc(Some(
+                moxcms::ColorProfile::new_display_p3().encode().unwrap(),
+            ));
+        let decoded = Decoded {
+            image: img,
+            info: FormatInfo {
+                format: Format::Exr,
+                animated: false,
+            },
+        };
+        let err = portable()
+            .keep_icc(true)
+            .transform(decoded.clone())
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::Transform { stage: "range", .. }),
+            "{err}"
+        );
+        // Without keep_icc the primaries are applied and the profile goes.
+        let out = portable().transform(decoded).unwrap().image;
+        assert_eq!(out.icc(), None);
+        assert_eq!(out.sample_format(), SampleFormat::U16);
     }
 
     #[test]
