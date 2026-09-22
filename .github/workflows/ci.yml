@@ -141,15 +141,15 @@ jobs:
           B=$(ls -t target/${{ matrix.target }}/debug/deps/golden-* | grep -v "\.d$" | head -1)
           strace -c -f "$B" --test-threads=1 2>&1 | grep -E "total|mmap|munmap|madvise|brk|mremap|futex|test result" | head -12
           cat /proc/meminfo | head -3; cat /sys/kernel/mm/transparent_hugepage/enabled
-      # PROBE 5: where the musl binary spends its time.
+      # PROBE 6: the same binary, four environments.
       - run: |
-          sudo apt-get install -y linux-tools-common "linux-tools-$(uname -r)" || sudo apt-get install -y linux-tools-generic || true
-          which perf || ls /usr/lib/linux-tools/*/perf || true
-          echo 1 | sudo tee /proc/sys/kernel/perf_event_paranoid
           B=$(ls -t target/${{ matrix.target }}/debug/deps/golden-* | grep -v "\.d$" | head -1)
-          PERF=$(which perf || ls /usr/lib/linux-tools/*/perf | head -1)
-          sudo "$PERF" record -F 999 -g -o perf.data "$B" --test-threads=1 || true
-          sudo "$PERF" report -i perf.data --stdio --no-children --percent-limit 1.5 2>/dev/null | grep -v "^#" | grep -v "^$" | head -70
+          echo "== as the job runs it"; "$B" --test-threads=1 | grep "finished in"
+          echo "== empty environment"; env -i "$B" --test-threads=1 | grep "finished in"
+          echo "== sudo"; sudo "$B" --test-threads=1 | grep "finished in"
+          echo "== RUST_BACKTRACE unset"; env -u RUST_BACKTRACE "$B" --test-threads=1 | grep "finished in"
+          echo "== RUST_BACKTRACE=0"; RUST_BACKTRACE=0 "$B" --test-threads=1 | grep "finished in"
+          echo "== nice/ulimit"; ulimit -a | head -20; id
 
   wasm:
     name: wasm32 portable tier
