@@ -57,23 +57,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,    target: x86_64-unknown-linux-gnu,  features: native }
+          # PROBE: temporarily musl only
           # `jpegli-sys`'s vendored libjxl 0.10 segfaults on the first
           # encode on this runner (GCC, Neoverse); the same code passes on
           # Apple Silicon. Out until the binding moves to a newer tree.
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, features: "native-webp,native-jxl,native-avif,native-heif" }
           # musl-tools has no C++ compiler, so the libjxl and jpegli
           # backends stay out until a musl cross toolchain is wired in.
           # `native-heif` builds on musl but registers nothing: a static
           # binary cannot load libheif at run time (ADR-0005 D8).
           - { os: ubuntu-latest,    target: x86_64-unknown-linux-musl, features: "native-webp,native-avif,native-heif" }
-          - { os: macos-latest,     target: aarch64-apple-darwin,      features: native }
-          - { os: macos-15-intel,   target: x86_64-apple-darwin,       features: native }
           # HEIC on Windows is WIC, so `native-heif` builds without vcpkg.
           # jpegli is still out: `jpegli-sys` expects a single-config
           # cmake generator (Ninja) while `jpegxl-src` asks for the
           # ClangCL toolset that only the Visual Studio generator has.
-          - { os: windows-latest,   target: x86_64-pc-windows-msvc,    features: "native-webp,native-jxl,native-avif,native-heif" }
     env:
       CC_x86_64_unknown_linux_musl: musl-gcc
       # libaom is C, but its cmake project also asks for a C++ compiler
@@ -131,13 +127,16 @@ jobs:
       # The release build of this target, and what it has and whether
       # this runner can use it; the HEIC line says which decoder answered
       # the probe.
-      - run: cargo build -p sqzer-cli --target ${{ matrix.target }} --features native
+      # PROBE: what the runner's toolchain is and how libaom gets configured.
+      - run: |
+          nproc; lscpu | grep -E "Model name|Flags" | cut -c1-200
+          nasm -v; musl-gcc --version | head -1; cmake --version | head -1
+          cargo clean -p libavif-sys --target ${{ matrix.target }}
+          cargo build -p sqzer-cli --target ${{ matrix.target }} --features native -vv 2>&1 | grep -iE "AOM_TARGET_CPU|nasm|yasm|RUNTIME_CPU_DETECT|ENABLE_SSE|ENABLE_AVX|CMAKE_BUILD_TYPE|CMAKE_SYSTEM_PROCESSOR|CMAKE_SYSTEM_NAME|The C compiler identification|CMAKE_C_FLAGS|Could not|WARNING|libavif" | grep -v "^\s*Running" | head -80
       - run: cargo run -p sqzer-cli --target ${{ matrix.target }} --features native -- --list-codecs
-      - run: cargo test -p sqzer-codecs --target ${{ matrix.target }} --features ${{ env.CODECS_FEATURES }}
+      # PROBE: the facade tests, default threads and single thread.
       - run: cargo test -p sqzer --target ${{ matrix.target }} --features native
-      # The CLI tests know which backends `native` leaves out on which
-      # target (`crates/sqzer-cli/src/native_set.rs`).
-      - run: cargo test -p sqzer-cli --target ${{ matrix.target }} --features native
+      - run: cargo test -p sqzer --target ${{ matrix.target }} --features native -- --test-threads=1
 
   wasm:
     name: wasm32 portable tier
