@@ -210,7 +210,6 @@ fn encoder_caps_are_truthful() {
     }
 }
 
-#[cfg(not(feature = "native-jxl"))]
 /// A claimed blob comes back out of the file, an unclaimed one is refused,
 /// never dropped.
 fn metadata_claims_are_truthful(reg: &sqzer_core::Registry, enc: &dyn Encoder) {
@@ -263,6 +262,7 @@ fn metadata_claims_are_truthful(reg: &sqzer_core::Registry, enc: &dyn Encoder) {
     }
 }
 
+#[cfg(not(feature = "native-jxl"))]
 #[test]
 fn unavailable_encoder_is_reported_not_substituted() {
     let reg = registry();
