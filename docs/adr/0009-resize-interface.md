@@ -1,6 +1,6 @@
 # ADR-0009: The resize interface
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-27
 **Deciders:** Vlad (sole maintainer)
 **Scope:** How a user asks for a size: the resize flags of the CLI, the `Resize` type in `sqzer-core`, and what the resize stage does for each fit. Replaces the "Resize" section of ADR-0003 (`--resize` with `rimage`'s grammar, `--filter`), none of which beyond `--max-width` and `--max-height` was built. Nothing here changes the stage order of ADR-0007 D2 (orient, colour, resize, encode), the resampler (`fast_image_resize`, Lanczos3 in linear light with premultiplied alpha), or the rule that the metric scores the resized image.
@@ -168,7 +168,7 @@ Colour conversion runs once, and every width starts from the same colour-managed
 
 ## 5. Consequences
 
-- The "Resize" section of ADR-0003 is superseded by this record; ADR-0003 gets a line at the top saying so when this one is accepted.
+- The "Resize" section of ADR-0003 is superseded by this record, and ADR-0003 carries a line at the top saying so.
 - The README's `rimage` table and the `rimage` hint change from `--resize` to the flags of D1.
 - The `thumbnail` preset and `--max-width` / `--max-height` behave exactly as in `0.1.0`.
 - JSON and templates need no new fields; `{width}` and `{height}` are already the output's.
@@ -179,7 +179,7 @@ Colour conversion runs once, and every width starts from the same colour-managed
 2. [ ] The facade: `prepare` and `resize` of D4 with `transform` kept on top, the pending canvas on `Decoded` applied in `encode`; `SrcCropping::FitIntoDestination` for `cover`, the pad for `contain` in every layout and sample width with the per-encoder background, a library test that `run` with `contain` returns the full box; the filter mapping.
 3. [ ] The CLI flags and rules of D1, the width list and naming of D3, the dry run showing crop and padding; check the ADR-0008 estimate for a file with several widths.
 4. [ ] README: the resize examples and the `rimage` migration table; the `rimage` hint.
-5. [ ] On acceptance, the superseded line on ADR-0003.
+5. [x] On acceptance, the superseded line on ADR-0003.
 
 ## Sources
 
