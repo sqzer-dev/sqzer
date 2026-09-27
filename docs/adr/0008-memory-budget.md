@@ -1,6 +1,6 @@
 # ADR-0008: A memory budget for `--jobs`
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-27
 **Deciders:** Vlad (sole maintainer)
 **Scope:** What bounds the number of files in flight in the CLI. Adds a memory limit next to the decoded-pixel rule of ADR-0003 "Parallelism and memory", which stays as a second limit. Nothing here changes `--jobs`, `--threads` or `--max-pixels` as flags, or the per-file parallelism of ADR-0001 D3.

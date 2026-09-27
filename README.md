@@ -2,7 +2,7 @@
 
 Multi-format image optimizer with best-in-class defaults. A library and a CLI, pure Rust by default, C codecs when you want the last few percent.
 
-> **Note**: Pre-alpha. The portable build decodes JPEG, PNG, WebP, AVIF and JPEG XL and writes JPEG, PNG, lossless WebP and AVIF; the native build adds lossy WebP, JPEG XL, `libaom` AVIF, jpegli JPEG and HEIC input through the OS decoder or a runtime-loaded `libheif`. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md), the command line in [`docs/adr/0003-cli-interface.md`](docs/adr/0003-cli-interface.md), the native backends in [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md), colour in [`docs/adr/0007-colour-management.md`](docs/adr/0007-colour-management.md).
+> **Note**: Early days. The command line and its defaults are what this README describes; the library API will still change before `1.0`, and the browser build is not there yet. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md), the command line in [`docs/adr/0003-cli-interface.md`](docs/adr/0003-cli-interface.md), the native backends in [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md), colour in [`docs/adr/0007-colour-management.md`](docs/adr/0007-colour-management.md).
 
 ## What it is for
 
@@ -184,7 +184,7 @@ crates/sqzer-codecs    every backend behind a feature flag
 crates/sqzer-metrics   SSIMULACRA2 and the target-quality search
 crates/sqzer           library facade, the thing you depend on
 crates/sqzer-cli       the binary, `sqzer`
-crates/sqzer-wasm      browser build, portable tier only
+crates/sqzer-wasm      browser build, portable tier only. A placeholder until 0.2
 crates/sqzer-native-tier  what `native` means per target, no code
 docs/adr               design decisions
 dist-workspace.toml    the release matrix for `cargo-dist`
