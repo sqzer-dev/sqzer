@@ -62,8 +62,8 @@ The one thing a web optimiser needs that no CLI above does in one call is the la
                           how the image meets the box, default inside (D2)
 --position <center|top|bottom|left|right|top-left|top-right|bottom-left|bottom-right>
                           where cover crops and contain places the image, default center
---background <colour>     the padding of contain; default transparent when the encoder
-                          takes alpha, white otherwise
+--background <colour>     the padding of contain; by default transparent for an encoder
+                          that takes alpha and white for one that does not, per output (D2)
 --scale <N%>              scale by a factor instead of a box, keeps the aspect ratio
 --enlarge                 allow scaling up; without it no fit ever scales up (D2)
 --filter <lanczos3|mitchell|catmull-rom|bilinear|box|nearest>
@@ -80,6 +80,7 @@ Rules the parser enforces, each an argument error (exit 2):
 cover, contain and fill need both --width and --height
 --scale excludes --width, --height, --max-width and --max-height
 a --width list takes one --height at most, applied to every width
+a --width list with a --template that lacks {width}, or with -o naming a file
 --position without cover or contain, --background without contain
 ```
 
@@ -103,7 +104,7 @@ fill       scale each axis to the box, the aspect ratio changes
 
 Without `--enlarge` the scale factor is capped at one on each axis. For `inside` that means an image already inside the box is left alone, as `--max-width` does today. For `cover` the crop still happens, at the source's own resolution, so the output keeps the box's aspect ratio but may be smaller than the box (imgproxy's `fill-down`). `contain` pads a small image to the full box, since padding adds no invented pixels. `fill` caps each axis on its own.
 
-The crop of `cover` is `fast_image_resize`'s `SrcCropping::FitIntoDestination`, with `--position` as its centring point, so the crop and the resample are one pass. The padding of `contain` is a copy into a canvas of the box size after the resample. Neither is a new resampler, and neither needs a new dependency.
+The crop of `cover` is `fast_image_resize`'s `SrcCropping::FitIntoDestination`, with `--position` as its centring point, so the crop and the resample are one pass. The padding of `contain` is a copy into a canvas of the box size, and it happens per output once the encoder is known, not in the shared resample. One resampled image serves every format of that size, and each output pads it with its own background: `--background` when given, otherwise transparent where the encoder takes alpha and white where it does not. `-f jpeg,webp` with `--fit contain` writes a white-padded JPEG and a transparent-padded WebP. The copy is cheap next to an encode, and the metric scores the padded image the encoder receives. Neither the crop nor the pad is a new resampler, and neither needs a new dependency.
 
 ### D3. Several widths, one decode
 
@@ -114,7 +115,7 @@ A list of widths produces one output per width per format, from one decode, the 
 sqzer photo.jpg --width 480,960,1600 -f avif,webp
 ```
 
-Each width gets its own resize from the colour-managed source (never from the previous width, #379) and its own target search, since a smaller image needs different settings for the same score. With more than one width and no `--template` or `--suffix`, the output name gains `-{width}w`, the `srcset` descriptor (`photo-480w.avif`), so two widths never write to the same file. `--json` already reports `output_width` and `output_height` for each output.
+Each width gets its own resize from the colour-managed source (never from the previous width, #379) and its own target search, since a smaller image needs different settings for the same score. With more than one width the names must differ per width. Without `--template`, the name gains `-{width}w`, the `srcset` descriptor, after the stem and any `--suffix`: `photo-480w.avif`, or `photo-min-480w.avif` with `--suffix -min`. A `--template` must contain `{width}`, and `-o` naming a file takes one width only; both are argument errors otherwise (D1). The planner also rejects two planned outputs with the same path, whatever produced them, before anything is encoded. `--json` already reports `output_width` and `output_height` for each output.
 
 ### D4. The library type
 
@@ -131,7 +132,20 @@ pub struct Resize {
 }
 ```
 
-`Resize::fit` stays the pure geometry function and gains the crop box and the padding for the other fits, so the CLI's dry run and `{width}` in templates keep asking the same function. A list of widths is the CLI's business: it builds one `Resize` per width and calls `Sqzer::transform` once each on the decoded image. `Preset::resize` keeps the `thumbnail` box as `inside` 512 x 512.
+`background: None` means the per-output default of D2. `Resize::fit` stays the pure geometry function and gains the crop box and the padding for the other fits, so the CLI's dry run and `{width}` in templates keep asking the same function.
+
+`Sqzer::transform` today takes the decoded image by value and does colour and resize in one call, so it cannot serve several widths from one source. It splits along the stage order of ADR-0007 D2:
+
+```rust
+// once per input: colour to sRGB, float to 16-bit, the metadata policy
+pub fn prepare(&self, decoded: Decoded) -> Result<Decoded>;
+// once per width: borrows the prepared image, returns a new one; cover crops here
+pub fn resize(&self, prepared: &Decoded, resize: &Resize) -> Result<Decoded>;
+// once per output, contain only: pads with the background for this encoder
+pub fn pad(&self, resized: &Decoded, resize: &Resize, alpha: bool) -> Result<Decoded>;
+```
+
+Colour conversion runs once, and every width starts from the same colour-managed source (#379). `transform` stays as `prepare` then `resize` with the builder's `Resize`, so a caller with one size does not change. A list of widths is the CLI's business: it calls `prepare` once, `resize` per width, and `pad` per output when the fit is `contain`. The prepared image stays alive while the widths run, which the ADR-0008 estimate has to count (action item 3). `Preset::resize` keeps the `thumbnail` box as `inside` 512 x 512.
 
 ## 3. Options considered
 
@@ -161,7 +175,7 @@ pub struct Resize {
 ## 6. Action items
 
 1. [ ] `Resize`, `Fit`, `Position`, `Filter` and `Size` in `sqzer-core` with the geometry of D2 as pure functions, tested on the corner cases: one side given, a box larger than the image with and without `--enlarge`, extreme aspect ratios, a one-pixel result.
-2. [ ] The facade: `SrcCropping::FitIntoDestination` for `cover`, the pad for `contain` in every layout and sample width, the filter mapping.
+2. [ ] The facade: `prepare`, `resize` and `pad` of D4 with `transform` kept on top; `SrcCropping::FitIntoDestination` for `cover`, the pad for `contain` in every layout and sample width with the per-output background, the filter mapping.
 3. [ ] The CLI flags and rules of D1, the width list and naming of D3, the dry run showing crop and padding; check the ADR-0008 estimate for a file with several widths.
 4. [ ] README: the resize examples and the `rimage` migration table; the `rimage` hint.
 5. [ ] On acceptance, the superseded line on ADR-0003.
