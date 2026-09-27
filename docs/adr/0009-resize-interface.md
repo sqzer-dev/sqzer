@@ -104,7 +104,7 @@ fill       scale each axis to the box, the aspect ratio changes
 
 Without `--enlarge` the scale factor is capped at one on each axis. For `inside` that means an image already inside the box is left alone, as `--max-width` does today. For `cover` the crop still happens, at the source's own resolution, so the output keeps the box's aspect ratio but may be smaller than the box (imgproxy's `fill-down`). `contain` pads a small image to the full box, since padding adds no invented pixels. `fill` caps each axis on its own.
 
-The crop of `cover` is `fast_image_resize`'s `SrcCropping::FitIntoDestination`, with `--position` as its centring point, so the crop and the resample are one pass. The padding of `contain` is a copy into a canvas of the box size, and it happens per output once the encoder is known, not in the shared resample. One resampled image serves every format of that size, and each output pads it with its own background: `--background` when given, otherwise transparent where the encoder takes alpha and white where it does not. `-f jpeg,webp` with `--fit contain` writes a white-padded JPEG and a transparent-padded WebP. The copy is cheap next to an encode, and the metric scores the padded image the encoder receives. Neither the crop nor the pad is a new resampler, and neither needs a new dependency.
+The crop of `cover` is `fast_image_resize`'s `SrcCropping::FitIntoDestination`, with `--position` as its centring point, so the crop and the resample are one pass. The padding of `contain` is a copy into a canvas of the box size, and it happens in `Sqzer::encode` once the encoder is known, not in the shared resample (D4). One resampled image serves every format of that size, and each output pads it with its own background: `--background` when given, otherwise transparent where the encoder takes alpha and white where it does not. `-f jpeg,webp` with `--fit contain` writes a white-padded JPEG and a transparent-padded WebP. The copy is cheap next to an encode, and the metric scores the padded image the encoder receives. Neither the crop nor the pad is a new resampler, and neither needs a new dependency.
 
 ### D3. Several widths, one decode
 
@@ -139,13 +139,14 @@ pub struct Resize {
 ```rust
 // once per input: colour to sRGB, float to 16-bit, the metadata policy
 pub fn prepare(&self, decoded: Decoded) -> Result<Decoded>;
-// once per width: borrows the prepared image, returns a new one; cover crops here
+// once per width: borrows the prepared image, returns a new one; cover crops here,
+// contain records the canvas it still owes on the returned image
 pub fn resize(&self, prepared: &Decoded, resize: &Resize) -> Result<Decoded>;
-// once per output, contain only: pads with the background for this encoder
-pub fn pad(&self, resized: &Decoded, resize: &Resize, alpha: bool) -> Result<Decoded>;
 ```
 
-Colour conversion runs once, and every width starts from the same colour-managed source (#379). `transform` stays as `prepare` then `resize` with the builder's `Resize`, so a caller with one size does not change. A list of widths is the CLI's business: it calls `prepare` once, `resize` per width, and `pad` per output when the fit is `contain`. The prepared image stays alive while the widths run, which the ADR-0008 estimate has to count (action item 3). `Preset::resize` keeps the `thumbnail` box as `inside` 512 x 512.
+`Decoded` gains a pending canvas: the box size, the position and the `--background` choice, set by `resize` for `contain` and empty otherwise. `Sqzer::encode` applies it after picking the encoder and before the search, with that encoder's alpha deciding the default background. The padding therefore happens on every path, `run`, `transform` then `encode`, or the CLI's own calls, and no caller can encode a `contain` image without its canvas.
+
+Colour conversion runs once, and every width starts from the same colour-managed source (#379). `transform` stays as `prepare` then `resize` with the builder's `Resize`, so a caller with one size does not change. A list of widths is the CLI's business: it calls `prepare` once, `resize` per width and `encode` per output, and the padding comes with `encode`. The prepared image stays alive while the widths run, which the ADR-0008 estimate has to count (action item 3). `Preset::resize` keeps the `thumbnail` box as `inside` 512 x 512.
 
 ## 3. Options considered
 
@@ -175,7 +176,7 @@ Colour conversion runs once, and every width starts from the same colour-managed
 ## 6. Action items
 
 1. [ ] `Resize`, `Fit`, `Position`, `Filter` and `Size` in `sqzer-core` with the geometry of D2 as pure functions, tested on the corner cases: one side given, a box larger than the image with and without `--enlarge`, extreme aspect ratios, a one-pixel result.
-2. [ ] The facade: `prepare`, `resize` and `pad` of D4 with `transform` kept on top; `SrcCropping::FitIntoDestination` for `cover`, the pad for `contain` in every layout and sample width with the per-output background, the filter mapping.
+2. [ ] The facade: `prepare` and `resize` of D4 with `transform` kept on top, the pending canvas on `Decoded` applied in `encode`; `SrcCropping::FitIntoDestination` for `cover`, the pad for `contain` in every layout and sample width with the per-encoder background, a library test that `run` with `contain` returns the full box; the filter mapping.
 3. [ ] The CLI flags and rules of D1, the width list and naming of D3, the dry run showing crop and padding; check the ADR-0008 estimate for a file with several widths.
 4. [ ] README: the resize examples and the `rimage` migration table; the `rimage` hint.
 5. [ ] On acceptance, the superseded line on ADR-0003.
