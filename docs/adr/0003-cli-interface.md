@@ -1,6 +1,6 @@
 # ADR-0003: CLI interface
 
-**Status:** Proposed
+**Status:** Accepted
 **Superseded by:** ADR-0008 for the `-j` budget of "Parallelism and memory", which gains a memory limit
 **Date:** 2026-09-07
 **Deciders:** Vlad (sole maintainer)

@@ -1,6 +1,6 @@
 # ADR-0001: System design
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-06
 **Deciders:** Vlad (sole maintainer)
 **Scope:** Clean redesign. The existing Rimage crate is prior art, not a constraint.

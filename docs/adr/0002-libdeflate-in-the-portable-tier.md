@@ -1,6 +1,6 @@
 # ADR-0002: `libdeflate` in the portable tier
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-06
 **Deciders:** Vlad (sole maintainer)
 **Scope:** One exception to the "portable means pure Rust" rule of ADR-0001 D2, and how it is fenced.
