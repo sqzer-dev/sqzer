@@ -1,5 +1,5 @@
 {
-  "strictness": 2,
+  "strictness": 3,
   "commentTypes": [
     "logic",
     "syntax"
