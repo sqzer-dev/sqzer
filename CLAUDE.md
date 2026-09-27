@@ -74,7 +74,7 @@ Run the full set before declaring a change done. CI runs the same commands plus 
 - Squash commit messages use conventional prefixes scoped to the crate: `feat(codecs): mozjpeg-rs encoder`, `fix(cli): exit code on partial batch failure`. Intermediate commits on a branch do not matter.
 - A behaviour change updates `CHANGELOG.md` under Unreleased in the same PR. The file follows the Angular changelog convention: `### Features` / `### Bug Fixes` / `### Performance Improvements` headings, entries as `* **scope:** subject` with the same crate scope as the commit.
 - Architecture changes get a new ADR in `docs/adr`, not a rewrite of an existing one.
-- Releases: push a `v*` tag. `dist-workspace.toml` drives `.github/workflows/release.yml`; edit the TOML and run `dist generate`, never the workflow by hand. The release `plan` job fails a PR when the two disagree.
+- Releases: push a `v*` tag on the tip of `main`, and merge nothing that touches `.github/workflows` until the release run finishes: GitHub refuses to create the release from `GITHUB_TOKEN` when `main` has workflow changes the tagged commit lacks (ADR-0006 item 5). `dist-workspace.toml` drives `.github/workflows/release.yml`; edit the TOML and run `dist generate`, never the workflow by hand. The release `plan` job fails a PR when the two disagree.
 - New dependencies: state the licence in the PR description and check it is on the `deny.toml` allow-list. Prefer crates that already speak `imgref` or implement `image`'s traits, since adapters then come cheap.
 
 ## Testing expectations
