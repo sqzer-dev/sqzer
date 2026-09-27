@@ -329,7 +329,7 @@ mod tests {
             orientation,
             icc: Some(vec![9]),
             nclx: None,
-            exif: Some(crate::exif::tiff_with_orientation(6)),
+            exif: Some(crate::heif::tests::tiff_with_orientation(6)),
             xmp: Some(b"<x/>".to_vec()),
         }
     }
@@ -362,8 +362,8 @@ mod tests {
         assert_eq!(os.icc(), Some(&[9][..]));
         // The container rotated the picture; the Exif tag must not again.
         assert_eq!(
-            crate::exif::orientation(os.exif().unwrap()),
-            Some(Orientation::Normal)
+            crate::heif::tests::orientation_tag(os.exif().unwrap()),
+            Some(1)
         );
         assert_eq!(os.xmp(), Some(&b"<x/>"[..]));
         let lib = finish(frame(true), &header).unwrap();

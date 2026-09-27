@@ -254,9 +254,9 @@ impl Items<'_> {
         self.payload(file, item)
     }
 
-    /// The first item matching `want` that describes `primary`: a `cdsc`
-    /// reference from the item to the primary one, or any matching item
-    /// when the file has no `cdsc` references at all.
+    /// The first item matching `want` that describes `primary` through a
+    /// `cdsc` reference. An item without one describes nothing we know of,
+    /// a thumbnail perhaps, so it is not attached to the primary image.
     fn find(&self, primary: u32, want: impl Fn(&ItemInfo<'_>) -> bool) -> Option<u32> {
         let described = cdsc_references(self.iref.unwrap_or_default());
         let infos = item_infos(self.iinf?);
@@ -264,10 +264,9 @@ impl Items<'_> {
             .iter()
             .filter(|i| want(i))
             .find(|i| {
-                described.is_empty()
-                    || described
-                        .iter()
-                        .any(|(from, to)| *from == i.id && to.contains(&primary))
+                described
+                    .iter()
+                    .any(|(from, to)| *from == i.id && to.contains(&primary))
             })
             .map(|i| i.id)
     }
@@ -363,6 +362,10 @@ fn cdsc_references(body: &[u8]) -> Vec<(u32, Vec<u32>)> {
 /// `iloc`: the bytes of `item`, versions 0 to 2. Construction method 0
 /// reads from the file, 1 from the `idat` box; method 2, item offsets, is
 /// not followed. A zero extent length means "to the end".
+///
+/// The result is capped at the length of its source: an item stored once
+/// always fits, and a crafted `iloc` repeating overlapping extents cannot
+/// make the copy outgrow the file.
 fn item_payload(body: &[u8], item: u32, file: &[u8], idat: &[u8]) -> Option<Vec<u8>> {
     let version = *body.first()?;
     let field_sizes = *body.get(4)?;
@@ -423,7 +426,11 @@ fn item_payload(body: &[u8], item: u32, file: &[u8], idat: &[u8]) -> Option<Vec<
             } else {
                 start.checked_add(usize::try_from(length).ok()?)?
             };
-            out.extend_from_slice(source.get(start..end)?);
+            let extent = source.get(start..end)?;
+            if out.len().checked_add(extent.len())? > source.len() {
+                return None;
+            }
+            out.extend_from_slice(extent);
         }
         if id == item {
             return Some(out);
@@ -564,7 +571,7 @@ fn be64(b: &[u8]) -> Option<u64> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn bx(kind: [u8; 4], body: &[u8]) -> Vec<u8> {
@@ -626,6 +633,26 @@ mod tests {
         let pitm = full(*b"pitm", 0, 0, &1u16.to_be_bytes());
         file.extend_from_slice(&full(*b"meta", 0, 0, &[pitm, iprp].concat()));
         file
+    }
+
+    /// A little-endian TIFF with one IFD holding one `Orientation` entry.
+    /// The walk's tests keep their own copy so they build with the `heif`
+    /// or `avif` feature alone, without the EXIF module.
+    pub(crate) fn tiff_with_orientation(value: u16) -> Vec<u8> {
+        let mut t = b"II*\0".to_vec();
+        t.extend_from_slice(&8u32.to_le_bytes()); // first IFD
+        t.extend_from_slice(&1u16.to_le_bytes()); // one entry
+        t.extend_from_slice(&0x0112u16.to_le_bytes()); // Orientation
+        t.extend_from_slice(&3u16.to_le_bytes()); // SHORT
+        t.extend_from_slice(&1u32.to_le_bytes()); // count
+        t.extend_from_slice(&value.to_le_bytes());
+        t.extend_from_slice(&[0, 0, 0, 0, 0, 0]); // value padding, no next IFD
+        t
+    }
+
+    /// The `Orientation` value of a TIFF from [`tiff_with_orientation`].
+    pub(crate) fn orientation_tag(tiff: &[u8]) -> Option<u16> {
+        Some(u16::from_le_bytes(tiff.get(18..20)?.try_into().ok()?))
     }
 
     /// A metadata item for [`heif_with`].
@@ -904,7 +931,7 @@ mod tests {
 
     #[test]
     fn exif_and_xmp_items_from_idat_and_from_the_file() {
-        let tiff = crate::exif::tiff_with_orientation(6);
+        let tiff = tiff_with_orientation(6);
         for (in_idat, version) in [(true, 1), (false, 0), (false, 1), (true, 2)] {
             let file = heif_with(
                 *b"avif",
@@ -923,8 +950,8 @@ mod tests {
             // The container rotates a HEIF; the kept tag must not.
             let meta = h.metadata();
             assert_eq!(
-                crate::exif::orientation(meta.exif.as_deref().unwrap()),
-                Some(Orientation::Normal),
+                orientation_tag(meta.exif.as_deref().unwrap()),
+                Some(1),
                 "{what}"
             );
         }
@@ -934,10 +961,7 @@ mod tests {
     fn wide_item_ids_are_read() {
         let file = heif_with(
             *b"heic",
-            &[exif_item(
-                0x1_0002,
-                exif_payload(&crate::exif::tiff_with_orientation(1)),
-            )],
+            &[exif_item(0x1_0002, exif_payload(&tiff_with_orientation(1)))],
             &[(0x1_0002, 1)],
             true,
             2,
@@ -947,7 +971,7 @@ mod tests {
 
     #[test]
     fn only_items_describing_the_primary_count() {
-        let tiff = crate::exif::tiff_with_orientation(1);
+        let tiff = tiff_with_orientation(1);
         // The Exif item describes item 7, not the primary item 1.
         let file = heif_with(
             *b"avif",
@@ -957,9 +981,9 @@ mod tests {
             1,
         );
         assert_eq!(read(&file).unwrap().exif, None);
-        // A file with no `cdsc` references at all: the item is taken.
+        // No `cdsc` reference at all: it describes nothing we know of.
         let file = heif_with(*b"avif", &[exif_item(2, exif_payload(&tiff))], &[], true, 1);
-        assert!(read(&file).unwrap().exif.is_some());
+        assert_eq!(read(&file).unwrap().exif, None);
     }
 
     #[test]
@@ -998,6 +1022,38 @@ mod tests {
         file.truncate(file.len() - 4);
         let h = read(&file).unwrap();
         assert_eq!((h.width, h.exif), (8, None));
+    }
+
+    /// An `iloc` of version 1 with one item, 2, stored in `idat` as the
+    /// given `(offset, length)` extents, 32-bit fields.
+    fn iloc_v1(extents: &[(u32, u32)]) -> Vec<u8> {
+        let mut b = vec![1, 0, 0, 0, 0x44, 0x00];
+        b.extend_from_slice(&1u16.to_be_bytes()); // one item
+        b.extend_from_slice(&2u16.to_be_bytes()); // item 2
+        b.extend_from_slice(&1u16.to_be_bytes()); // construction method 1
+        b.extend_from_slice(&0u16.to_be_bytes()); // data_reference_index
+        b.extend_from_slice(&u16::try_from(extents.len()).unwrap().to_be_bytes());
+        for &(offset, length) in extents {
+            b.extend_from_slice(&offset.to_be_bytes());
+            b.extend_from_slice(&length.to_be_bytes());
+        }
+        b
+    }
+
+    #[test]
+    fn payload_extents_concatenate_and_cannot_outgrow_their_source() {
+        let idat: Vec<u8> = (0..100).collect();
+        let two = item_payload(&iloc_v1(&[(0, 4), (50, 2)]), 2, &[], &idat).unwrap();
+        assert_eq!(two, [0, 1, 2, 3, 50, 51]);
+        // A zero length reads to the end of the source.
+        let rest = item_payload(&iloc_v1(&[(90, 0)]), 2, &[], &idat).unwrap();
+        assert_eq!(rest.len(), 10);
+        // A thousand extents each claiming the whole `idat` would copy
+        // 100 KB out of 100 bytes: refused, not allocated.
+        let flood = iloc_v1(&[(0, 0); 1000]);
+        assert_eq!(item_payload(&flood, 2, &[], &idat), None);
+        // Another item's extents are skipped, not read.
+        assert_eq!(item_payload(&iloc_v1(&[(0, 4)]), 3, &[], &idat), None);
     }
 
     #[test]
