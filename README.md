@@ -237,7 +237,7 @@ cargo run --release -- verify
 
 ## Contributing
 
-Issues and pull requests are welcome, in English preferably. [`CONTRIBUTING.md`](CONTRIBUTING.md) has the checks, the licence rules for new dependencies and how PRs are merged. Questions go to [Discussions](https://github.com/sqzer-dev/sqzer/discussions), security reports through [`SECURITY.md`](SECURITY.md).
+Issues and pull requests are welcome, in English preferably. [`ROADMAP.md`](ROADMAP.md) has what comes next, [`CONTRIBUTING.md`](CONTRIBUTING.md) the checks, the licence rules for new dependencies and how PRs are merged. Questions go to [Discussions](https://github.com/sqzer-dev/sqzer/discussions), security reports through [`SECURITY.md`](SECURITY.md).
 
 ## Licence
 
