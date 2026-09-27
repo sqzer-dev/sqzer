@@ -1,0 +1,61 @@
+name: Bug report
+description: sqzer crashed, refused a valid input or produced a wrong or poor result.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please write in English. Issues in other languages are closed automatically; machine translation is fine.
+
+        A crash or hang on a crafted file may be a security issue. Report those privately through the Security tab instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected and what you got instead. Paste errors as text, not screenshots.
+      placeholder: |
+        sqzer photo.jpg -f avif
+        expected photo.avif, got: error: ...
+    validations:
+      required: true
+  - type: textarea
+    id: build
+    attributes:
+      label: Version and codecs
+      description: The output of `sqzer --version` and `sqzer --list-codecs`.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How it was installed
+      options:
+        - Release archive or installer script
+        - Homebrew
+        - cargo install
+        - Built from source
+        - As a library dependency
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Ubuntu 24.04 x86_64, macOS 15 arm64, Windows 11
+    validations:
+      required: true
+  - type: textarea
+    id: input
+    attributes:
+      label: Input file
+      description: Attach the image, or a smaller one that shows the same problem. If you cannot share it, describe it (format, dimensions, bit depth, colour profile, where it came from).
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: This issue is written in English.
+          required: true
+        - label: I searched existing issues and this is not a duplicate.
+          required: true

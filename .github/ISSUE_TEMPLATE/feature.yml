@@ -1,0 +1,41 @@
+name: Feature request
+description: A new format, flag, backend or default.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please write in English. Issues in other languages are closed automatically; machine translation is fine.
+
+        Codec requests: `sqzer` only takes permissively licensed backends. AGPL and GPL crates are not an option, so if you have a crate in mind, say which one and its licence.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you are trying to do and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you would like `sqzer` to do. A command line showing how you would use it helps most.
+      placeholder: |
+        # strip the alpha channel when it is fully opaque
+        sqzer logo.png -f jpeg --flatten
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Workarounds you use now, or how other tools do it.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: This issue is written in English.
+          required: true
+        - label: I searched existing issues and discussions and this is not a duplicate.
+          required: true
