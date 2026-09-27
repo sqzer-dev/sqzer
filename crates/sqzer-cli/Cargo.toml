@@ -52,6 +52,9 @@ rayon = "1.10"
 # In-process glob expansion for shells that do not expand, and the
 # `--include` / `--exclude` filters. MIT OR Apache-2.0.
 glob = "0.3"
+# Available memory, which bounds how many files are in flight
+# (ADR-0008). `system` only: no disks, networks or components. MIT.
+sysinfo = { version = "0.38", default-features = false, features = ["system"] }
 
 [lints]
 workspace = true

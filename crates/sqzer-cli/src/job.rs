@@ -1,4 +1,4 @@
-//! One input through the pipeline: read, probe, reserve its pixels,
+//! One input through the pipeline: read, probe, reserve its memory,
 //! decode and resize once, then encode and place every requested output.
 
 use std::fs;
@@ -10,19 +10,19 @@ use sqzer::core::Decoded;
 use sqzer::core::codec::Format;
 use sqzer::core::params::{Resolved, Target};
 
-use crate::budget::PixelBudget;
+use crate::budget::{MemoryBudget, Work};
 use crate::cli::format_name;
 use crate::config::Config;
 use crate::inputs::Input;
 use crate::output::{Naming, stem_of};
-use crate::report::{Printer, Record, Stage, Status, Tally, Worker, content_name};
+use crate::report::{Printer, Record, Stage, Status, Tally, Worker, content_name, fmt_bytes};
 
 /// What every job shares.
 pub struct Ctx<'a> {
     /// The run.
     pub cfg: &'a Config,
-    /// The decoded-pixel budget.
-    pub budget: &'a PixelBudget,
+    /// The memory budget.
+    pub budget: &'a MemoryBudget,
     /// Where records go.
     pub printer: &'a Printer,
 }
@@ -48,13 +48,25 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> Tally {
     // claims reserves the maximum and gets its error from the decode
     // below, which knows whether the format is unknown or merely
     // unreadable in this build.
-    let pixels = cfg
+    let dimensions = cfg
         .sqzer
         .registry()
         .probe(&bytes)
-        .and_then(|(_, decoder)| decoder.dimensions(&bytes))
-        .map_or(cfg.max_pixels, |(w, h)| u64::from(w) * u64::from(h));
-    let _reservation = ctx.budget.reserve(pixels);
+        .and_then(|(_, decoder)| decoder.dimensions(&bytes));
+    let estimate = dimensions.map_or_else(
+        || cfg.work.estimate(cfg.max_pixels, cfg.max_pixels),
+        |(w, h)| {
+            let out = cfg.sqzer.resize_bounds().fit(w, h).unwrap_or((w, h));
+            cfg.work.estimate(pixels(w, h), pixels(out.0, out.1))
+        },
+    );
+    if let Some((w, h)) = dimensions
+        && estimate > ctx.budget.limit()
+    {
+        ctx.printer
+            .warning(&oversized(&name, (w, h), estimate, ctx));
+    }
+    let _reservation = ctx.budget.reserve(estimate);
 
     if let Some(w) = &worker {
         w.stage(Stage::Decode);
@@ -97,6 +109,26 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> Tally {
         ctx.printer.record(&record, &details);
     }
     tally
+}
+
+fn pixels(w: u32, h: u32) -> u64 {
+    u64::from(w) * u64::from(h)
+}
+
+/// The warning for a file whose estimate alone is over the budget. It
+/// still runs, alone, since refusing a file that may well fit is worse.
+fn oversized(name: &str, (w, h): (u32, u32), estimate: u64, ctx: &Ctx<'_>) -> String {
+    let limit = fmt_bytes(ctx.budget.limit());
+    let need = fmt_bytes(estimate);
+    let mut msg = format!(
+        "{name}: {w}x{h} needs about {need}, more than the {limit} this run may use; it runs alone"
+    );
+    if ctx.cfg.work == Work::Search {
+        msg.push_str(
+            "\n  the target search is most of that; -q sets an explicit quality and skips it",
+        );
+    }
+    msg
 }
 
 fn read(input: &Input) -> std::io::Result<Vec<u8>> {

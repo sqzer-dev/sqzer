@@ -122,7 +122,7 @@ Exit codes, from ADR-0001:
 
 Paths: an argument that exists on disk is taken literally and never parsed as a glob. One that does not exist and contains `*`, `?` or `[` is expanded by `sqzer` itself, case-insensitively, so `*.png` works in `cmd.exe` and finds `.PNG`. The output stem is everything before the last dot, so `a.b.c.jpg` becomes `a.b.c.avif`.
 
-Memory: `-j` sets how many files are in flight and defaults to the CPU count, but the decoder is also held to a pixel budget of `--max-pixels` times jobs over four, so a folder of huge images is processed a few at a time instead of all at once. Encoders run single-threaded; the parallelism is across files.
+Memory: `-j` sets how many files are in flight and defaults to the CPU count, but each file also reserves an estimate of its peak memory before it decodes, and files wait while the total would pass three quarters of the memory available when the run started. The target search is the expensive part, about 160 bytes per pixel, so a folder of 24-megapixel photos runs one or two at a time on an 8 GB machine. A file whose estimate is over the budget on its own runs alone with a warning; `-q` skips the search. Encoders run single-threaded; the parallelism is across files.
 
 ### Coming from `rimage`
 
