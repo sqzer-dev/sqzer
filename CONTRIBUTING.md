@@ -4,7 +4,7 @@ Bug reports, fixes, new backends and better defaults are all welcome. `sqzer` is
 
 ## Language
 
-Issues, pull requests, discussions and commit messages are in English. An issue in another language is closed automatically with a note asking for an English version; edit it into English and it reopens. Machine translation is fine, and so is imperfect English.
+English is preferred for issues, pull requests and discussions, since the maintainer reads only English. Any language is accepted: if you write in another one, add an English version next to the original if you can. Machine translation is fine, and so is imperfect English. Commit messages and code comments are in English.
 
 ## Before you start
 
@@ -18,7 +18,8 @@ Issues, pull requests, discussions and commit messages are in English. An issue 
 The toolchain, the native tier's C dependencies and the calibration harness are covered under [Development in the README](README.md#development). The short version:
 
 ```sh
-# portable tier, pure Rust apart from the vendored libdeflate
+# portable tier: pure Rust apart from the vendored libdeflate, which needs
+# a C compiler on desktop targets
 cargo build --workspace
 cargo test --workspace
 

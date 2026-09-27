@@ -1,4 +1,4 @@
-<!-- In English, please. The title becomes the squash commit: `feat(codecs): ...`, `fix(cli): ...`, `docs: ...`. -->
+<!-- English preferred. The title becomes the squash commit: `feat(codecs): ...`, `fix(cli): ...`, `docs: ...`. -->
 
 ## What and why
 

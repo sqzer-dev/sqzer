@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please write in English. Issues in other languages are closed automatically; machine translation is fine.
+        English is preferred, since the maintainer reads only English. Any language is accepted; if you can, add an English version next to the original. Machine translation is fine.
 
         A crash or hang on a crafted file may be a security issue. Report those privately through the Security tab instead.
   - type: textarea
@@ -22,7 +22,7 @@ body:
     id: build
     attributes:
       label: Version and codecs
-      description: The output of `sqzer --version` and `sqzer --list-codecs`.
+      description: For the CLI, the output of `sqzer --version` and `sqzer --list-codecs`. As a library, the `sqzer` version and the features you enable.
       render: text
     validations:
       required: true
@@ -55,7 +55,5 @@ body:
     attributes:
       label: Checks
       options:
-        - label: This issue is written in English.
-          required: true
         - label: I searched existing issues and this is not a duplicate.
           required: true
