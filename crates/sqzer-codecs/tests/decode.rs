@@ -43,13 +43,14 @@ fn header_dimensions_match_the_decode() {
         let dims = decoder.dimensions(&bytes);
         let img = decoder.decode(&bytes, &DecodeOpts::default()).unwrap();
         // Stored dimensions; a rotated fixture comes out with the axes
-        // swapped once orientation is applied. HEIF is an exception: its
-        // header reports the displayed size, after the container's own
-        // rotation, so header and decode agree as they are.
+        // swapped once orientation is applied. HEIF, HEIC and AVIF alike, is
+        // an exception: its header reports the displayed size, after the
+        // container's own rotation, so header and decode agree as they are.
         let name = path.to_string_lossy();
         // JPEG XL is another: `jxl-oxide` reports the oriented size too.
         let rotated = name.contains("rot90") || name.contains("meta");
-        let stored = if rotated && !name.ends_with(".heic") && !name.ends_with(".jxl") {
+        let heif = name.ends_with(".heic") || name.ends_with(".avif");
+        let stored = if rotated && !heif && !name.ends_with(".jxl") {
             (img.height(), img.width())
         } else {
             (img.width(), img.height())
@@ -336,6 +337,7 @@ mod jxl {
 #[cfg(all(feature = "avif", not(target_arch = "wasm32")))]
 mod avif {
     use super::*;
+    use sqzer_core::codec::Decoder;
 
     #[test]
     fn rgb_420_limited_range() {
@@ -380,6 +382,48 @@ mod avif {
     #[test]
     fn pixel_limit() {
         assert_too_large(&registry(), "pattern-rgb.avif");
+    }
+
+    #[test]
+    fn irot_and_imir_are_applied() {
+        // Stored turned and mirrored so the container's transform brings
+        // the pattern upright; the displayed size is reported up front.
+        let reg = registry();
+        for name in ["pattern-rot90.avif", "pattern-mirror.avif"] {
+            let (img, _) = decode(&reg, name);
+            assert_eq!((img.width(), img.height()), (W, H), "{name}");
+            assert_close(&img, &test_image(ColorType::Rgb), 6.0, name);
+            let header = sqzer_codecs::avif::AvifDecoder.dimensions(&fixture(name));
+            assert_eq!(header, Some((W, H)), "{name}");
+        }
+    }
+
+    #[test]
+    fn icc_is_kept() {
+        let (img, _) = decode(&registry(), "pattern-icc.avif");
+        assert!(is_icc(img.icc().expect("profile")));
+        assert_close(&img, &test_image(ColorType::Rgb), 6.0, "pattern-icc.avif");
+    }
+
+    #[test]
+    fn nclx_primaries_become_a_profile() {
+        // Display P3 through code points only; sRGB code points add none.
+        let (img, _) = decode(&registry(), "pattern-p3.avif");
+        assert!(is_icc(img.icc().expect("profile built from nclx")));
+        let (plain, _) = decode(&registry(), "pattern-rgb.avif");
+        assert_eq!(plain.icc(), None);
+    }
+
+    #[test]
+    fn exif_and_xmp_ride_on_the_image_with_the_orientation_reset() {
+        // The Exif item says orientation 6, the container says none: the
+        // container wins and the tag is reset so no viewer turns it again.
+        let (img, _) = decode(&registry(), "pattern-meta.avif");
+        assert_eq!((img.width(), img.height()), (W, H));
+        let exif = img.exif().expect("EXIF kept");
+        assert_eq!(exif_orientation(exif), Some(1));
+        assert!(contains(exif, b"sqzer"), "Artist survives");
+        assert!(contains(img.xmp().expect("XMP kept"), b"test pattern"));
     }
 }
 

@@ -1,5 +1,5 @@
 //! EXIF orientation, shared by the decoders whose container carries a TIFF
-//! blob: JPEG (APP1) and WebP (`EXIF` chunk). Only the orientation tag is
+//! blob: JPEG (APP1), WebP (`EXIF` chunk) and PNG (`eXIf` chunk). Only the orientation tag is
 //! read here; the blob itself rides on the image for the metadata policy
 //! (ADR-0001 D7) and the JPEG helpers below are for putting it back.
 

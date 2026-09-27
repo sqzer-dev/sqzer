@@ -31,13 +31,15 @@ portable = [
 ]
 # `oxipng` is the PNG writer on desktop targets; on wasm32 it is compiled
 # out (see below) and the plain `png` writer takes its place.
-png = ["dep:png", "dep:oxipng"]
+# `kamadak-exif` reads the orientation of an `eXIf` chunk.
+png = ["dep:png", "dep:oxipng", "dep:kamadak-exif"]
 jpeg = ["dep:mozjpeg-rs", "dep:zune-jpeg", "dep:kamadak-exif"]
 webp-lossless = ["dep:image-webp", "dep:kamadak-exif"]
 # The AVIF encoder builds everywhere. The decoder is desktop only: `rav1d`
 # does not compile for wasm32, so on that target this feature adds the
-# encoder and nothing else.
-avif = ["dep:avif-parse", "dep:re_rav1d", "dep:yuv", "dep:ravif", "dep:rgb"]
+# encoder and nothing else. `moxcms` turns wide-gamut `nclx` primaries
+# into an ICC profile for the colour stage.
+avif = ["dep:avif-parse", "dep:re_rav1d", "dep:yuv", "dep:ravif", "dep:rgb", "dep:moxcms"]
 jxl-decode = ["dep:jxl-oxide"]
 # HEIC recognised and its header read (size, rotation, ICC) with no
 # decoder: a portable build says "needs `native-heif`" for a HEIC instead
