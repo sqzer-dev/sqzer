@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Features
+
+* **codecs:** HEIC input keeps its Exif and XMP items, the Exif orientation tag reset since the container's `irot` and `imir` are what rotate a HEIF
+
+### Bug Fixes
+
+* **codecs:** AVIF input applies the container's rotation and mirroring (`irot`, `imir`), keeps its ICC profile and its Exif and XMP items, and turns primaries other than sRGB from an `nclx` box or the AV1 sequence header (Display P3, BT.2020) into an ICC profile for the colour stage. Before, all of it was ignored: a rotated AVIF came out on its side and a P3 one with its colours shifted, even with `--keep-icc` or `--keep-metadata`
+* **codecs:** PNG input applies its EXIF orientation unless `--no-auto-orient`, and reads an `eXIf` chunk placed after the image data
+
 ## 0.1.0
 
 The first release. Everything below is new.

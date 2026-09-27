@@ -1,20 +1,22 @@
-//! HEIC container parsing that every build gets, decoder or not: the brand
-//! sniff, and a walk of the `meta` box for what the primary item looks
-//! like before a single pixel is decoded. The HEIC backends in
+//! HEIF container parsing that every build gets, decoder or not: the HEIC
+//! brand sniff, and a walk of the `meta` box for what the primary item
+//! looks like before a single pixel is decoded. The HEIC backends in
 //! `native::heif` use it for `probe`, for `dimensions`, for the
-//! orientation they apply and for the ICC profile they attach, so the
-//! three of them agree by construction (ADR-0005 D6). A build with none of
-//! them registers [`probe`] as a sniffer so a HEIC input is reported as
+//! orientation they apply and for the metadata they attach, so the three
+//! of them agree by construction (ADR-0005 D6). AVIF is a HEIF too, and
+//! its decoder takes the same walk through [`read`]. A build with no HEIC
+//! decoder registers [`probe`] as a sniffer so a HEIC input is reported as
 //! "needs `native-heif`" rather than "unrecognised".
 //!
-//! Only what the backends need is read: `ftyp`, `pitm`, and the primary
-//! item's `ispe`, `clap`, `irot`, `imir` and `colr` properties. Item
-//! locations, the HEVC configuration and auxiliary items stay with the
-//! decoders. Everything is bounds-checked and a malformed file yields
-//! `None`; the decoder then produces the real error.
+//! Only what the backends need is read: `ftyp`, `pitm`, the primary item's
+//! `ispe`, `clap`, `irot`, `imir` and `colr` properties, and the Exif and
+//! XMP items that describe it (`iinf`, `iref`, `iloc`, `idat`). The coded
+//! payload, its configuration and auxiliary items stay with the decoders.
+//! Everything is bounds-checked and a malformed file yields `None`, or no
+//! metadata; the decoder then produces the real error.
 
 use sqzer_core::codec::{Format, FormatInfo};
-use sqzer_core::image::Orientation;
+use sqzer_core::image::{Metadata, Orientation, reset_exif_orientation};
 
 /// Brands of HEVC-coded HEIF files, still images and sequences. AVIF
 /// brands are left to the AVIF decoder on purpose.
@@ -59,9 +61,50 @@ pub struct Header {
     /// The transform that brings the decoded, cropped frame upright:
     /// `irot` and `imir` composed in the order the file lists them.
     pub orientation: Orientation,
-    /// The ICC profile of a `prof` or `rICC` colour box. An `nclx` box is
-    /// ignored, as `libheif` ignores it (ADR-0004).
+    /// The ICC profile of a `prof` or `rICC` colour box.
     pub icc: Option<Vec<u8>>,
+    /// The code points of an `nclx` colour box. The HEIC backends ignore
+    /// it, as `libheif` does (ADR-0004); the AVIF decoder reads the
+    /// primaries from it.
+    pub nclx: Option<Nclx>,
+    /// The Exif item describing the primary item, as a TIFF structure
+    /// from the byte-order mark. Its `Orientation` tag is informative only:
+    /// `irot` and `imir` are what rotate a HEIF.
+    pub exif: Option<Vec<u8>>,
+    /// The XMP item describing the primary item, the XML bytes.
+    pub xmp: Option<Vec<u8>>,
+}
+
+impl Header {
+    /// The ICC profile, Exif and XMP to attach to the decoded image. The
+    /// Exif `Orientation` tag is reset to 1: in a HEIF the container's
+    /// `irot` and `imir` rotate the picture, and a kept tag would rotate it
+    /// a second time in the next viewer.
+    #[must_use]
+    pub fn metadata(&self) -> Metadata {
+        let mut exif = self.exif.clone();
+        if let Some(exif) = &mut exif {
+            reset_exif_orientation(exif);
+        }
+        Metadata {
+            icc: self.icc.clone(),
+            exif,
+            xmp: self.xmp.clone(),
+        }
+    }
+}
+
+/// Colour code points (ITU-T H.273) from an `nclx` colour box.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Nclx {
+    /// `colour_primaries`: 1 is BT.709 and sRGB, 12 Display P3, 9 BT.2020.
+    pub primaries: u16,
+    /// `transfer_characteristics`: 13 is sRGB, 16 PQ, 18 HLG.
+    pub transfer: u16,
+    /// `matrix_coefficients`.
+    pub matrix: u16,
+    /// Full-range samples rather than limited ("video") range.
+    pub full_range: bool,
 }
 
 /// Read the [`Header`] of a HEIC. `None` when the bytes are not a HEIC or
@@ -69,6 +112,14 @@ pub struct Header {
 #[must_use]
 pub fn header(bytes: &[u8]) -> Option<Header> {
     probe(bytes)?;
+    read(bytes)
+}
+
+/// Read the [`Header`] of any HEIF, whatever its brand: the AVIF decoder's
+/// entry point, since [`header`] rejects everything but HEIC. `None` when
+/// the `meta` box does not describe a primary item with a size.
+#[must_use]
+pub fn read(bytes: &[u8]) -> Option<Header> {
     // `meta` is a FullBox: version and flags precede its children.
     let meta = boxes(bytes)
         .find(|(kind, _)| *kind == b"meta")?
@@ -77,6 +128,7 @@ pub fn header(bytes: &[u8]) -> Option<Header> {
     let mut primary = None;
     let mut ipco = None;
     let mut ipma = None;
+    let mut items = Items::default();
     for (kind, body) in boxes(meta) {
         match kind {
             b"pitm" => primary = primary_item(body),
@@ -89,15 +141,21 @@ pub fn header(bytes: &[u8]) -> Option<Header> {
                     }
                 }
             }
+            b"iinf" => items.iinf = Some(body),
+            b"iref" => items.iref = Some(body),
+            b"iloc" => items.iloc = Some(body),
+            b"idat" => items.idat = Some(body),
             _ => {}
         }
     }
+    let primary = primary?;
     let properties: Vec<_> = boxes(ipco?).collect();
     let mut ispe = None;
     let mut aperture = None;
     let mut orientation = Orientation::Normal;
     let mut icc = None;
-    for index in associations(ipma?, primary?) {
+    let mut nclx = None;
+    for index in associations(ipma?, primary) {
         // Property indices are 1-based; 0 means "none".
         let Some((kind, body)) = index
             .checked_sub(1)
@@ -116,6 +174,8 @@ pub fn header(bytes: &[u8]) -> Option<Header> {
                     .or_else(|| body.strip_prefix(b"rICC"))
                 {
                     icc = Some(profile.to_vec());
+                } else if let Some(points) = body.strip_prefix(b"nclx") {
+                    nclx = nclx_points(points);
                 }
             }
             _ => {}
@@ -133,7 +193,243 @@ pub fn header(bytes: &[u8]) -> Option<Header> {
         height,
         orientation,
         icc,
+        nclx,
+        exif: items.exif(bytes, primary),
+        xmp: items.xmp(bytes, primary),
     })
+}
+
+/// `nclx`: primaries, transfer and matrix as 16-bit code points, then the
+/// full-range flag in the top bit of one byte.
+fn nclx_points(body: &[u8]) -> Option<Nclx> {
+    Some(Nclx {
+        primaries: be16(body)?,
+        transfer: be16(body.get(2..)?)?,
+        matrix: be16(body.get(4..)?)?,
+        full_range: body.get(6)? & 0x80 != 0,
+    })
+}
+
+/// The item boxes of `meta` that metadata lookups need.
+#[derive(Default)]
+struct Items<'a> {
+    iinf: Option<&'a [u8]>,
+    iref: Option<&'a [u8]>,
+    iloc: Option<&'a [u8]>,
+    idat: Option<&'a [u8]>,
+}
+
+/// One `infe` entry: an item's ID and type, and for a `mime` item its
+/// content type and encoding.
+struct ItemInfo<'a> {
+    id: u32,
+    kind: [u8; 4],
+    content_type: &'a [u8],
+    content_encoding: &'a [u8],
+}
+
+impl Items<'_> {
+    /// The Exif item describing `primary`, as TIFF from the byte-order
+    /// mark. The item payload starts with a 32-bit offset to the TIFF
+    /// header, past whatever preamble (usually `Exif\0\0`) the writer put
+    /// first.
+    fn exif(&self, file: &[u8], primary: u32) -> Option<Vec<u8>> {
+        let item = self.find(primary, |i| &i.kind == b"Exif")?;
+        let payload = self.payload(file, item)?;
+        let skip = usize::try_from(be32(&payload)?).ok()?;
+        let tiff = payload.get(4usize.checked_add(skip)?..)?;
+        let tiff = tiff.strip_prefix(b"Exif\0\0").unwrap_or(tiff);
+        (tiff.starts_with(b"II*\0") || tiff.starts_with(b"MM\0*")).then(|| tiff.to_vec())
+    }
+
+    /// The XMP item describing `primary`: a `mime` item of type
+    /// `application/rdf+xml`. A content-encoded packet is skipped rather
+    /// than inflated.
+    fn xmp(&self, file: &[u8], primary: u32) -> Option<Vec<u8>> {
+        let item = self.find(primary, |i| {
+            &i.kind == b"mime"
+                && i.content_type == b"application/rdf+xml"
+                && i.content_encoding.is_empty()
+        })?;
+        self.payload(file, item)
+    }
+
+    /// The first item matching `want` that describes `primary`: a `cdsc`
+    /// reference from the item to the primary one, or any matching item
+    /// when the file has no `cdsc` references at all.
+    fn find(&self, primary: u32, want: impl Fn(&ItemInfo<'_>) -> bool) -> Option<u32> {
+        let described = cdsc_references(self.iref.unwrap_or_default());
+        let infos = item_infos(self.iinf?);
+        infos
+            .iter()
+            .filter(|i| want(i))
+            .find(|i| {
+                described.is_empty()
+                    || described
+                        .iter()
+                        .any(|(from, to)| *from == i.id && to.contains(&primary))
+            })
+            .map(|i| i.id)
+    }
+
+    /// The bytes of `item`, its `iloc` extents concatenated.
+    fn payload(&self, file: &[u8], item: u32) -> Option<Vec<u8>> {
+        item_payload(self.iloc?, item, file, self.idat.unwrap_or_default())
+    }
+}
+
+/// `iinf`: the `infe` entries of version 2 and 3, the ones that carry an
+/// item type. Older entries have no type and are skipped.
+fn item_infos(body: &[u8]) -> Vec<ItemInfo<'_>> {
+    let entries_at = if *body.first().unwrap_or(&0) == 0 {
+        6
+    } else {
+        8
+    };
+    let Some(entries) = body.get(entries_at..) else {
+        return Vec::new();
+    };
+    boxes(entries)
+        .filter(|(kind, _)| *kind == b"infe")
+        .filter_map(|(_, infe)| item_info(infe))
+        .collect()
+}
+
+/// One `infe` `FullBox`: version 2 has a 16-bit item ID, version 3 a 32-bit
+/// one, then a protection index and the item type.
+fn item_info(body: &[u8]) -> Option<ItemInfo<'_>> {
+    let version = *body.first()?;
+    let (id, at) = match version {
+        2 => (u32::from(be16(body.get(4..)?)?), 6),
+        3 => (be32(body.get(4..)?)?, 8),
+        _ => return None,
+    };
+    // Skip `item_protection_index`.
+    let kind: [u8; 4] = body.get(at + 2..at + 6)?.try_into().ok()?;
+    let mut rest = body.get(at + 6..)?;
+    // `item_name`, then for `mime` the content type and encoding, each a
+    // NUL-terminated string; a missing trailing string reads as empty.
+    let mut next = || {
+        let end = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
+        let s = &rest[..end];
+        rest = rest.get(end + 1..).unwrap_or_default();
+        s
+    };
+    let _name = next();
+    let (content_type, content_encoding) = if &kind == b"mime" {
+        (next(), next())
+    } else {
+        (&[][..], &[][..])
+    };
+    Some(ItemInfo {
+        id,
+        kind,
+        content_type,
+        content_encoding,
+    })
+}
+
+/// `iref`: every `cdsc` ("content describes") reference, as the describing
+/// item and the items it describes.
+fn cdsc_references(body: &[u8]) -> Vec<(u32, Vec<u32>)> {
+    let Some(&version) = body.first() else {
+        return Vec::new();
+    };
+    let id = |b: &[u8], at: usize| -> Option<(u32, usize)> {
+        if version == 0 {
+            Some((u32::from(be16(b.get(at..)?)?), at + 2))
+        } else {
+            Some((be32(b.get(at..)?)?, at + 4))
+        }
+    };
+    let reference = |b: &[u8]| -> Option<(u32, Vec<u32>)> {
+        let (from, mut at) = id(b, 0)?;
+        let count = be16(b.get(at..)?)?;
+        at += 2;
+        let mut to = Vec::with_capacity(usize::from(count));
+        for _ in 0..count {
+            let (target, next) = id(b, at)?;
+            to.push(target);
+            at = next;
+        }
+        Some((from, to))
+    };
+    boxes(body.get(4..).unwrap_or_default())
+        .filter(|(kind, _)| *kind == b"cdsc")
+        .filter_map(|(_, b)| reference(b))
+        .collect()
+}
+
+/// `iloc`: the bytes of `item`, versions 0 to 2. Construction method 0
+/// reads from the file, 1 from the `idat` box; method 2, item offsets, is
+/// not followed. A zero extent length means "to the end".
+fn item_payload(body: &[u8], item: u32, file: &[u8], idat: &[u8]) -> Option<Vec<u8>> {
+    let version = *body.first()?;
+    let field_sizes = *body.get(4)?;
+    let more = *body.get(5)?;
+    let (offset_size, length_size) = (field_sizes >> 4, field_sizes & 15);
+    let base_offset_size = more >> 4;
+    let index_size = if version == 0 { 0 } else { more & 15 };
+    let mut at = 6;
+    // A 16-bit field, or a 32-bit one where the version widens it.
+    let wide = |at: &mut usize, bits32: bool| -> Option<u32> {
+        let v = if bits32 {
+            be32(body.get(*at..)?)?
+        } else {
+            u32::from(be16(body.get(*at..)?)?)
+        };
+        *at += if bits32 { 4 } else { 2 };
+        Some(v)
+    };
+    // A field whose width in bytes the header declares: 0, 4 or 8.
+    let sized = |at: &mut usize, width: u8| -> Option<u64> {
+        let v = match width {
+            0 => 0,
+            4 => u64::from(be32(body.get(*at..)?)?),
+            8 => be64(body.get(*at..)?)?,
+            _ => return None,
+        };
+        *at += usize::from(width);
+        Some(v)
+    };
+    let items = wide(&mut at, version == 2)?;
+    for _ in 0..items {
+        let id = wide(&mut at, version == 2)?;
+        let method = if version == 0 {
+            0
+        } else {
+            wide(&mut at, false)? & 15
+        };
+        // `data_reference_index`: 0 is "this file", the only one read.
+        let data_reference = wide(&mut at, false)?;
+        let base = sized(&mut at, base_offset_size)?;
+        let extents = wide(&mut at, false)?;
+        let mut out = Vec::new();
+        for _ in 0..extents {
+            sized(&mut at, index_size)?;
+            let offset = sized(&mut at, offset_size)?;
+            let length = sized(&mut at, length_size)?;
+            if id != item {
+                continue;
+            }
+            let source = match (method, data_reference) {
+                (0, 0) => file,
+                (1, _) => idat,
+                _ => return None,
+            };
+            let start = usize::try_from(base.checked_add(offset)?).ok()?;
+            let end = if length == 0 {
+                source.len()
+            } else {
+                start.checked_add(usize::try_from(length).ok()?)?
+            };
+            out.extend_from_slice(source.get(start..end)?);
+        }
+        if id == item {
+            return Some(out);
+        }
+    }
+    None
 }
 
 /// The boxes laid end to end in `data`, as `(type, body)`. Stops at the
@@ -332,6 +628,147 @@ mod tests {
         file
     }
 
+    /// A metadata item for [`heif_with`].
+    struct Item {
+        id: u32,
+        kind: [u8; 4],
+        content_type: &'static str,
+        encoding: &'static str,
+        payload: Vec<u8>,
+    }
+
+    fn exif_item(id: u32, payload: Vec<u8>) -> Item {
+        Item {
+            id,
+            kind: *b"Exif",
+            content_type: "",
+            encoding: "",
+            payload,
+        }
+    }
+
+    fn xmp_item(id: u32, encoding: &'static str, payload: &[u8]) -> Item {
+        Item {
+            id,
+            kind: *b"mime",
+            content_type: "application/rdf+xml",
+            encoding,
+            payload: payload.to_vec(),
+        }
+    }
+
+    /// An Exif item payload: the offset to the TIFF header, the `Exif\0\0`
+    /// preamble it skips, then the TIFF.
+    fn exif_payload(tiff: &[u8]) -> Vec<u8> {
+        let mut p = 6u32.to_be_bytes().to_vec();
+        p.extend_from_slice(b"Exif\0\0");
+        p.extend_from_slice(tiff);
+        p
+    }
+
+    /// A HEIF with `major` as its brand, primary item 1 with an `ispe` of
+    /// 8 x 8, the metadata `items`, `cdsc` references `(from, to)`, and the
+    /// payloads stored in `idat` (construction method 1) or in an `mdat`
+    /// after `meta` (method 0) through an `iloc` of `version`.
+    fn heif_with(
+        major: [u8; 4],
+        items: &[Item],
+        cdsc: &[(u32, u32)],
+        in_idat: bool,
+        version: u8,
+    ) -> Vec<u8> {
+        let wide = version == 2 || items.iter().any(|i| i.id > 0xffff);
+        let id = |v: u32| -> Vec<u8> {
+            if wide {
+                v.to_be_bytes().to_vec()
+            } else {
+                u16::try_from(v).unwrap().to_be_bytes().to_vec()
+            }
+        };
+        let build = |mdat_at: u32| -> Vec<u8> {
+            let mut file = ftyp(major, &[b"mif1", b"miaf"]);
+            // Properties of the primary item, as `heic` writes them.
+            let ipco = bx(*b"ipco", &ispe(8, 8));
+            let mut ipma = 1u32.to_be_bytes().to_vec();
+            ipma.extend_from_slice(&1u16.to_be_bytes());
+            ipma.extend_from_slice(&[1, 0x81]);
+            let iprp = bx(*b"iprp", &[ipco, full(*b"ipma", 0, 0, &ipma)].concat());
+            let pitm = full(*b"pitm", 0, 0, &1u16.to_be_bytes());
+
+            let mut entries = Vec::new();
+            for item in items {
+                let mut e = id(item.id);
+                e.extend_from_slice(&0u16.to_be_bytes());
+                e.extend_from_slice(&item.kind);
+                e.push(0); // empty item_name
+                if &item.kind == b"mime" {
+                    e.extend_from_slice(item.content_type.as_bytes());
+                    e.push(0);
+                    e.extend_from_slice(item.encoding.as_bytes());
+                    e.push(0);
+                }
+                entries.extend_from_slice(&full(*b"infe", if wide { 3 } else { 2 }, 0, &e));
+            }
+            let iinf = if wide {
+                let mut b = u32::try_from(items.len()).unwrap().to_be_bytes().to_vec();
+                b.extend_from_slice(&entries);
+                full(*b"iinf", 1, 0, &b)
+            } else {
+                let mut b = u16::try_from(items.len()).unwrap().to_be_bytes().to_vec();
+                b.extend_from_slice(&entries);
+                full(*b"iinf", 0, 0, &b)
+            };
+
+            let mut refs = Vec::new();
+            for &(from, to) in cdsc {
+                let mut r = id(from);
+                r.extend_from_slice(&1u16.to_be_bytes());
+                r.extend_from_slice(&id(to));
+                refs.extend_from_slice(&bx(*b"cdsc", &r));
+            }
+            let iref = full(*b"iref", u8::from(wide), 0, &refs);
+
+            // offset_size 4, length_size 4, no base offset, no index.
+            let mut iloc = vec![0x44, 0x00];
+            if version == 2 {
+                iloc.extend_from_slice(&u32::try_from(items.len()).unwrap().to_be_bytes());
+            } else {
+                iloc.extend_from_slice(&u16::try_from(items.len()).unwrap().to_be_bytes());
+            }
+            let mut offset = if in_idat { 0 } else { mdat_at };
+            for item in items {
+                iloc.extend_from_slice(&id(item.id));
+                if version > 0 {
+                    iloc.extend_from_slice(&u16::from(in_idat).to_be_bytes());
+                }
+                iloc.extend_from_slice(&0u16.to_be_bytes()); // data_reference_index
+                iloc.extend_from_slice(&1u16.to_be_bytes()); // one extent
+                iloc.extend_from_slice(&offset.to_be_bytes());
+                let len = u32::try_from(item.payload.len()).unwrap();
+                iloc.extend_from_slice(&len.to_be_bytes());
+                offset += len;
+            }
+            let iloc = full(*b"iloc", version, 0, &iloc);
+
+            let payloads: Vec<u8> = items.iter().flat_map(|i| i.payload.clone()).collect();
+            let mut meta = [pitm, iprp, iinf, iref, iloc].concat();
+            if in_idat {
+                meta.extend_from_slice(&bx(*b"idat", &payloads));
+            }
+            file.extend_from_slice(&full(*b"meta", 0, 0, &meta));
+            if !in_idat {
+                file.extend_from_slice(&bx(*b"mdat", &payloads));
+            }
+            file
+        };
+        // The `mdat` payloads start after `meta` and the 8-byte `mdat`
+        // header; the offsets do not change the length, so one dry run
+        // finds them.
+        let dry = build(0);
+        let mdat_at = dry.len() - items.iter().map(|i| i.payload.len()).sum::<usize>();
+        build(u32::try_from(mdat_at).unwrap())
+    }
+
     fn fixture(name: &str) -> Vec<u8> {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures")
@@ -454,5 +891,129 @@ mod tests {
         // A clean aperture wider than the image is clamped, not trusted.
         let h = header(&heic(&[ispe(8, 8), clap(100, 100)])).unwrap();
         assert_eq!((h.width, h.height), (8, 8));
+    }
+
+    #[test]
+    fn read_takes_any_brand_header_only_heic() {
+        let file = heif_with(*b"avif", &[], &[], true, 0);
+        assert_eq!(header(&file), None);
+        let h = read(&file).unwrap();
+        assert_eq!((h.width, h.height), (8, 8));
+        assert_eq!((h.exif, h.xmp), (None, None));
+    }
+
+    #[test]
+    fn exif_and_xmp_items_from_idat_and_from_the_file() {
+        let tiff = crate::exif::tiff_with_orientation(6);
+        for (in_idat, version) in [(true, 1), (false, 0), (false, 1), (true, 2)] {
+            let file = heif_with(
+                *b"avif",
+                &[
+                    exif_item(2, exif_payload(&tiff)),
+                    xmp_item(3, "", b"<x:xmpmeta/>"),
+                ],
+                &[(2, 1), (3, 1)],
+                in_idat,
+                version,
+            );
+            let what = format!("idat {in_idat}, iloc v{version}");
+            let h = read(&file).unwrap_or_else(|| panic!("{what}"));
+            assert_eq!(h.exif.as_deref(), Some(&tiff[..]), "{what}");
+            assert_eq!(h.xmp.as_deref(), Some(&b"<x:xmpmeta/>"[..]), "{what}");
+            // The container rotates a HEIF; the kept tag must not.
+            let meta = h.metadata();
+            assert_eq!(
+                crate::exif::orientation(meta.exif.as_deref().unwrap()),
+                Some(Orientation::Normal),
+                "{what}"
+            );
+        }
+    }
+
+    #[test]
+    fn wide_item_ids_are_read() {
+        let file = heif_with(
+            *b"heic",
+            &[exif_item(
+                0x1_0002,
+                exif_payload(&crate::exif::tiff_with_orientation(1)),
+            )],
+            &[(0x1_0002, 1)],
+            true,
+            2,
+        );
+        assert!(header(&file).unwrap().exif.is_some());
+    }
+
+    #[test]
+    fn only_items_describing_the_primary_count() {
+        let tiff = crate::exif::tiff_with_orientation(1);
+        // The Exif item describes item 7, not the primary item 1.
+        let file = heif_with(
+            *b"avif",
+            &[exif_item(2, exif_payload(&tiff))],
+            &[(2, 7)],
+            true,
+            1,
+        );
+        assert_eq!(read(&file).unwrap().exif, None);
+        // A file with no `cdsc` references at all: the item is taken.
+        let file = heif_with(*b"avif", &[exif_item(2, exif_payload(&tiff))], &[], true, 1);
+        assert!(read(&file).unwrap().exif.is_some());
+    }
+
+    #[test]
+    fn unusable_metadata_is_dropped_not_fatal() {
+        // A compressed XMP packet is not inflated.
+        let file = heif_with(
+            *b"avif",
+            &[xmp_item(3, "deflate", b"xx")],
+            &[(3, 1)],
+            true,
+            1,
+        );
+        assert_eq!(read(&file).unwrap().xmp, None);
+        // An Exif payload whose offset points past its end.
+        let mut bad = 1000u32.to_be_bytes().to_vec();
+        bad.extend_from_slice(b"II*\0");
+        let file = heif_with(*b"avif", &[exif_item(2, bad)], &[(2, 1)], true, 1);
+        assert_eq!(read(&file).unwrap().exif, None);
+        // Not a TIFF after the offset.
+        let file = heif_with(
+            *b"avif",
+            &[exif_item(2, vec![0, 0, 0, 0, b'n', b'o'])],
+            &[(2, 1)],
+            true,
+            1,
+        );
+        assert_eq!(read(&file).unwrap().exif, None);
+        // An `iloc` extent past the end of the file: the header survives.
+        let mut file = heif_with(
+            *b"avif",
+            &[exif_item(2, exif_payload(&[0; 8]))],
+            &[(2, 1)],
+            false,
+            0,
+        );
+        file.truncate(file.len() - 4);
+        let h = read(&file).unwrap();
+        assert_eq!((h.width, h.exif), (8, None));
+    }
+
+    #[test]
+    fn nclx_points_are_read() {
+        let mut colr = b"nclx".to_vec();
+        colr.extend_from_slice(&[0, 12, 0, 13, 0, 6, 0x80]);
+        let h = header(&heic(&[ispe(8, 8), bx(*b"colr", &colr)])).unwrap();
+        assert_eq!(
+            h.nclx,
+            Some(Nclx {
+                primaries: 12,
+                transfer: 13,
+                matrix: 6,
+                full_range: true
+            })
+        );
+        assert_eq!(h.icc, None);
     }
 }

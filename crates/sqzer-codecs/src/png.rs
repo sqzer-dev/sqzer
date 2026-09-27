@@ -1,5 +1,9 @@
 //! PNG via the `png` crate (MIT/Apache). Decoder and a baseline encoder.
 //!
+//! The decoder keeps ICC, EXIF (`eXIf`) and XMP (`iTXt`), wherever in the
+//! file the chunks sit, and applies the EXIF orientation when
+//! `DecodeOpts::apply_orientation` asks for it, as the JPEG decoder does.
+//!
 //! The encoder here is the plain `png` writer with adaptive filtering. It is
 //! correct and fast but not small. On desktop targets the registry uses
 //! [`crate::oxipng`] instead; this one is registered on wasm32, where
@@ -9,7 +13,7 @@
 use std::borrow::Cow;
 
 use sqzer_core::codec::{Decoder, DecoderCaps, Encoder, EncoderCaps, Format, FormatInfo, Tier};
-use sqzer_core::image::{ColorType, Image, Metadata, Samples};
+use sqzer_core::image::{ColorType, Image, Metadata, Orientation, Samples};
 use sqzer_core::params::{DecodeOpts, EncodeParams};
 use sqzer_core::{Error, Result};
 
@@ -61,20 +65,10 @@ impl Decoder for PngDecoder {
         });
         let mut reader = decoder.read_info().map_err(codec_err)?;
 
-        let (width, height, meta) = {
+        let (width, height) = {
             let info = reader.info();
             opts.check_pixels(info.width, info.height)?;
-            let meta = Metadata {
-                icc: info.icc_profile.as_ref().map(|c| c.to_vec()),
-                exif: info.exif_metadata.as_ref().map(|c| c.to_vec()),
-                xmp: info
-                    .utf8_text
-                    .iter()
-                    .find(|t| t.keyword == XMP_KEYWORD)
-                    .and_then(|t| t.get_text().ok())
-                    .map(String::into_bytes),
-            };
-            (info.width, info.height, meta)
+            (info.width, info.height)
         };
 
         let (color_type, bit_depth) = reader.output_color_type();
@@ -94,6 +88,31 @@ impl Decoder for PngDecoder {
         let mut buf = vec![0u8; size];
         let frame = reader.next_frame(&mut buf).map_err(codec_err)?;
         buf.truncate(frame.buffer_size());
+        // `eXIf` and XMP may follow the image data; reading to `IEND`
+        // collects them. The pixels are already in hand, so damage past
+        // them costs the trailing metadata, not the decode.
+        let _ = reader.finish();
+        let meta = {
+            let info = reader.info();
+            Metadata {
+                icc: info.icc_profile.as_ref().map(|c| c.to_vec()),
+                exif: info.exif_metadata.as_ref().map(|c| c.to_vec()),
+                xmp: info
+                    .utf8_text
+                    .iter()
+                    .find(|t| t.keyword == XMP_KEYWORD)
+                    .and_then(|t| t.get_text().ok())
+                    .map(String::into_bytes),
+            }
+        };
+        let orientation = if opts.apply_orientation {
+            meta.exif
+                .as_deref()
+                .and_then(crate::exif::orientation)
+                .unwrap_or(Orientation::Normal)
+        } else {
+            Orientation::Normal
+        };
 
         let samples = match bit_depth {
             png::BitDepth::Eight => Samples::U8(buf),
@@ -109,7 +128,9 @@ impl Decoder for PngDecoder {
             }
         };
 
-        Ok(Image::new(width, height, color, samples)?.with_metadata(meta))
+        Ok(Image::new(width, height, color, samples)?
+            .with_metadata(meta)
+            .apply_orientation(orientation))
     }
 }
 
@@ -280,5 +301,73 @@ mod tests {
         bytes.extend_from_slice(&u32::MAX.to_be_bytes());
         bytes.extend_from_slice(b"tEXt");
         assert!(!has_actl_chunk(&bytes));
+    }
+
+    /// A 2 x 1 RGB PNG whose EXIF says "rotate 90 clockwise".
+    fn rotated_png() -> Vec<u8> {
+        let img = Image::from_u8(2, 1, ColorType::Rgb, vec![10, 20, 30, 40, 50, 60])
+            .unwrap()
+            .with_exif(Some(crate::exif::tiff_with_orientation(6)));
+        let params = EncodeParams {
+            target: sqzer_core::params::Target::Lossless,
+            ..EncodeParams::default()
+        };
+        PngEncoder.encode(&img, &params).unwrap()
+    }
+
+    /// The byte range of the first chunk of type `kind`, length, type, data
+    /// and CRC included.
+    fn chunk(png: &[u8], kind: [u8; 4]) -> std::ops::Range<usize> {
+        let mut at = SIGNATURE.len();
+        loop {
+            let len = u32::from_be_bytes(png[at..at + 4].try_into().unwrap()) as usize;
+            if png[at + 4..at + 8] == kind {
+                return at..at + 12 + len;
+            }
+            at += 12 + len;
+        }
+    }
+
+    #[test]
+    fn exif_orientation_is_applied_and_reset() {
+        let img = PngDecoder
+            .decode(&rotated_png(), &DecodeOpts::default())
+            .unwrap();
+        assert_eq!((img.width(), img.height()), (1, 2));
+        assert_eq!(img.samples().as_u8(), Some(&[10, 20, 30, 40, 50, 60][..]));
+        assert_eq!(
+            crate::exif::orientation(img.exif().unwrap()),
+            Some(Orientation::Normal)
+        );
+    }
+
+    #[test]
+    fn no_auto_orient_keeps_pixels_and_tag() {
+        let opts = DecodeOpts {
+            apply_orientation: false,
+            ..DecodeOpts::default()
+        };
+        let img = PngDecoder.decode(&rotated_png(), &opts).unwrap();
+        assert_eq!((img.width(), img.height()), (2, 1));
+        assert_eq!(
+            crate::exif::orientation(img.exif().unwrap()),
+            Some(Orientation::Rotate90)
+        );
+    }
+
+    #[test]
+    fn exif_after_the_image_data_is_read() {
+        // Move `eXIf` from before `IDAT` to just before `IEND`, where some
+        // writers put it.
+        let png = rotated_png();
+        let exif = chunk(&png, *b"eXIf");
+        let mut moved: Vec<u8> = [&png[..exif.start], &png[exif.end..]].concat();
+        let iend = chunk(&moved, *b"IEND").start;
+        moved.splice(iend..iend, png[exif].iter().copied());
+        assert!(chunk(&moved, *b"eXIf").start > chunk(&moved, *b"IDAT").start);
+
+        let img = PngDecoder.decode(&moved, &DecodeOpts::default()).unwrap();
+        assert_eq!((img.width(), img.height()), (1, 2));
+        assert!(img.exif().is_some());
     }
 }

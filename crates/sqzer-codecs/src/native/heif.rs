@@ -13,10 +13,11 @@
 //! `unsafe`). What they share, and what keeps them conformant, lives in
 //! this module and in [`crate::heif`]: the brand sniff, the container
 //! walk that gives every backend the same displayed size, orientation and
-//! ICC profile, and [`finish`], which turns a backend's samples into an
+//! metadata, and [`finish`], which turns a backend's samples into an
 //! [`Image`] the same way every time. Every backend returns straight
 //! alpha, the container's own rotation and mirroring applied, `clap`
-//! cropped, ICC from the `colr` box, `nclx` ignored.
+//! cropped, ICC from the `colr` box, `nclx` ignored, and the Exif and XMP
+//! items with the Exif orientation tag reset.
 //!
 //! The one asymmetry: `libheif` applies `irot` and `imir` itself, because
 //! it cannot skip them without also skipping `clap`, and the OS decoders
@@ -56,7 +57,7 @@ struct Frame {
 
 /// The shared tail of every HEIC decode: layout, straight alpha, the
 /// container's orientation where the binding left it to us, the ICC
-/// profile from the container.
+/// profile and the Exif and XMP items from the container.
 fn finish(frame: Frame, header: &Header) -> Result<Image> {
     let color = match frame.channels {
         1 => ColorType::Gray,
@@ -72,7 +73,7 @@ fn finish(frame: Frame, header: &Header) -> Result<Image> {
     if !frame.transformed {
         image = image.apply_orientation(header.orientation);
     }
-    Ok(image.with_icc(header.icc.clone()))
+    Ok(image.with_metadata(header.metadata()))
 }
 
 /// The header every backend needs before it decodes. A HEIC whose
@@ -327,6 +328,9 @@ mod tests {
             height: 2,
             orientation,
             icc: Some(vec![9]),
+            nclx: None,
+            exif: Some(crate::exif::tiff_with_orientation(6)),
+            xmp: Some(b"<x/>".to_vec()),
         }
     }
 
@@ -356,6 +360,12 @@ mod tests {
         assert_eq!((os.width(), os.height()), (1, 2));
         assert_eq!(os.samples().as_u8(), Some(&[1, 2][..]));
         assert_eq!(os.icc(), Some(&[9][..]));
+        // The container rotated the picture; the Exif tag must not again.
+        assert_eq!(
+            crate::exif::orientation(os.exif().unwrap()),
+            Some(Orientation::Normal)
+        );
+        assert_eq!(os.xmp(), Some(&b"<x/>"[..]));
         let lib = finish(frame(true), &header).unwrap();
         assert_eq!((lib.width(), lib.height()), (2, 1));
         assert_eq!(lib.icc(), Some(&[9][..]));

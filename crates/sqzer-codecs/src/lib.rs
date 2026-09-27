@@ -24,13 +24,15 @@ compile_error!("the native tier is C code and does not build for wasm32; use the
 
 #[cfg(feature = "avif")]
 pub mod avif;
-#[cfg(any(feature = "jpeg", feature = "webp-lossless"))]
+#[cfg(any(feature = "jpeg", feature = "webp-lossless", feature = "png"))]
 mod exif;
 #[cfg(feature = "exr")]
 pub mod exr;
 #[cfg(feature = "gif")]
 pub mod gif;
-#[cfg(feature = "heif")]
+// The HEIF container walk: the HEIC sniffer and backends, and the AVIF
+// decoder's metadata.
+#[cfg(any(feature = "heif", feature = "avif"))]
 pub mod heif;
 #[cfg(feature = "jpeg")]
 pub mod jpeg;
