@@ -37,7 +37,7 @@
 * **cli:** the `sqzer` binary, ADR-0003: one flat command with the six shapes of ADR-0001 D5. `-f` for one or several formats, `-t` / `-q` / `--lossless` / `--preset` / `--fast` for the target, `-e`, `--subsampling`, `--keep-icc`, `--no-auto-orient`, and `-x codec:key=value` as the only codec-specific path, checked against the backend before any file is touched
 * **cli:** output placement: sibling file by default, `-o` file or directory, `--suffix`, `--template` with `{stem} {ext} {width} {height} {format} {quality} {dir} {name}`, `--in-place` with `--backup`, `-r` mirroring each input tree under `-o`. Output never overwrites input unless `--in-place`, and an output larger than its input is skipped unless `--force`
 * **cli:** paths: an argument that exists is literal, one that does not and has glob characters is expanded in-process and case-insensitively, a trailing quote is stripped, the stem is everything before the last dot. `--files-from` with `-0`, `--include` / `--exclude` under `-r`, `-` for stdin to stdout
-* **cli:** `-j` files in flight, bounded by a decoded-pixel budget of `--max-pixels * jobs / 4` so a folder of huge images cannot exhaust memory. Encoders stay single-threaded
+* **cli:** `-j` files in flight, bounded by a memory budget so a folder of huge images cannot exhaust memory (ADR-0008). Encoders stay single-threaded
 * **cli:** `--json` writes one JSON Lines object per output and nothing else to stdout; `-n` decodes and plans without encoding; `--progress`, `--quiet`, `-v` for search trials, `-vv` for resolved codec options, `--color` with `NO_COLOR`. Exit codes 0, 1 (partial batch), 2 (arguments), 3 (nothing could be done)
 * **cli:** terminal output: every error in clap's own style through one path, so build and argument errors are coloured like file errors; per-file lines with aligned columns, dim directories, bold output names, green or yellow size change; a summary line with counts, bytes and elapsed time after a batch. `anstream` and `anstyle` (MIT OR Apache-2.0, already in the tree through `clap`) handle the terminal check, `NO_COLOR` and Windows VT mode
 * **cli:** a progress bar on stderr, drawn only on a terminal: one overall bar and one spinner per file in flight, coloured by stage (cyan reading and decoding, magenta encoding with the search trial and its score ticking through, green writing). `indicatif` and `console` (MIT)
@@ -78,3 +78,7 @@
 * **cli:** `--list-codecs` prints an unavailable decoder with its reason and `none; needs \`native-heif\`` for an input-only format no feature reads; the JSON listing carries `decoder_features` and, on the decoder, `available` and `reason`
 * **workspace:** three binding crates, `heif-dl`, `heif-imageio` and `heif-wic`, hold the workspace's `unsafe` behind a safe two-call API each; `sqzer-codecs` stays under `forbid(unsafe_code)`. `native-heif` now builds in CI on Windows and on musl (where it registers nothing), and the Windows job lists the Store codec packages the runner has
 * **workspace:** scaffold, feature tiers, CI and the licence allow-list
+
+### Bug Fixes
+
+* **cli:** the `-j` budget reserves estimated memory, not decoded pixels, and is sized from the memory available at start. Seven 24-megapixel photos no longer run the target search at once and exhaust an 8 GB machine; a file over the budget on its own runs alone with a warning

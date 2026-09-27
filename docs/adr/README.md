@@ -10,6 +10,7 @@ One file per decision, numbered, never edited after acceptance. A superseded rec
 0005-heic-through-os-decoders.md        HEIC in release binaries: ImageIO on macOS, WIC on Windows, `libheif` loaded at runtime elsewhere, never linked; what `--list-codecs` has to say
 0006-release-matrix.md                   `cargo-dist` on the six desktop targets, one feature list, `native` as what the target can carry, the installers and the Homebrew tap
 0007-colour-management.md                `moxcms` over `qcms` and `lcms2`; colour before resize; what the default and `--keep-icc` do to samples, profile bytes and the metric
+0008-memory-budget.md                    `-j` bounded by estimated memory, not decoded pixels: per-mode costs, three quarters of available memory through `sysinfo` and the cgroup, capped by the old pixel rule, the oversized-file warning
 ```
 
 Template for new records: copy the headings from `0001` (Context, Decision, Options considered, Trade-offs, Consequences, Action items).

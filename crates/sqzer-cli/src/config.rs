@@ -10,6 +10,7 @@ use sqzer::Sqzer;
 use sqzer::core::codec::Format;
 use sqzer::core::params::{Resize, Target};
 
+use crate::budget::Work;
 use crate::cli::{Args, OUTPUT_FORMATS, format_name};
 use crate::inputs::Input;
 use crate::output::{Placement, Template};
@@ -74,6 +75,8 @@ pub struct Config {
     pub jobs: usize,
     /// `--max-pixels`.
     pub max_pixels: u64,
+    /// What each file goes through, which sizes its memory reservation.
+    pub work: Work,
     /// The feedback flags.
     pub feedback: Feedback,
 }
@@ -115,6 +118,16 @@ pub fn build(args: Args, base: Sqzer) -> Result<Config, Failure> {
         |j| usize::try_from(j).unwrap_or(usize::MAX),
     );
     let max_pixels = sqzer.decode_opts().max_pixels;
+    // A perceptual target searches unless `--fast` takes the seed. A
+    // format picked per image may turn out lossless-only and skip the
+    // search; the estimate stays on the safe side of that.
+    let work = if args.dry_run {
+        Work::Plan
+    } else if matches!(sqzer.params().target, Target::Ssimulacra2(_)) && !args.fast {
+        Work::Search
+    } else {
+        Work::Encode
+    };
 
     let feedback = Feedback {
         json: args.json,
@@ -139,6 +152,7 @@ pub fn build(args: Args, base: Sqzer) -> Result<Config, Failure> {
         dry_run: args.dry_run,
         jobs,
         max_pixels,
+        work,
         feedback,
     })
 }
@@ -375,6 +389,17 @@ mod tests {
         assert_eq!(cfg.sqzer.params().effort, 1);
         let cfg = build_from(&["a.png", "--lossless"]).unwrap();
         assert_eq!(cfg.sqzer.params().target, Target::Lossless);
+    }
+
+    #[test]
+    fn only_a_searched_target_is_costed_as_a_search() {
+        let work = |args: &[&str]| build_from(args).unwrap().work;
+        assert_eq!(work(&["a.png"]), Work::Search);
+        assert_eq!(work(&["a.png", "-t", "80"]), Work::Search);
+        assert_eq!(work(&["a.png", "--fast"]), Work::Encode);
+        assert_eq!(work(&["a.png", "-q", "80"]), Work::Encode);
+        assert_eq!(work(&["a.png", "--lossless"]), Work::Encode);
+        assert_eq!(work(&["a.png", "-n"]), Work::Plan);
     }
 
     #[test]
