@@ -37,6 +37,11 @@
       "path": "docs/adr/0007-colour-management.md",
       "description": "The colour stage: moxcms, the order of the pipeline stages, what keep_icc does",
       "scope": ["crates/sqzer/src/**", "crates/sqzer-metrics/**"]
+    },
+    {
+      "path": "docs/adr/0008-memory-budget.md",
+      "description": "How --jobs is bounded: per-mode memory estimates, three quarters of available memory, the cgroup walk, the oversized-file warning",
+      "scope": ["crates/sqzer-cli/**"]
     }
   ]
 }

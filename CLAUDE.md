@@ -17,11 +17,16 @@ crates/sqzer-metrics   SSIMULACRA2 scoring and the target-quality search
 crates/sqzer           library facade. This is the public API.
 crates/sqzer-cli       the binary, named `sqzer`
 crates/sqzer-wasm      browser build, portable tier only
+crates/sqzer-native-tier  what `native` means per target, features only, no code
+crates/heif-dl         HEIC through a runtime-loaded `libheif`. Holds `unsafe` (ADR-0005)
+crates/heif-imageio    HEIC through ImageIO on macOS. Holds `unsafe`
+crates/heif-wic        HEIC through WIC on Windows. Holds `unsafe`
+crates/sqzer-codecs-agpl  reserved, empty, AGPL. Never a dependency of anything here
 docs/adr               decisions. Add a new numbered file, never edit an accepted one.
 tests/fixtures         small test images, whole folder under 2 MB
 ```
 
-Dependency direction is strictly downward: `core` depends on nothing in the workspace, `codecs` and `metrics` depend on `core`, `sqzer` depends on all three, `cli` and `wasm` depend on `sqzer` only. Do not add a reverse edge.
+Dependency direction is strictly downward: `core` and the three `heif-*` crates depend on nothing in the workspace, `codecs` depends on `core` and the `heif-*` crates, `metrics` on `core`, `native-tier` on `codecs` (to forward features), `sqzer` on `core`, `codecs`, `metrics` and `native-tier`, `cli` and `wasm` on `sqzer` only. Do not add a reverse edge.
 
 ## Codec tiers and the licence line
 
@@ -46,7 +51,7 @@ When a requested output format has no encoder in the current build, return `Erro
 - Metadata is stripped by default. ICC is converted to sRGB unless `keep_icc`. EXIF orientation is applied then removed.
 - Decompression-bomb guard: `DecodeOpts::max_pixels`, default 268 megapixels. Respect it in every decoder.
 - Parallelism is per file, in the CLI, with `rayon`. Encoders get an explicit thread budget. Nothing in `sqzer-core` spawns threads. `rayon` is compiled out on wasm.
-- `#![forbid(unsafe_code)]` is set at the workspace level. Do not add `unsafe`; if a backend needs it, the backend crate has it, not us.
+- `#![forbid(unsafe_code)]` is set at the workspace level. Do not add `unsafe` anywhere else; if a backend needs it, it gets a binding crate of its own with a safe API, the way the three `heif-*` crates do.
 
 ## Commands
 
@@ -81,7 +86,7 @@ Run the full set before declaring a change done. CI runs the same commands plus 
 
 ## Writing style for anything user-facing
 
-Applies to README, docs, rustdoc, CLI help and error messages, changelog, PR descriptions.
+Applies to README, docs, rustdoc, CLI help and error messages, changelog, PR descriptions, `CONTRIBUTING.md`, `SECURITY.md`, the issue forms and the PR template. `LICENSE-*` and `CODE_OF_CONDUCT.md` are verbatim third-party texts: never edit them for style.
 
 - Sentence case headings. Short prose, then a fenced block that carries the detail. Explanation goes in `#` comments above the command, not in a paragraph describing it.
 - Backticks on every identifier, crate name, flag and path.
