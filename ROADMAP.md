@@ -65,7 +65,7 @@ After 0.2, a second browser build over `sqzer-codecs-agpl` that fills the portab
 
 These are decisions, not gaps. The reasoning is in ADR-0001.
 
-- AGPL or GPL codecs in the library or the default binaries, including the imazen `zen*` crates, `jpegxl-rs` and `libimagequant`. The `agpl` tier stays reserved.
+- AGPL or GPL codecs in the library or the default binaries, including the imazen `zen*` crates, `jpegxl-rs` and `libimagequant`. They go only into the separate AGPL build above.
 - `image`'s stock encoders as a backend.
 - A fixed per-format quality as the default. The perceptual target is the product.
 - Our own decoders, encoders, resamplers, colour transforms or metrics.
