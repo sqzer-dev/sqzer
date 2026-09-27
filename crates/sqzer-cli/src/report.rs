@@ -476,6 +476,22 @@ impl Printer {
         self.suspend(|| error_line(message));
     }
 
+    /// A warning line, unless `--quiet`. A multi-line message keeps its
+    /// own indentation after the first line.
+    pub fn warning(&self, message: &str) {
+        if self.feedback.quiet {
+            return;
+        }
+        let _guard = self
+            .lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.suspend(|| {
+            let mut err = anstream::stderr().lock();
+            let _ = writeln!(err, "{} {message}", paint(WARNING, "warning:"));
+        });
+    }
+
     /// One finished output: the JSON line if `--json`, the human line if
     /// progress is on, the error line if it failed. `details` are the
     /// `-vv` lines.

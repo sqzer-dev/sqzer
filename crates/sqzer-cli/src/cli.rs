@@ -235,9 +235,10 @@ pub struct Args {
     pub no_auto_orient: bool,
 
     // ---- Resources
-    /// Files in flight at once. Default: the number of CPUs. Bounded by
-    /// a decoded-pixel budget of --max-pixels times jobs over four, so a
-    /// folder of huge images does not exhaust memory.
+    /// Files in flight at once. Default: the number of CPUs. Also bounded
+    /// by memory: each file reserves an estimate of its peak from its
+    /// dimensions, and files wait while the total would pass three
+    /// quarters of the memory available at start.
     #[arg(short, long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..), help_heading = "Resources")]
     pub jobs: Option<u64>,
 
