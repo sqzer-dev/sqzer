@@ -485,11 +485,15 @@ fn shape_7_list_codecs() {
     assert!(out.contains(jpeg), "{out}");
     let jxl = if native_set::JXL {
         "gamut-jxl (native), lossy and lossless"
+    } else if native_set::NATIVE {
+        native_set::left_out("native-jxl").unwrap()
     } else {
         "none; needs `native-jxl`"
     };
     assert!(out.contains(jxl), "{out}");
-    let heic = if !native_set::HEIC {
+    let heic = if !native_set::HEIC && native_set::NATIVE {
+        native_set::left_out("native-heif").unwrap()
+    } else if !native_set::HEIC {
         "none; needs `native-heif`"
     } else if cfg!(target_os = "macos") {
         "imageio (native"
@@ -642,6 +646,14 @@ fn heic_is_never_unrecognised() {
             "{error}"
         );
         assert!(error.contains("native-heif"), "{error}");
+        // The musl release binary says which archive reads HEIC instead
+        // of pointing back at the releases page.
+        if native_set::NATIVE {
+            assert!(
+                error.contains(native_set::left_out("native-heif").unwrap()),
+                "{error}"
+            );
+        }
     }
 }
 
