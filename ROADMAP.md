@@ -22,7 +22,7 @@ The "Squoosh replacement" is not complete without a page you can drop an image o
 
 ## Resize
 
-Everything past `--max-width` and `--max-height`: crop to a box, pad to a box, scale by a factor, choose the filter, and several widths from one decode for `srcset`. The interface is proposed in [ADR-0009](docs/adr/0009-resize-interface.md), in CSS `object-fit` terms instead of the `rimage` grammar ADR-0003 planned:
+Everything past `--max-width` and `--max-height`: crop to a box, pad to a box, scale by a factor, choose the filter, and several widths from one decode for `srcset`. The interface is settled in [ADR-0009](docs/adr/0009-resize-interface.md), in CSS `object-fit` terms instead of the `rimage` grammar ADR-0003 planned:
 
 ```sh
 sqzer photo.jpg --width 400 --height 400 --fit cover --position top
