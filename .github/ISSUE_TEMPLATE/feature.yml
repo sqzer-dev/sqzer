@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        English is preferred, since the maintainer reads only English. Any language is accepted; if you can, add an English version next to the original. Machine translation is fine.
+        English is preferred; if you can, add an English version next to the original. Machine translation is fine.
 
         Codec requests: `sqzer` only takes permissively licensed backends. AGPL and GPL crates are not an option, so if you have a crate in mind, say which one and its licence.
   - type: textarea
