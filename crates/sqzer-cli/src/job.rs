@@ -10,7 +10,7 @@ use sqzer::core::Decoded;
 use sqzer::core::codec::Format;
 use sqzer::core::params::{Resolved, Target};
 
-use crate::budget::{MemoryBudget, Work};
+use crate::budget::{MemoryBudget, Work, output_pixels};
 use crate::cli::format_name;
 use crate::config::Config;
 use crate::inputs::Input;
@@ -56,8 +56,8 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> Tally {
     let estimate = dimensions.map_or_else(
         || cfg.work.estimate(cfg.max_pixels, cfg.max_pixels),
         |(w, h)| {
-            let out = cfg.sqzer.resize_bounds().fit(w, h).unwrap_or((w, h));
-            cfg.work.estimate(pixels(w, h), pixels(out.0, out.1))
+            let out = output_pixels(cfg.sqzer.resize_bounds(), w, h);
+            cfg.work.estimate(u64::from(w) * u64::from(h), out)
         },
     );
     if let Some((w, h)) = dimensions
@@ -109,10 +109,6 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> Tally {
         ctx.printer.record(&record, &details);
     }
     tally
-}
-
-fn pixels(w: u32, h: u32) -> u64 {
-    u64::from(w) * u64::from(h)
 }
 
 /// The warning for a file whose estimate alone is over the budget. It

@@ -8,11 +8,15 @@
 //! of the file's peak memory, from the header dimensions and the work the
 //! run does, and waits while the reservation would push the running total
 //! over the budget. The budget is three quarters of the memory available
-//! when the run starts. A file whose dimensions cannot be read reserves
-//! the estimate for a whole `--max-pixels` image, so it runs alone.
+//! when the run starts, and never more than the ADR-0003 pixel rule
+//! allowed. A file whose dimensions cannot be read reserves the estimate
+//! for a whole `--max-pixels` image, so it runs alone.
 
+#[cfg(target_os = "linux")]
+use std::path::Path;
 use std::sync::{Condvar, Mutex};
 
+use sqzer::core::params::Resize;
 use sysinfo::System;
 
 /// Bytes per decoded pixel: the samples plus the decoder's scratch.
@@ -53,19 +57,69 @@ impl Work {
     }
 }
 
-/// Memory available to this process now: the system's, or the cgroup's
-/// if that is lower. `None` where the platform does not say.
+/// Pixels the encoder gets from a `w` x `h` header after `resize`. The
+/// header is read before EXIF orientation, which may swap the sides, and
+/// a one-sided bound then fits a different box: the larger of the two.
+pub fn output_pixels(resize: Resize, w: u32, h: u32) -> u64 {
+    let fit = |w, h| {
+        let (w, h) = resize.fit(w, h).unwrap_or((w, h));
+        u64::from(w) * u64::from(h)
+    };
+    fit(w, h).max(fit(h, w))
+}
+
+/// Memory available to this process now: the system's, or the lowest
+/// cgroup headroom above the process if that is lower. `None` where the
+/// platform does not say.
 pub fn available_memory() -> Option<u64> {
     if !sysinfo::IS_SUPPORTED_SYSTEM {
         return None;
     }
     let mut sys = System::new();
     sys.refresh_memory();
-    let host = sys.available_memory();
-    let bytes = sys
-        .cgroup_limits()
-        .map_or(host, |c| c.free_memory.min(host));
+    let mut bytes = sys.available_memory();
+    if let Some(c) = sys.cgroup_limits() {
+        bytes = bytes.min(c.free_memory);
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(own) = std::fs::read_to_string("/proc/self/cgroup")
+        .ok()
+        .and_then(|s| cgroup_headroom(Path::new("/sys/fs/cgroup"), &s))
+    {
+        bytes = bytes.min(own);
+    }
     (bytes > 0).then_some(bytes)
+}
+
+/// The lowest `memory.max` minus `memory.current` over the process's
+/// cgroup v2 and its ancestors, from the contents of `/proc/self/cgroup`.
+/// `sysinfo` reads only the root of the hierarchy, which is the process's
+/// own cgroup inside a container but not in a limited cgroup on the host,
+/// `systemd-run -p MemoryMax=` for one (ADR-0008).
+#[cfg(target_os = "linux")]
+fn cgroup_headroom(root: &Path, proc_cgroup: &str) -> Option<u64> {
+    fn read(dir: &Path, file: &str) -> Option<u64> {
+        std::fs::read_to_string(dir.join(file))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    }
+    let own = proc_cgroup.lines().find_map(|l| l.strip_prefix("0::"))?;
+    let mut dir = root.join(own.trim().trim_start_matches('/'));
+    let mut lowest: Option<u64> = None;
+    loop {
+        // `memory.max` reads `max` where there is no limit, which does not
+        // parse and so does not count.
+        if let (Some(max), Some(current)) = (read(&dir, "memory.max"), read(&dir, "memory.current"))
+        {
+            let free = max.saturating_sub(current);
+            lowest = Some(lowest.map_or(free, |l| l.min(free)));
+        }
+        if dir == root || !dir.pop() {
+            return lowest;
+        }
+    }
 }
 
 /// Shared budget, one per run.
@@ -84,21 +138,21 @@ pub struct Reservation<'a> {
 }
 
 impl MemoryBudget {
-    /// The ADR-0008 rule: three quarters of `available` bytes. Where the
-    /// platform does not report memory, the old pixel rule stands in:
-    /// `max_pixels * jobs / 4` pixels, never less than one image at the
-    /// limit, costed as `work`.
+    /// The ADR-0008 rule: three quarters of `available` bytes, capped by
+    /// the ADR-0003 pixel rule costed as `work`, so a lowered
+    /// `--max-pixels` still admits no more files than it did. The pixel
+    /// rule is `max_pixels * jobs / 4` pixels, never less than one image
+    /// at the limit, and stands alone where the platform does not report
+    /// memory.
     pub fn for_run(available: Option<u64>, max_pixels: u64, jobs: usize, work: Work) -> Self {
-        if let Some(bytes) = available {
-            return Self::new(bytes / 4 * 3);
-        }
         let jobs = u64::try_from(jobs).unwrap_or(u64::MAX);
         let pixels = max_pixels
             .saturating_mul(jobs)
             .checked_div(4)
             .unwrap_or(max_pixels)
             .max(max_pixels);
-        Self::new(work.estimate(pixels, pixels))
+        let by_pixels = work.estimate(pixels, pixels);
+        Self::new(available.map_or(by_pixels, |bytes| (bytes / 4 * 3).min(by_pixels)))
     }
 
     /// A budget of exactly `limit` bytes.
@@ -171,6 +225,61 @@ mod tests {
     fn limit_is_three_quarters_of_available_memory() {
         let b = MemoryBudget::for_run(Some(8_000), 100, 8, Work::Search);
         assert_eq!(b.limit(), 6_000);
+    }
+
+    #[test]
+    fn the_pixel_rule_caps_the_memory_rule() {
+        // --max-pixels 30M and eight jobs admitted two 24-megapixel files
+        // under ADR-0003, and admit no more on a machine with 64 GB free.
+        let b = MemoryBudget::for_run(Some(64_000_000_000), 30_000_000, 8, Work::Search);
+        let file = Work::Search.estimate(24_000_000, 24_000_000);
+        assert_eq!(b.limit(), Work::Search.estimate(60_000_000, 60_000_000));
+        assert!(2 * file <= b.limit() && 3 * file > b.limit());
+    }
+
+    #[test]
+    fn output_pixels_cover_either_orientation() {
+        let one_sided = Resize {
+            max_width: Some(1000),
+            max_height: None,
+        };
+        // A 2000x1000 header rotated to 1000x2000 is encoded whole.
+        assert_eq!(output_pixels(one_sided, 2000, 1000), 2_000_000);
+        assert_eq!(output_pixels(one_sided, 1000, 2000), 2_000_000);
+        assert_eq!(output_pixels(Resize::default(), 30, 20), 600);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cgroup_headroom_is_the_lowest_over_the_ancestors() {
+        let root = std::env::temp_dir().join(format!("sqzer-cgroup-{}", std::process::id()));
+        let leaf = root.join("user.slice/run-1.service");
+        std::fs::create_dir_all(&leaf).unwrap();
+        let write = |dir: &Path, max: &str, current: &str| {
+            std::fs::write(dir.join("memory.max"), max).unwrap();
+            std::fs::write(dir.join("memory.current"), current).unwrap();
+        };
+        write(&root.join("user.slice"), "max\n", "900\n");
+        write(&leaf, "4000\n", "1000\n");
+        assert_eq!(
+            cgroup_headroom(&root, "0::/user.slice/run-1.service\n"),
+            Some(3000)
+        );
+        // A tighter ancestor wins.
+        write(&root.join("user.slice"), "2000\n", "900\n");
+        assert_eq!(
+            cgroup_headroom(&root, "0::/user.slice/run-1.service\n"),
+            Some(1100)
+        );
+        // No limit anywhere, and no v2 line.
+        write(&root.join("user.slice"), "max\n", "900\n");
+        write(&leaf, "max\n", "1000\n");
+        assert_eq!(
+            cgroup_headroom(&root, "0::/user.slice/run-1.service\n"),
+            None
+        );
+        assert_eq!(cgroup_headroom(&root, "12:memory:/x\n"), None);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
