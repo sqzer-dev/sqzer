@@ -4,7 +4,7 @@ Bug reports, fixes, new backends and better defaults are all welcome. `sqzer` is
 
 ## Language
 
-English is preferred for issues, pull requests and discussions, since the maintainer reads only English. Any language is accepted: if you write in another one, add an English version next to the original if you can. Machine translation is fine, and so is imperfect English. Commit messages and code comments are in English.
+English is preferred for issues, pull requests and discussions; if you can, add an English version next to the original. Machine translation is fine, and so is imperfect English. Commit messages and code comments are in English.
 
 ## Before you start
 
