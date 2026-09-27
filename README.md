@@ -235,6 +235,10 @@ cargo run --release -- verify
 
 `tools/calibrate` is its own package, outside the workspace, because `codec-eval` pulls in an AGPL dependency that must not reach anything that ships. [`tools/calibrate/README.md`](tools/calibrate/README.md) has the details.
 
+## Contributing
+
+Issues and pull requests are welcome, in English preferably. [`CONTRIBUTING.md`](CONTRIBUTING.md) has the checks, the licence rules for new dependencies and how PRs are merged. Questions go to [Discussions](https://github.com/sqzer-dev/sqzer/discussions), security reports through [`SECURITY.md`](SECURITY.md).
+
 ## Licence
 
 MIT or Apache-2.0, at your option.

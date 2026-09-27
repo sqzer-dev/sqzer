@@ -12,7 +12,7 @@
   "excludeAuthors": [
     "dependabot[bot]"
   ],
-  "ignorePatterns": "tests/fixtures/pattern-*\ncrates/sqzer-metrics/src/seeds/tables.rs",
+  "ignorePatterns": "tests/fixtures/pattern-*\ncrates/sqzer-metrics/src/seeds/tables.rs\nLICENSE-*\nCODE_OF_CONDUCT.md",
   "instructions": "sqzer is a multi-format image optimizer: a Rust workspace with a codec-free core, backends behind feature flags in three licence tiers, a SSIMULACRA2 target search and a CLI. CLAUDE.md is the rule book and docs/adr holds the decisions; review against them. The project never writes its own decoder, encoder, resampler, colour transform or metric; it adapts mature crates. Prefer fewer, well-chosen dependencies over coverage.",
   "rules": [
     {
@@ -39,7 +39,7 @@
     },
     {
       "id": "dependency-direction",
-      "rule": "`sqzer-core` depends on nothing in the workspace and never on a codec crate, `image` or `zune-image`. `sqzer-codecs` and `sqzer-metrics` depend on `sqzer-core` only; `sqzer` depends on those three; `sqzer-cli` and `sqzer-wasm` depend on `sqzer` only. Flag any reverse edge.",
+      "rule": "`sqzer-core` depends on nothing in the workspace and never on a codec crate, `image` or `zune-image`. `heif-dl`, `heif-imageio` and `heif-wic` depend on nothing in the workspace. `sqzer-codecs` depends on `sqzer-core` and the three `heif-*` crates; `sqzer-metrics` on `sqzer-core`; `sqzer-native-tier` on `sqzer-codecs`, to forward features; `sqzer` on `sqzer-core`, `sqzer-codecs`, `sqzer-metrics` and `sqzer-native-tier`; `sqzer-cli` and `sqzer-wasm` on `sqzer` only. `sqzer-codecs-agpl` is never a dependency of any other crate. Flag any other edge.",
       "scope": [
         "crates/*/Cargo.toml"
       ],
@@ -105,10 +105,14 @@
     },
     {
       "id": "user-facing-prose",
-      "rule": "User-facing text (README, rustdoc, CLI help, error messages, changelog): sentence-case headings, backticks on every identifier and flag, no em dashes, no emoji, no tables, explanation in `#` comments above a command rather than prose around it, uncertainty stated flatly with the next step named.",
+      "rule": "User-facing text (README, rustdoc, CLI help, error messages, changelog, contributor docs, issue forms, PR template): sentence-case headings, backticks on every identifier and flag, no em dashes, no emoji, no tables, explanation in `#` comments above a command rather than prose around it, uncertainty stated flatly with the next step named.",
       "scope": [
         "README.md",
         "CHANGELOG.md",
+        "CONTRIBUTING.md",
+        "SECURITY.md",
+        ".github/ISSUE_TEMPLATE/**",
+        ".github/pull_request_template.md",
         "docs/**",
         "crates/**/*.rs"
       ],
