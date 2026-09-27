@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.1
+
 ### Features
 
 * **codecs:** HEIC input keeps its Exif and XMP items, the Exif orientation tag reset since the container's `irot` and `imir` are what rotate a HEIF
