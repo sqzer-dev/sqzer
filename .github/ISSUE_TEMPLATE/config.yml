@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question
+    url: https://github.com/sqzer-dev/sqzer/discussions/categories/q-a
+    about: How to do something with sqzer. Ask in Discussions, not in issues.
+  - name: Security vulnerability
+    url: https://github.com/sqzer-dev/sqzer/security/advisories/new
+    about: Report privately. See SECURITY.md.
