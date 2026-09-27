@@ -1,9 +1,9 @@
 # ADR-0008: A memory budget for `--jobs`
 
-**Status:** Accepted
+**Status:** Proposed
 **Date:** 2026-09-27
 **Deciders:** Vlad (sole maintainer)
-**Scope:** What bounds the number of files in flight in the CLI. Replaces the decoded-pixel rule of ADR-0003 "Parallelism and memory". Nothing here changes `--jobs`, `--threads` or `--max-pixels` as flags, or the per-file parallelism of ADR-0001 D3.
+**Scope:** What bounds the number of files in flight in the CLI. Adds a memory limit next to the decoded-pixel rule of ADR-0003 "Parallelism and memory", which stays as a second limit. Nothing here changes `--jobs`, `--threads` or `--max-pixels` as flags, or the per-file parallelism of ADR-0001 D3.
 
 ---
 
@@ -43,7 +43,9 @@ At the start of a run the CLI reads the memory available to the process: the sys
 systemd-run --user -p MemoryMax=4G ...     3.21 GB
 ```
 
-The ADR-0003 pixel rule, costed with the estimate of D2, caps the result. A lowered `--max-pixels` has always limited how many files run at once, and a large machine must not admit more than it did: `--max-pixels 30M` with eight jobs still admits two 24-megapixel files. Where no memory figure is available, the pixel rule stands alone, so behaviour there is what it was.
+A cgroup at its limit has zero headroom. That is a reading, not a missing one: the budget is zero bytes and files run one at a time.
+
+The ADR-0003 pixel rule stays as a second limit. Each file reserves its decoded pixels next to its bytes and waits while either total would pass its limit. A lowered `--max-pixels` has always limited how many files run at once, and a large machine must not admit more than it did, however far a resize shrinks the byte estimates: `--max-pixels 30M` with eight jobs still admits two 24-megapixel files. Where no memory figure is available, the byte limit is unbounded and the pixel rule stands alone, so behaviour there is what it was.
 
 ### D2. Each file reserves an estimate of its peak
 
@@ -91,14 +93,14 @@ On an 8 GB machine a folder of 24-megapixel photos now runs one search at a time
 
 ## 5. Consequences
 
-- `PixelBudget` becomes `MemoryBudget` in `crates/sqzer-cli/src/budget.rs`, with `Work`, `output_pixels` and `available_memory`. `Config` gains `work`.
+- `PixelBudget` becomes `MemoryBudget` in `crates/sqzer-cli/src/budget.rs`, reserving a `Cost` of bytes and decoded pixels, with `Work`, `output_pixels` and `available_memory`. `Config` gains `work`.
 - `Printer` gains `warning`.
 - `sysinfo` joins the CLI's dependencies. The library and the wasm build do not change.
 - The `-j` help text, the README's memory paragraph and the changelog describe the new rule.
 
 ## 6. Action items
 
-1. [x] Byte budget, estimate and warning, with unit tests for the limit, the pixel-rule cap, the fallback, the estimate's order, the resize in either orientation and the cgroup walk.
+1. [x] Byte budget, estimate and warning, with unit tests for the limit, zero headroom, the pixel-rule cap under a resize, the fallback, the estimate's order, the resize in either orientation and the cgroup walk.
 2. [x] Verify on the seven HEICs under a 5.5 GiB cap: all seven written, one at a time, 3.5 GB peak. Under a 4 GiB cap each file warns and runs alone, 3.4 GB peak.
 3. [ ] Re-measure the constants when a backend is added or `fast-ssim2` is bumped; the numbers of section 1 are the baseline.
 

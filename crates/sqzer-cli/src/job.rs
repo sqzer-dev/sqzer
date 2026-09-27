@@ -10,7 +10,7 @@ use sqzer::core::Decoded;
 use sqzer::core::codec::Format;
 use sqzer::core::params::{Resolved, Target};
 
-use crate::budget::{MemoryBudget, Work, output_pixels};
+use crate::budget::{Cost, MemoryBudget, Work, output_pixels};
 use crate::cli::format_name;
 use crate::config::Config;
 use crate::inputs::Input;
@@ -53,20 +53,28 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> Tally {
         .registry()
         .probe(&bytes)
         .and_then(|(_, decoder)| decoder.dimensions(&bytes));
-    let estimate = dimensions.map_or_else(
-        || cfg.work.estimate(cfg.max_pixels, cfg.max_pixels),
+    let cost = dimensions.map_or_else(
+        || Cost {
+            bytes: cfg.work.estimate(cfg.max_pixels, cfg.max_pixels),
+            pixels: cfg.max_pixels,
+        },
         |(w, h)| {
+            let pixels = u64::from(w) * u64::from(h);
             let out = output_pixels(cfg.sqzer.resize_bounds(), w, h);
-            cfg.work.estimate(u64::from(w) * u64::from(h), out)
+            Cost {
+                bytes: cfg.work.estimate(pixels, out),
+                pixels,
+            }
         },
     );
+    let estimate = cost.bytes;
     if let Some((w, h)) = dimensions
-        && estimate > ctx.budget.limit()
+        && estimate > ctx.budget.limit().bytes
     {
         ctx.printer
             .warning(&oversized(&name, (w, h), estimate, ctx));
     }
-    let _reservation = ctx.budget.reserve(estimate);
+    let _reservation = ctx.budget.reserve(cost);
 
     if let Some(w) = &worker {
         w.stage(Stage::Decode);
@@ -114,7 +122,7 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> Tally {
 /// The warning for a file whose estimate alone is over the budget. It
 /// still runs, alone, since refusing a file that may well fit is worse.
 fn oversized(name: &str, (w, h): (u32, u32), estimate: u64, ctx: &Ctx<'_>) -> String {
-    let limit = fmt_bytes(ctx.budget.limit());
+    let limit = fmt_bytes(ctx.budget.limit().bytes);
     let need = fmt_bytes(estimate);
     let mut msg = format!(
         "{name}: {w}x{h} needs about {need}, more than the {limit} this run may use; it runs alone"

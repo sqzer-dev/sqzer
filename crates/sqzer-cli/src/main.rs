@@ -129,7 +129,7 @@ fn run(args: Args) -> Result<ExitCode, Failure> {
     let printer = Printer::new(cfg.feedback, resolved.inputs.len() as u64);
 
     let jobs = cfg.jobs.min(resolved.inputs.len()).max(1);
-    let budget = MemoryBudget::for_run(budget::available_memory(), cfg.max_pixels, jobs, cfg.work);
+    let budget = MemoryBudget::for_run(budget::available_memory(), cfg.max_pixels, jobs);
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(jobs)
         .build()

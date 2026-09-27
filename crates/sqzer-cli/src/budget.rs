@@ -1,5 +1,5 @@
-//! The memory budget that bounds `--jobs`, ADR-0008. Replaces the
-//! decoded-pixel budget of ADR-0003 "Parallelism and memory".
+//! The memory budget that bounds `--jobs`, ADR-0008. Adds a byte limit
+//! to the decoded-pixel budget of ADR-0003 "Parallelism and memory".
 //!
 //! A file count alone does not bound memory, and a count of decoded
 //! pixels does not either: the SSIMULACRA2 search holds about 130 bytes
@@ -8,9 +8,10 @@
 //! of the file's peak memory, from the header dimensions and the work the
 //! run does, and waits while the reservation would push the running total
 //! over the budget. The budget is three quarters of the memory available
-//! when the run starts, and never more than the ADR-0003 pixel rule
-//! allowed. A file whose dimensions cannot be read reserves the estimate
-//! for a whole `--max-pixels` image, so it runs alone.
+//! when the run starts. The reservation also counts the file's decoded
+//! pixels against the ADR-0003 rule, and the file waits while either total
+//! would pass its limit. A file whose dimensions cannot be read reserves a
+//! whole `--max-pixels` image, so it runs alone.
 
 #[cfg(target_os = "linux")]
 use std::path::Path;
@@ -69,8 +70,8 @@ pub fn output_pixels(resize: Resize, w: u32, h: u32) -> u64 {
 }
 
 /// Memory available to this process now: the system's, or the lowest
-/// cgroup headroom above the process if that is lower. `None` where the
-/// platform does not say.
+/// cgroup headroom above the process if that is lower, which may be zero.
+/// `None` where the platform does not say.
 pub fn available_memory() -> Option<u64> {
     if !sysinfo::IS_SUPPORTED_SYSTEM {
         return None;
@@ -78,6 +79,9 @@ pub fn available_memory() -> Option<u64> {
     let mut sys = System::new();
     sys.refresh_memory();
     let mut bytes = sys.available_memory();
+    if bytes == 0 {
+        return None;
+    }
     if let Some(c) = sys.cgroup_limits() {
         bytes = bytes.min(c.free_memory);
     }
@@ -88,7 +92,7 @@ pub fn available_memory() -> Option<u64> {
     {
         bytes = bytes.min(own);
     }
-    (bytes > 0).then_some(bytes)
+    Some(bytes)
 }
 
 /// The lowest `memory.max` minus `memory.current` over the process's
@@ -122,83 +126,118 @@ fn cgroup_headroom(root: &Path, proc_cgroup: &str) -> Option<u64> {
     }
 }
 
+/// What one file takes from the budget: its estimated peak bytes, and
+/// its decoded pixels for the ADR-0003 rule that still caps the run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Cost {
+    /// Estimated peak memory, from [`Work::estimate`].
+    pub bytes: u64,
+    /// Decoded pixels, from the header.
+    pub pixels: u64,
+}
+
+impl Cost {
+    fn plus(self, o: Self) -> Self {
+        Self {
+            bytes: self.bytes.saturating_add(o.bytes),
+            pixels: self.pixels.saturating_add(o.pixels),
+        }
+    }
+
+    fn minus(self, o: Self) -> Self {
+        Self {
+            bytes: self.bytes.saturating_sub(o.bytes),
+            pixels: self.pixels.saturating_sub(o.pixels),
+        }
+    }
+
+    fn within(self, limit: Self) -> bool {
+        self.bytes <= limit.bytes && self.pixels <= limit.pixels
+    }
+}
+
 /// Shared budget, one per run.
 #[derive(Debug)]
 pub struct MemoryBudget {
-    limit: u64,
-    used: Mutex<u64>,
+    limit: Cost,
+    used: Mutex<Used>,
     freed: Condvar,
 }
 
-/// A reservation. Dropping it returns the bytes to the budget.
+#[derive(Debug, Default)]
+struct Used {
+    cost: Cost,
+    files: usize,
+}
+
+/// A reservation. Dropping it returns its cost to the budget.
 #[derive(Debug)]
 pub struct Reservation<'a> {
     budget: &'a MemoryBudget,
-    bytes: u64,
+    cost: Cost,
 }
 
 impl MemoryBudget {
-    /// The ADR-0008 rule: three quarters of `available` bytes, capped by
-    /// the ADR-0003 pixel rule costed as `work`, so a lowered
-    /// `--max-pixels` still admits no more files than it did. The pixel
-    /// rule is `max_pixels * jobs / 4` pixels, never less than one image
-    /// at the limit, and stands alone where the platform does not report
-    /// memory.
-    pub fn for_run(available: Option<u64>, max_pixels: u64, jobs: usize, work: Work) -> Self {
+    /// The ADR-0008 rule: three quarters of `available` bytes, and the
+    /// ADR-0003 rule of `max_pixels * jobs / 4` decoded pixels, never less
+    /// than one image at the limit, so a lowered `--max-pixels` admits no
+    /// more files than it did. Where the platform does not report memory,
+    /// the pixel rule stands alone.
+    pub fn for_run(available: Option<u64>, max_pixels: u64, jobs: usize) -> Self {
         let jobs = u64::try_from(jobs).unwrap_or(u64::MAX);
         let pixels = max_pixels
             .saturating_mul(jobs)
             .checked_div(4)
             .unwrap_or(max_pixels)
             .max(max_pixels);
-        let by_pixels = work.estimate(pixels, pixels);
-        Self::new(available.map_or(by_pixels, |bytes| (bytes / 4 * 3).min(by_pixels)))
+        Self::new(Cost {
+            bytes: available.map_or(u64::MAX, |b| b / 4 * 3),
+            pixels,
+        })
     }
 
-    /// A budget of exactly `limit` bytes.
-    pub fn new(limit: u64) -> Self {
+    /// A budget of exactly `limit`.
+    pub fn new(limit: Cost) -> Self {
         Self {
             limit,
-            used: Mutex::new(0),
+            used: Mutex::new(Used::default()),
             freed: Condvar::new(),
         }
     }
 
-    /// Bytes the budget holds.
-    pub fn limit(&self) -> u64 {
+    /// What the budget holds.
+    pub fn limit(&self) -> Cost {
         self.limit
     }
 
-    /// Bytes reserved right now.
+    /// What is reserved right now.
     #[cfg(test)]
-    pub fn used(&self) -> u64 {
-        *self
-            .used
+    pub fn used(&self) -> Cost {
+        self.used
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .cost
     }
 
-    /// Wait until `bytes` fit, then reserve them. A reservation larger
-    /// than the whole budget is granted as soon as nothing else is
-    /// running, so a single oversized input still proceeds (and is then
-    /// refused by the decoder's own `max_pixels` check if it is over
-    /// that, not here).
-    pub fn reserve(&self, bytes: u64) -> Reservation<'_> {
+    /// Wait until `cost` fits on both counts, then reserve it. A
+    /// reservation larger than the whole budget is granted as soon as no
+    /// other file holds one, so a single oversized input still proceeds
+    /// (and is then refused by the decoder's own `max_pixels` check if it
+    /// is over that, not here).
+    pub fn reserve(&self, cost: Cost) -> Reservation<'_> {
         let mut used = self
             .used
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        while *used > 0 && used.saturating_add(bytes) > self.limit {
+        while used.files > 0 && !used.cost.plus(cost).within(self.limit) {
             used = self
                 .freed
                 .wait(used)
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
-        *used = used.saturating_add(bytes);
-        Reservation {
-            budget: self,
-            bytes,
-        }
+        used.cost = used.cost.plus(cost);
+        used.files += 1;
+        Reservation { budget: self, cost }
     }
 }
 
@@ -209,7 +248,8 @@ impl Drop for Reservation<'_> {
             .used
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *used = used.saturating_sub(self.bytes);
+        used.cost = used.cost.minus(self.cost);
+        used.files -= 1;
         drop(used);
         self.budget.freed.notify_all();
     }
@@ -223,18 +263,35 @@ mod tests {
 
     #[test]
     fn limit_is_three_quarters_of_available_memory() {
-        let b = MemoryBudget::for_run(Some(8_000), 100, 8, Work::Search);
-        assert_eq!(b.limit(), 6_000);
+        let b = MemoryBudget::for_run(Some(8_000), 100, 8);
+        assert_eq!(b.limit().bytes, 6_000);
+        // A cgroup at its limit is no headroom, not an unknown.
+        assert_eq!(MemoryBudget::for_run(Some(0), 100, 8).limit().bytes, 0);
     }
 
     #[test]
     fn the_pixel_rule_caps_the_memory_rule() {
         // --max-pixels 30M and eight jobs admitted two 24-megapixel files
-        // under ADR-0003, and admit no more on a machine with 64 GB free.
-        let b = MemoryBudget::for_run(Some(64_000_000_000), 30_000_000, 8, Work::Search);
-        let file = Work::Search.estimate(24_000_000, 24_000_000);
-        assert_eq!(b.limit(), Work::Search.estimate(60_000_000, 60_000_000));
-        assert!(2 * file <= b.limit() && 3 * file > b.limit());
+        // under ADR-0003, and admit no more on a machine with 64 GB free,
+        // however far a resize shrinks their byte estimates.
+        let b = MemoryBudget::for_run(Some(64_000_000_000), 30_000_000, 8);
+        assert_eq!(b.limit().pixels, 60_000_000);
+        let file = Cost {
+            bytes: Work::Search.estimate(24_000_000, 100_000),
+            pixels: 24_000_000,
+        };
+        let peak = AtomicU64::new(0);
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                s.spawn(|| {
+                    let r = b.reserve(file);
+                    peak.fetch_max(b.used().pixels, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(20));
+                    drop(r);
+                });
+            }
+        });
+        assert_eq!(peak.load(Ordering::SeqCst), 48_000_000);
     }
 
     #[test]
@@ -284,12 +341,17 @@ mod tests {
 
     #[test]
     fn without_a_memory_reading_the_pixel_rule_stands_in() {
-        let per_pixel = Work::Encode.estimate(1, 1);
-        let limit = |max, jobs| MemoryBudget::for_run(None, max, jobs, Work::Encode).limit();
-        assert_eq!(limit(100, 8), 200 * per_pixel);
-        assert_eq!(limit(100, 1), 100 * per_pixel);
-        assert_eq!(limit(100, 4), 100 * per_pixel);
-        assert_eq!(limit(u64::MAX, 8), u64::MAX);
+        let limit = |max, jobs| MemoryBudget::for_run(None, max, jobs).limit();
+        assert_eq!(
+            limit(100, 8),
+            Cost {
+                bytes: u64::MAX,
+                pixels: 200
+            }
+        );
+        assert_eq!(limit(100, 1).pixels, 100);
+        assert_eq!(limit(100, 4).pixels, 100);
+        assert_eq!(limit(u64::MAX, 8).pixels, u64::MAX);
     }
 
     #[test]
@@ -318,34 +380,75 @@ mod tests {
 
     #[test]
     fn reservations_add_up_and_release_on_drop() {
-        let b = MemoryBudget::new(100);
-        let a = b.reserve(60);
-        assert_eq!(b.used(), 60);
-        let c = b.reserve(30);
-        assert_eq!(b.used(), 90);
+        let bytes = |bytes| Cost { bytes, pixels: 1 };
+        let b = MemoryBudget::new(Cost {
+            bytes: 100,
+            pixels: 100,
+        });
+        let a = b.reserve(bytes(60));
+        assert_eq!(
+            b.used(),
+            Cost {
+                bytes: 60,
+                pixels: 1
+            }
+        );
+        let c = b.reserve(bytes(30));
+        assert_eq!(
+            b.used(),
+            Cost {
+                bytes: 90,
+                pixels: 2
+            }
+        );
         drop(a);
-        assert_eq!(b.used(), 30);
+        assert_eq!(
+            b.used(),
+            Cost {
+                bytes: 30,
+                pixels: 1
+            }
+        );
         drop(c);
-        assert_eq!(b.used(), 0);
+        assert_eq!(b.used(), Cost::default());
     }
 
     #[test]
     fn an_oversized_reservation_proceeds_when_alone() {
-        let b = MemoryBudget::new(10);
-        let r = b.reserve(1000);
-        assert_eq!(b.used(), 1000);
+        let b = MemoryBudget::new(Cost {
+            bytes: 10,
+            pixels: 10,
+        });
+        let r = b.reserve(Cost {
+            bytes: 1000,
+            pixels: 1000,
+        });
+        assert_eq!(b.used().bytes, 1000);
         drop(r);
+        // With no headroom at all, files still run, one at a time.
+        let b = MemoryBudget::new(Cost::default());
+        drop(b.reserve(Cost {
+            bytes: 1,
+            pixels: 1,
+        }));
+        assert_eq!(b.used(), Cost::default());
     }
 
     #[test]
     fn a_second_large_reservation_waits_for_the_first() {
-        let b = MemoryBudget::new(100);
+        let b = MemoryBudget::new(Cost {
+            bytes: 100,
+            pixels: u64::MAX,
+        });
         let peak = AtomicU64::new(0);
         std::thread::scope(|s| {
             for _ in 0..4 {
                 s.spawn(|| {
-                    let r = b.reserve(60);
-                    let now = b.used();
+                    let r = b.reserve(Cost {
+                        bytes: 60,
+                        pixels: 1,
+                    });
+                    let now = b.used().bytes;
                     peak.fetch_max(now, Ordering::SeqCst);
                     std::thread::sleep(Duration::from_millis(20));
                     drop(r);
@@ -354,6 +457,6 @@ mod tests {
         });
         // Two 60s never fit in 100, so at most one was ever reserved.
         assert_eq!(peak.load(Ordering::SeqCst), 60);
-        assert_eq!(b.used(), 0);
+        assert_eq!(b.used(), Cost::default());
     }
 }
