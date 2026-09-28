@@ -2,6 +2,7 @@
 
 **Status:** Accepted
 **Superseded by:** ADR-0008 for the `-j` budget of "Parallelism and memory", which gains a memory limit
+**Superseded by:** ADR-0009 for the "Resize" section: named flags in CSS `object-fit` terms instead of `rimage`'s `--resize` grammar
 **Date:** 2026-09-07
 **Deciders:** Vlad (sole maintainer)
 **Scope:** The full grammar of the `sqzer` binary. ADR-0001 D5 fixed the six command shapes, the exit codes and `--list-codecs`; this record keeps all of that and fills in everything around it: flag names, output placement, path handling, parallelism, feedback channels, and the migration path for `rimage` users. Nothing here changes D4 (defaults policy) or D7 (metadata policy). Closes ADR-0001 action item 7 when accepted.
