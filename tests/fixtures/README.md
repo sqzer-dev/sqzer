@@ -61,6 +61,17 @@ pattern-10bit.avif        10-bit 4:2:0, BT.709, full range, quantizer 40, speed 
 pattern-gray.avif         8-bit monochrome, full range
 pattern-rgba.avif         ravif q90, alpha q90, speed 8 (4:4:4 plus alpha item)
 
+# AVIF container properties: avifenc 1.4.2 (libaom 3.15.1), 8-bit 4:4:4,
+# `avifenc -q 90 -s 6 -y 444 -d 8 -j 1`, from the pattern as a PNG
+# (`magick pattern-rgb.ppm pattern.png`)
+pattern-rot90.avif        the pattern turned 270 degrees, `--irot 3`: displays upright
+pattern-mirror.avif       the pattern mirrored left to right, `--imir 1`
+pattern-icc.avif          `--icc` with the Display P3 profile of pattern-icc.jpg
+pattern-p3.avif           `--cicp 12/13/6`: Display P3 by code points, no ICC
+pattern-meta.avif         `--exif` with the EXIF of pattern-meta.jpg, Orientation set
+                          to 6, `--xmp` with its XMP, and `--irot 0` so avifenc does
+                          not turn the tag into a rotation: the container says upright
+
 # HEIC: libheif 1.19.8 + x265 4.1 through libheif-rs 3.0.0 (x265 is GPL, used only
 # as a tool; the files are data). All 8-bit 4:2:0, quality 92, brand `heic`. Every
 # file is coded as 64 x 64 with a `clap` box cropping it to the pattern.

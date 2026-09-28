@@ -4,13 +4,6 @@ What comes next for `sqzer`, roughly in order. `sqzer` is maintained by one pers
 
 Want to help with an item? Open an issue or a discussion first, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-## 0.1.1: decoder fixes
-
-Two decoders drop information the rest of the pipeline expects to have.
-
-- AVIF input ignores the ICC profile, the rotation (`irot`, `imir`) and the EXIF and XMP items, because `avif-parse` does not expose them. A wide-gamut or rotated AVIF comes out wrong even with `--keep-icc` or `--keep-metadata`. AVIF shares its container with HEIC, and the HEIC walker in `sqzer-codecs` already reads `irot`, `imir` and `colr` in safe Rust, so the plan is to reuse it; the EXIF and XMP items are new work.
-- PNG input keeps its EXIF but does not apply the orientation stored in it.
-
 ## 0.2: in the browser
 
 The "Squoosh replacement" is not complete without a page you can drop an image on (ADR-0001 item 10).

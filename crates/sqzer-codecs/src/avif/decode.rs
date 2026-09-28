@@ -5,11 +5,20 @@
 //! module is `cfg`'d out there and the `avif` feature adds only the encoder
 //! to the WASM build (ADR-0001 D6 names this as the accepted gap).
 //!
+//! `avif-parse` does not surface the `colr` box, `irot` and `imir` or the
+//! Exif and XMP items, so those come from the HEIF container walk in
+//! [`crate::heif`] that the HEIC backends share:
+//! - `irot` and `imir` are applied, always, as for HEIC: they are part of
+//!   the picture's geometry, not a hint like an EXIF tag.
+//! - An ICC profile from `colr` is attached. Without one, primaries and a
+//!   transfer curve other than sRGB, from an `nclx` box or else the AV1
+//!   sequence header, become an ICC profile built with `moxcms`, so the
+//!   colour stage converts a Display P3 or BT.2020 file like a tagged one.
+//!   PQ and HLG get no profile: there is no tone mapping (ADR-0007).
+//! - The Exif and XMP items are attached, the Exif orientation tag reset.
+//!
 //! Known limits of this backend:
-//! - `avif-parse` does not surface the `colr` box, `irot`/`imir` or the
-//!   Exif item, so ICC profiles, wide-gamut primaries and orientation are
-//!   ignored. Samples are returned as sRGB with the matrix coefficients and
-//!   range the AV1 sequence header declares.
+//! - A `clap` crop is not applied; the full coded frame is returned.
 //! - Animated files (`avis`) yield their first frame.
 //! - Decoding is single-threaded on the pure-Rust paths; assembly is
 //!   compiled out so no `nasm` is needed.
@@ -21,7 +30,7 @@ use re_rav1d::dav1d::{
     pixel,
 };
 use sqzer_core::codec::{Decoder, DecoderCaps, Format, FormatInfo, Tier};
-use sqzer_core::image::{ColorType, Image, Samples};
+use sqzer_core::image::{ColorType, Image, Orientation, Samples};
 use sqzer_core::params::DecodeOpts;
 use sqzer_core::{Error, Result};
 use yuv::{YuvGrayImage, YuvPlanarImage, YuvRange, YuvStandardMatrix};
@@ -65,7 +74,10 @@ impl Decoder for AvifDecoder {
         self.probe(bytes)?;
         let data = avif_parse::read_avif(&mut Cursor::new(bytes)).ok()?;
         let meta = data.primary_item_metadata().ok()?;
-        Some((meta.max_frame_width.get(), meta.max_frame_height.get()))
+        let (w, h) = (meta.max_frame_width.get(), meta.max_frame_height.get());
+        // The displayed size: a quarter turn swaps the axes.
+        let turned = crate::heif::read(bytes).is_some_and(|h| h.orientation.swaps_axes());
+        Some(if turned { (h, w) } else { (w, h) })
     }
 
     fn decode(&self, bytes: &[u8], opts: &DecodeOpts) -> Result<Image> {
@@ -76,10 +88,18 @@ impl Decoder for AvifDecoder {
         let color = decode_av1(&data.primary_item)?;
         let (width, height) = (color.width(), color.height());
         opts.check_pixels(width, height)?;
+        let bitstream = (
+            primaries_code(color.color_primaries()),
+            transfer_code(color.transfer_characteristic()),
+        );
         let (color_type, samples) = to_rgb(&color)?;
 
         let Some(alpha_obu) = &data.alpha_item else {
-            return Image::new(width, height, color_type, samples);
+            return finish(
+                Image::new(width, height, color_type, samples)?,
+                bytes,
+                bitstream,
+            );
         };
         let alpha = decode_av1(alpha_obu)?;
         if (alpha.width(), alpha.height()) != (width, height) {
@@ -111,7 +131,110 @@ impl Decoder for AvifDecoder {
             }
             (Samples::F32(_), _) | (_, Samples::F32(_)) => unreachable!("AV1 has no float"),
         };
-        Image::new(width, height, with_alpha, samples)
+        finish(
+            Image::new(width, height, with_alpha, samples)?,
+            bytes,
+            bitstream,
+        )
+    }
+}
+
+/// What the container adds to the decoded picture: its metadata, a
+/// profile for primaries other than sRGB, and its rotation and mirroring.
+/// `bitstream` is the AV1 sequence header's primaries and transfer, the
+/// fallback when the container has no `colr` box.
+fn finish(image: Image, bytes: &[u8], bitstream: (u16, u16)) -> Result<Image> {
+    let header = crate::heif::read(bytes);
+    let mut meta = header
+        .as_ref()
+        .map(crate::heif::Header::metadata)
+        .unwrap_or_default();
+    if meta.icc.is_none() && matches!(image.color(), ColorType::Rgb | ColorType::Rgba) {
+        let (primaries, transfer) = header
+            .as_ref()
+            .and_then(|h| h.nclx)
+            .map_or(bitstream, |n| (n.primaries, n.transfer));
+        meta.icc = cicp_profile(primaries, transfer)?;
+    }
+    let orientation = header.map_or(Orientation::Normal, |h| h.orientation);
+    Ok(image.with_metadata(meta).apply_orientation(orientation))
+}
+
+/// An ICC profile for colour code points (ITU-T H.273) other than sRGB,
+/// or `None` when sRGB describes them or no profile can: unspecified or
+/// BT.709 primaries with an SDR camera or sRGB curve are sRGB, as every
+/// browser treats them, and PQ, HLG and the log curves have no ICC curve.
+fn cicp_profile(primaries: u16, transfer: u16) -> Result<Option<Vec<u8>>> {
+    use moxcms::{
+        CicpColorPrimaries, CicpProfile, ColorProfile, MatrixCoefficients, TransferCharacteristics,
+    };
+    // Primaries with chromaticities `moxcms` knows.
+    const PRIMARIES: [u16; 10] = [1, 4, 5, 6, 7, 8, 9, 11, 12, 22];
+    // SDR curves with an ICC equivalent; 2 (unspecified) reads as sRGB.
+    const TRANSFERS: [u16; 9] = [1, 4, 5, 6, 7, 8, 13, 14, 15];
+    // What sRGB already describes.
+    const SRGB_LIKE: [u16; 5] = [1, 6, 13, 14, 15];
+
+    let primaries = if primaries == 2 { 1 } else { primaries };
+    let transfer = if transfer == 2 { 13 } else { transfer };
+    if !PRIMARIES.contains(&primaries) || !TRANSFERS.contains(&transfer) {
+        return Ok(None);
+    }
+    if primaries == 1 && SRGB_LIKE.contains(&transfer) {
+        return Ok(None);
+    }
+    let code = |v: u16| u8::try_from(v).map_err(codec_err);
+    let profile = ColorProfile::new_from_cicp(CicpProfile {
+        color_primaries: CicpColorPrimaries::try_from(code(primaries)?).map_err(codec_err)?,
+        transfer_characteristics: TransferCharacteristics::try_from(code(transfer)?)
+            .map_err(codec_err)?,
+        // Unused for an RGB profile.
+        matrix_coefficients: MatrixCoefficients::Bt709,
+        full_range: true,
+    });
+    if profile.red_trc.is_none() {
+        return Ok(None);
+    }
+    profile.encode().map(Some).map_err(codec_err)
+}
+
+/// The H.273 code point of the sequence header's primaries.
+fn primaries_code(p: pixel::ColorPrimaries) -> u16 {
+    use pixel::ColorPrimaries as P;
+    match p {
+        P::BT709 => 1,
+        P::BT470M => 4,
+        P::BT470BG => 5,
+        P::ST240M => 7,
+        P::Film => 8,
+        P::BT2020 => 9,
+        P::ST428 => 10,
+        P::P3DCI => 11,
+        P::P3Display => 12,
+        P::Tech3213 => 22,
+        _ => 2,
+    }
+}
+
+/// The H.273 code point of the sequence header's transfer curve.
+fn transfer_code(t: pixel::TransferCharacteristic) -> u16 {
+    use pixel::TransferCharacteristic as T;
+    match t {
+        T::BT1886 => 1,
+        T::BT470M => 4,
+        T::BT470BG => 5,
+        T::ST170M => 6,
+        T::ST240M => 7,
+        T::Linear => 8,
+        T::Logarithmic100 => 9,
+        T::Logarithmic316 => 10,
+        T::SRGB => 13,
+        T::BT2020Ten => 14,
+        T::BT2020Twelve => 15,
+        T::PerceptualQuantizer => 16,
+        T::ST428 => 17,
+        T::HybridLogGamma => 18,
+        _ => 2,
     }
 }
 
@@ -444,6 +567,33 @@ mod tests {
         }
         b.extend_from_slice(b"trailing bytes of the next box");
         b
+    }
+
+    #[test]
+    fn code_points_other_than_srgb_become_a_profile() {
+        use moxcms::ColorProfile;
+        // sRGB and what browsers read as sRGB: no profile.
+        for (p, t) in [(1, 13), (1, 1), (1, 6), (2, 2), (1, 2), (2, 13)] {
+            assert_eq!(cicp_profile(p, t).unwrap(), None, "{p}/{t}");
+        }
+        // PQ, HLG and log curves: no ICC equivalent, no tone mapping.
+        for (p, t) in [(9, 16), (9, 18), (1, 9)] {
+            assert_eq!(cicp_profile(p, t).unwrap(), None, "{p}/{t}");
+        }
+        // Display P3 with the sRGB curve: P3 colorants.
+        let icc = cicp_profile(12, 13).unwrap().expect("P3 profile");
+        let ours = ColorProfile::new_from_slice(&icc)
+            .unwrap()
+            .colorant_matrix();
+        let p3 = ColorProfile::new_display_p3().colorant_matrix();
+        for (a, b) in ours.v.iter().flatten().zip(p3.v.iter().flatten()) {
+            assert!((a - b).abs() < 1e-3, "{:?} vs {:?}", ours.v, p3.v);
+        }
+        // sRGB primaries with a linear curve still need a profile.
+        assert!(cicp_profile(1, 8).unwrap().is_some());
+        // The sequence header's enums map back to their code points.
+        assert_eq!(primaries_code(pixel::ColorPrimaries::P3Display), 12);
+        assert_eq!(transfer_code(pixel::TransferCharacteristic::SRGB), 13);
     }
 
     #[test]
