@@ -83,8 +83,8 @@ pub struct Record {
     /// Output format, as `-f` spells it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<&'static str>,
-    /// Width of the output: `width`, unless the resize stage scaled the
-    /// image down.
+    /// Width of the output: `width` after the resize stage, a contain
+    /// fit's padding included.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_width: Option<u32>,
     /// Height of the output.
@@ -126,6 +126,10 @@ pub struct Record {
     /// Every trial in order.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trials: Option<Vec<Trial>>,
+    /// What a dry run's resize crops or pads, for the human line only:
+    /// `crop 600x600 at 100,0`. JSON carries the output size alone.
+    #[serde(skip)]
+    pub resize_note: Option<String>,
 }
 
 impl Record {
@@ -654,6 +658,9 @@ impl Printer {
                     && (Some(w), Some(h)) != (r.width, r.height)
                 {
                     dims = format!("{dims} -> {w}x{h}");
+                }
+                if let Some(note) = &r.resize_note {
+                    dims = format!("{dims} {note}");
                 }
                 let alpha = if r.alpha == Some(true) { " alpha" } else { "" };
                 let output = path_cell(r.output.as_deref().unwrap_or("-"), NAME, 0);

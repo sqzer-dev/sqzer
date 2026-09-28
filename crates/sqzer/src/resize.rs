@@ -144,8 +144,10 @@ pub fn pad(image: &Image, canvas: &Canvas, alpha: bool) -> Result<Image> {
         Samples::U8(v) => Samples::U8(layout.place(v, bg, u8::MAX)),
         Samples::U16(v) => Samples::U16(layout.place(v, bg.map(|c| u16::from(c) * 257), u16::MAX)),
         Samples::F32(v) => {
-            let [r, g, b, a] = bg.map(|c| f32::from(c) / 255.0);
-            let linear = [srgb_to_linear(r), srgb_to_linear(g), srgb_to_linear(b), a];
+            let unit = bg.map(|c| f32::from(c) / 255.0);
+            let mut linear = unit.map(srgb_to_linear);
+            // Alpha is a fraction, not an encoded value.
+            linear[3] = unit[3];
             Samples::F32(layout.place(v, linear, 1.0))
         }
     };
@@ -165,12 +167,11 @@ impl Layout<'_> {
     /// The canvas filled with `bg`, RGBA, and the source copied in at its
     /// offset. Grey is spread to RGB, missing alpha is `opaque`.
     fn place<T: Copy>(&self, src: &[T], bg: [T; 4], opaque: T) -> Vec<T> {
-        let [r, g, b, a] = bg;
         let fill: &[T] = match self.dst {
-            ColorType::Gray => &[r],
-            ColorType::GrayAlpha => &[r, a],
-            ColorType::Rgb => &[r, g, b],
-            ColorType::Rgba => &[r, g, b, a],
+            ColorType::Gray => &bg[..1],
+            ColorType::GrayAlpha => &[bg[0], bg[3]],
+            ColorType::Rgb => &bg[..3],
+            ColorType::Rgba => &bg,
         };
         let (sc, dc) = (self.src.channels(), self.dst.channels());
         let (w, h) = (self.size.0 as usize, self.size.1 as usize);

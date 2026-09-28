@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Features
+
+* **cli:** resize flags of ADR-0009: `--width` and `--height` with `--fit inside|cover|contain|fill` in CSS `object-fit` terms, `--position` for where cover crops and contain places the image, `--background` for the padding of contain, `--scale 50%`, `--enlarge` to allow scaling up, and `--filter` (`lanczos3`, `mitchell`, `catmull-rom`, `bilinear`, `box`, `nearest`). `--max-width` and `--max-height` behave as before
+* **cli:** `--width 480,960,1600` writes one output per width and format from one decode, named `photo-480w.avif` and so on for `srcset`, each width searched on its own. Widths that come out the same size are refused before anything is encoded
+* **cli:** a dry run shows what a resize crops or pads, `48x32 -> 16x16 crop 32x32 at 0,0`
+* **cli:** the `rimage` hint translates `--resize` specs into the new flags
+* **core:** `Resize` is the full request of ADR-0009 (`size`, `fit`, `position`, `background`, `enlarge`, `filter`) and `Resize::fit` returns a `Geometry` with the crop and the canvas. `Resize::inside` builds the old bounds. `Decoded` gains `canvas`, the padding a contain fit still owes. Both are breaking changes for library callers that build these structs
+* **sqzer:** `Sqzer::transform` splits into `Sqzer::prepare`, once per input, and `Sqzer::resize_image`, once per size from a borrowed image. `Sqzer::encode` pads a contain fit with the background its encoder calls for: transparent where it takes alpha, white where it does not
+
+### Bug Fixes
+
+* **cli:** `-f png,png`, and a `--template` without `{ext}` or `{format}` under several `-f` formats, are argument errors instead of writing one file over another
+
 ## 0.1.1
 
 ### Features

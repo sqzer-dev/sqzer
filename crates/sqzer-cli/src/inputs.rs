@@ -256,24 +256,83 @@ pub fn rimage_hint(argv: &[String]) -> Option<String> {
     if Path::new(first).exists() {
         return None;
     }
-    let rest: Vec<String> = argv[1..]
-        .iter()
-        .map(|a| match a.as_str() {
-            "-d" => "-o".to_string(),
-            "-s" => "--suffix".to_string(),
-            "-t" => "-j".to_string(),
-            "--quantization" => "--codec-opt png:colors=".to_string(),
-            other => other.to_string(),
-        })
-        .collect();
+    let mut rest: Vec<String> = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
+    let mut words = argv[1..].iter();
+    while let Some(a) = words.next() {
+        let spec = match a.strip_prefix("--resize=") {
+            Some(v) => Some(v.to_string()),
+            None if a == "--resize" => words.next().cloned(),
+            None => None,
+        };
+        if let Some(spec) = spec {
+            match rimage_resize(&spec) {
+                Some(flags) => rest.push(flags),
+                None => notes.push(format!("--resize {spec} has no sqzer equivalent")),
+            }
+            continue;
+        }
+        match a.as_str() {
+            // sqzer never enlarges unless asked, so these are its default.
+            "--downscale" | "--upscale" | "--no-upscale" | "--reduce-only" => {}
+            "--no-downscale" | "--enlarge-only" => {
+                notes.push(format!("{a} has no sqzer equivalent"));
+            }
+            "-d" => rest.push("-o".into()),
+            "-s" => rest.push("--suffix".into()),
+            "-t" => rest.push("-j".into()),
+            "--quantization" => rest.push("--codec-opt png:colors=".into()),
+            other => rest.push(other.into()),
+        }
+    }
     let mut line = format!("sqzer -f {format}");
     if !rest.is_empty() {
         line.push(' ');
         line.push_str(&rest.join(" "));
     }
+    let notes = if notes.is_empty() {
+        String::new()
+    } else {
+        format!("\n  {}", notes.join("\n  "))
+    };
     Some(format!(
-        "`sqzer {first}` is rimage syntax. try:\n    {line}\nsee the README for the flag mapping"
+        "`sqzer {first}` is rimage syntax. try:\n    {line}{notes}\nsee the README for the flag \
+         mapping"
     ))
+}
+
+/// `rimage`'s `--resize` spec as sqzer flags, or `None` for the shortest
+/// side, which sqzer has no flag for. `rimage` reads `WxH` as an exact
+/// size and puts the side letter before or after the number.
+fn rimage_resize(spec: &str) -> Option<String> {
+    let s = spec.trim().to_ascii_lowercase();
+    let number = |marker: char| -> Option<u32> {
+        s.strip_suffix(marker)
+            .or_else(|| s.strip_prefix(marker))?
+            .trim()
+            .parse()
+            .ok()
+    };
+    if let Some(f) = s.strip_prefix('@') {
+        let f: f64 = f.trim().parse().ok()?;
+        return Some(format!("--scale {}%", f * 100.0));
+    }
+    if let Some(p) = s.strip_suffix('%') {
+        let p: f64 = p.trim().parse().ok()?;
+        return Some(format!("--scale {p}%"));
+    }
+    if let Some(w) = number('w') {
+        return Some(format!("--width {w}"));
+    }
+    if let Some(h) = number('h') {
+        return Some(format!("--height {h}"));
+    }
+    if let Some(l) = number('l') {
+        return Some(format!("--width {l} --height {l}"));
+    }
+    let (w, h) = s.split_once('x')?;
+    let (w, h): (u32, u32) = (w.trim().parse().ok()?, h.trim().parse().ok()?);
+    Some(format!("--width {w} --height {h} --fit fill"))
 }
 
 #[cfg(test)]
@@ -437,5 +496,49 @@ mod tests {
         assert!(hint.contains("sqzer -f jpeg -q 75 -o out in.jpg"), "{hint}");
         assert!(rimage_hint(&["photo.jpg".to_string()]).is_none());
         assert!(rimage_hint(&[]).is_none());
+    }
+
+    #[test]
+    fn rimage_resize_specs_map_onto_the_resize_flags() {
+        for (spec, flags) in [
+            ("1600w", Some("--width 1600")),
+            ("w1600", Some("--width 1600")),
+            ("900h", Some("--height 900")),
+            ("512l", Some("--width 512 --height 512")),
+            ("800x600", Some("--width 800 --height 600 --fit fill")),
+            ("50%", Some("--scale 50%")),
+            ("@1.5", Some("--scale 150%")),
+            ("300s", None),
+            ("nonsense", None),
+        ] {
+            assert_eq!(rimage_resize(spec).as_deref(), flags, "{spec}");
+        }
+        let argv: Vec<String> = [
+            "avif",
+            "--resize",
+            "1600w",
+            "--no-upscale",
+            "--filter",
+            "mitchell",
+            "in.jpg",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        let hint = rimage_hint(&argv).unwrap();
+        assert!(
+            hint.contains("sqzer -f avif --width 1600 --filter mitchell in.jpg"),
+            "{hint}"
+        );
+        let argv: Vec<String> = ["webp", "--resize=300s", "in.png"]
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let hint = rimage_hint(&argv).unwrap();
+        assert!(
+            hint.contains("--resize 300s has no sqzer equivalent"),
+            "{hint}"
+        );
+        assert!(hint.contains("sqzer -f webp in.png"), "{hint}");
     }
 }

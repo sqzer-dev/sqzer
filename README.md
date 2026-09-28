@@ -86,6 +86,15 @@ sqzer photo.jpg --keep-metadata -f webp
 sqzer photo.jpg --max-width 1600
 sqzer photo.jpg --max-width 1600 --max-height 1600
 
+# the box in CSS object-fit terms: inside (default), cover crops, contain pads, fill stretches
+sqzer photo.jpg --width 400 --height 400 --fit cover --position top
+sqzer photo.jpg --width 800 --height 800 --fit contain --background white
+sqzer photo.jpg --scale 50%
+sqzer sprite.png --scale 400% --enlarge --filter nearest
+
+# srcset: several widths from one decode, each searched on its own. photo-480w.avif, photo-480w.webp, ...
+sqzer photo.jpg --width 480,960,1600 -f avif,webp
+
 # codec-specific options, checked against the backend before anything runs
 sqzer photo.jpg -f jpeg -x jpeg:progressive=false
 sqzer --list-codecs -v                      # every backend's keys and defaults
@@ -135,9 +144,19 @@ rimage avif in.jpg                   sqzer -f avif in.jpg
 -s <suffix>                          --suffix <suffix>
 -t <threads>                         -j <jobs>        (-t is now --target)
 --quantization / --dithering         --codec-opt png:colors=  (once a quantiser lands)
---resize <spec>                      --max-width / --max-height, downscale only; the full grammar is not in yet
+--resize 1600w                       --width 1600
+--resize 900h                        --height 900
+--resize 512l                        --width 512 --height 512
+--resize 800x600                     --width 800 --height 600 --fit fill
+--resize 50%                         --scale 50%
+--resize @1.5                        --scale 150%
+--resize 300s                        no equivalent
+--filter <filter>                    --filter <filter>, the same names except hamming
+--no-upscale / --reduce-only         the default: sqzer never enlarges without --enlarge
 --backup                             --backup, unchanged, with --in-place
 ```
+
+> **Note**: `rimage` scales an image up to the size asked for unless `--no-upscale` is given. `sqzer` never scales up without `--enlarge`, so add it where the old run relied on enlarging.
 
 ## Formats
 

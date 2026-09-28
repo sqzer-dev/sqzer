@@ -315,6 +315,87 @@ fn resize_never_enlarges_and_the_thumbnail_preset_uses_it() {
 }
 
 #[test]
+fn a_width_list_writes_one_output_per_width_and_format() {
+    let sb = Sandbox::new("widths");
+    sb.fixture("pattern-rgb.webp", "in.webp");
+    let (code, out, err) = run(sb.sqzer().args([
+        "in.webp", "--width", "24,12", "-f", "png,jpeg", "--force", "--json",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    let lines = json_lines(&out);
+    let written: Vec<(&str, u64)> = lines
+        .iter()
+        .map(|r| {
+            (
+                r["output"].as_str().unwrap(),
+                r["output_width"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        written,
+        [
+            ("in-24w.png", 24),
+            ("in-24w.jpg", 24),
+            ("in-12w.png", 12),
+            ("in-12w.jpg", 12)
+        ]
+    );
+    assert_eq!(png_size(&fs::read(sb.path("in-12w.png")).unwrap()), (12, 8));
+
+    // Widths that come out the same size are refused before any encode.
+    let (code, _, err) =
+        run(sb
+            .sqzer()
+            .args(["in.webp", "--width", "24,100,200", "-f", "png", "-o", "dup"]));
+    assert_eq!(code, 1);
+    assert!(
+        err.contains("widths 100 and 200 both give 48x32") && err.contains("--enlarge"),
+        "{err}"
+    );
+    assert!(!sb.path("dup").exists());
+}
+
+#[test]
+fn cover_and_contain_fill_the_box_and_the_dry_run_says_how() {
+    let sb = Sandbox::new("fits");
+    sb.fixture("pattern-rgb.webp", "in.webp");
+    let size = |fit: &str| {
+        let out = format!("{fit}.png");
+        let (code, _, err) = run(sb.sqzer().args([
+            "in.webp", "--width", "16", "--height", "16", "--fit", fit, "-f", "png", "-o", &out,
+        ]));
+        assert_eq!(code, 0, "{fit}: {err}");
+        png_size(&fs::read(sb.path(&out)).unwrap())
+    };
+    assert_eq!(size("inside"), (16, 11));
+    assert_eq!(size("cover"), (16, 16));
+    assert_eq!(size("contain"), (16, 16));
+    assert_eq!(size("fill"), (16, 16));
+    let plan = |args: &[&str]| {
+        let (code, _, err) = run(sb
+            .sqzer()
+            .args(["in.webp", "-n", "--progress", "always", "-f", "png"])
+            .args(args));
+        assert_eq!(code, 0, "{err}");
+        err
+    };
+    let err = plan(&[
+        "--width",
+        "16",
+        "--height",
+        "16",
+        "--fit",
+        "cover",
+        "--position",
+        "left",
+    ]);
+    assert!(err.contains("48x32 -> 16x16 crop 32x32 at 0,0"), "{err}");
+    let err = plan(&["--width", "16", "--height", "16", "--fit", "contain"]);
+    assert!(err.contains("48x32 -> 16x16 pad 16x11 at 0,2"), "{err}");
+}
+
+#[test]
 fn icc_is_converted_to_srgb_unless_kept() {
     let sb = Sandbox::new("icc");
     sb.fixture("pattern-icc.webp", "p3.webp");

@@ -27,6 +27,9 @@ pub struct Placement {
     pub template: Option<Template>,
     /// `--in-place`.
     pub in_place: bool,
+    /// A `--width` list: without a template, each name gains
+    /// `-{width}w`, the `srcset` descriptor, after the stem and suffix.
+    pub width_suffix: bool,
 }
 
 /// What a name is built from.
@@ -119,7 +122,17 @@ impl Placement {
             return PathBuf::from(t.render(n, input, &stem));
         }
         let suffix = self.suffix.as_deref().unwrap_or("");
-        PathBuf::from(format!("{stem}{suffix}.{}", n.format.extension()))
+        let width = self.width_tag(n.width);
+        PathBuf::from(format!("{stem}{suffix}{width}.{}", n.format.extension()))
+    }
+
+    /// `-480w` under a `--width` list, empty otherwise.
+    pub fn width_tag(&self, width: u32) -> String {
+        if self.width_suffix {
+            format!("-{width}w")
+        } else {
+            String::new()
+        }
     }
 }
 
@@ -193,6 +206,11 @@ impl Template {
             return Err(format!("stray `}}` in template `{t}`"));
         }
         Ok(Self(t.to_string()))
+    }
+
+    /// Whether the template uses `{key}`.
+    pub fn has(&self, key: &str) -> bool {
+        self.0.contains(&format!("{{{key}}}"))
     }
 
     fn render(&self, n: &Naming<'_>, input: &Path, stem: &str) -> String {
@@ -364,6 +382,7 @@ mod tests {
                                     suffix: suffix.clone(),
                                     template: template.map(|t| Template::new(t).unwrap()),
                                     in_place,
+                                    width_suffix: false,
                                 };
                                 let n = naming(input, format);
                                 if let Ok(out) = p.resolve(&n) {
@@ -382,6 +401,32 @@ mod tests {
             }
         }
         assert!(checked > 100);
+    }
+
+    #[test]
+    fn a_width_list_tags_each_name_with_its_width() {
+        let input = Input::File("in/photo.jpg".into());
+        let p = Placement {
+            suffix: Some("-min".into()),
+            width_suffix: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            p.resolve(&naming(&input, Format::Avif)).unwrap(),
+            PathBuf::from("in/photo-min-1600w.avif")
+        );
+        // A template names the file itself.
+        let p = Placement {
+            template: Some(Template::new("{width}/{stem}.{ext}").unwrap()),
+            width_suffix: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            p.resolve(&naming(&input, Format::Avif)).unwrap(),
+            PathBuf::from("in/1600/photo.avif")
+        );
+        assert!(Template::new("{stem}-{width}w.{ext}").unwrap().has("width"));
+        assert!(!Template::new("{stem}.{ext}").unwrap().has("width"));
     }
 
     #[test]

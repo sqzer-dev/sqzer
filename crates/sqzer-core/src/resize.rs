@@ -435,6 +435,8 @@ fn cover(w: u64, h: u64, bw: u64, bh: u64, enlarge: bool, anchor: (f64, f64)) ->
 }
 
 #[cfg(test)]
+// The crop edges compared are whole numbers or one exact quotient.
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 
