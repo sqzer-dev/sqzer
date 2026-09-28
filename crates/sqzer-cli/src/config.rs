@@ -105,7 +105,7 @@ pub fn build(args: Args, base: Sqzer) -> Result<Config, Failure> {
         .find_map(|(i, f)| args.format[..i].contains(f).then_some(f))
     {
         return Err(Failure::usage(format!(
-            "-f names {} twice; each format is written once",
+            "`-f` names {} twice; each format is written once",
             format_name(*f)
         )));
     }
@@ -116,7 +116,7 @@ pub fn build(args: Args, base: Sqzer) -> Result<Config, Failure> {
     };
     if !widths.is_empty() && args.in_place {
         return Err(Failure::usage(
-            "--in-place writes one output, and a --width list asks for several",
+            "`--in-place` writes one output, and a `--width` list asks for several",
         ));
     }
     let sqzer = codec_opts(&args, sqzer)?;
@@ -128,14 +128,14 @@ pub fn build(args: Args, base: Sqzer) -> Result<Config, Failure> {
     if let Some(t) = &template {
         if !widths.is_empty() && !t.has("width") {
             return Err(Failure::usage(
-                "a --width list writes one file per width, and the --template has no {width} \
-                 to tell them apart",
+                "a `--width` list writes one file per width, and the `--template` has no \
+                 `{width}` to tell them apart",
             ));
         }
         if args.format.len() > 1 && !t.has("ext") && !t.has("format") {
             return Err(Failure::usage(
-                "several -f formats write one file per format, and the --template has neither \
-                 {ext} nor {format} to tell them apart",
+                "several `-f` formats write one file per format, and the `--template` has \
+                 neither `{ext}` nor `{format}` to tell them apart",
             ));
         }
     }
@@ -275,25 +275,26 @@ fn resize_flags(args: &Args, sqzer: Sqzer) -> Result<Sqzer, Failure> {
         .enumerate()
         .find_map(|(i, w)| args.width[..i].contains(w).then_some(w))
     {
-        return Err(Failure::usage(format!("--width lists {w} twice")));
+        return Err(Failure::usage(format!("`--width` lists {w} twice")));
     }
     if let Size::Box { width, height } = r.size
         && r.fit != Fit::Inside
         && (width.is_none() || height.is_none())
     {
         return Err(Failure::usage(format!(
-            "--fit {} needs both --width and --height",
+            "`--fit {}` needs both `--width` and `--height`",
             r.fit.name()
         )));
     }
     if args.position.is_some() && !matches!(r.fit, Fit::Cover | Fit::Contain) {
         return Err(Failure::usage(
-            "--position places a --fit cover crop or a --fit contain image, and neither is set",
+            "`--position` places a `--fit cover` crop or a `--fit contain` image, and neither \
+             is set",
         ));
     }
     if args.background.is_some() && r.fit != Fit::Contain {
         return Err(Failure::usage(
-            "--background pads a --fit contain image, and --fit is not contain",
+            "`--background` pads a `--fit contain` image, and `--fit` is not `contain`",
         ));
     }
     r.check().map_err(|e| match e {
@@ -308,11 +309,21 @@ fn resize_flags(args: &Args, sqzer: Sqzer) -> Result<Sqzer, Failure> {
 fn check_formats(args: &Args, sqzer: &Sqzer) -> Result<(), Failure> {
     let registry = sqzer.registry();
     let target = &sqzer.params().target;
+    let resize = sqzer.resize_bounds();
+    let translucent =
+        resize.fit == Fit::Contain && resize.background.is_some_and(|b| b[3] < u8::MAX);
     for &f in &args.format {
         let enc = registry
             .encoder(f)
             .map_err(|_| Failure::nothing(render_unavailable(f, Need::Any, registry)))?;
         let caps = enc.caps();
+        if translucent && !caps.alpha {
+            return Err(Failure::nothing(format!(
+                "{} has no alpha channel for a translucent `--background` (ADR-0010 D3)\n  pick \
+                 an opaque colour, or a format with alpha",
+                caps.name
+            )));
+        }
         match target {
             Target::Quality(_) if !caps.lossy => {
                 return Err(Failure::nothing(render_unavailable(
@@ -395,8 +406,8 @@ impl Config {
         let stdin = inputs.iter().filter(|i| **i == Input::Stdin).count();
         if stdin > 0 && !self.widths.is_empty() && self.placement.output.is_none() {
             return Err(Failure::usage(
-                "a --width list writes one image per width, and stdout takes one; pass -o with a \
-                 directory",
+                "a `--width` list writes one image per width, and stdout takes one; pass `-o` \
+                 with a directory",
             ));
         }
         if stdin > 0 {
@@ -419,7 +430,7 @@ impl Config {
         });
         if self.placement.single_file && !self.widths.is_empty() {
             return Err(Failure::usage(format!(
-                "-o {} names one file, and a --width list writes one per width; pass a \
+                "`-o {}` names one file, and a `--width` list writes one per width; pass a \
                  directory",
                 self.placement
                     .output
@@ -642,11 +653,42 @@ mod tests {
                 "{ext}",
             ),
             (&["a.png", "-f", "png,png"], "png twice"),
+            (
+                &["a.png", "--width", "10", "--fit", "outside"],
+                "needs both",
+            ),
+            (
+                &[
+                    "a.png",
+                    "--width",
+                    "1",
+                    "--height",
+                    "1",
+                    "--fit",
+                    "outside",
+                    "--position",
+                    "top",
+                ],
+                "--position",
+            ),
         ] {
             let err = build_from(bad).unwrap_err();
             assert_eq!(err.code, 2, "{bad:?}");
             assert!(err.message.contains(needle), "{bad:?}: {}", err.message);
         }
+        // A translucent padding for a format without alpha: nothing can be
+        // done. An opaque one, or a format with alpha, is fine.
+        let contain = ["a.png", "--width", "8", "--height", "8", "--fit", "contain"];
+        let with = |extra: &[&'static str]| {
+            let mut args = contain.to_vec();
+            args.extend_from_slice(extra);
+            build_from(&args)
+        };
+        let err = with(&["-f", "jpeg", "--background", "#ffffff80"]).unwrap_err();
+        assert_eq!(err.code, 3);
+        assert!(err.message.contains("translucent"), "{}", err.message);
+        assert!(with(&["-f", "jpeg", "--background", "#ffffff"]).is_ok());
+        assert!(with(&["-f", "png", "--background", "transparent"]).is_ok());
         // A width list needs somewhere to put several files.
         let mut cfg = build_from(&["a.png", "--width", "480,960", "-o", "b.avif"]).unwrap();
         let err = cfg.finish(&[Input::File("a.png".into())]).unwrap_err();

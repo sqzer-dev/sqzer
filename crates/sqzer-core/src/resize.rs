@@ -48,6 +48,10 @@ pub enum Fit {
     Contain,
     /// Scale each axis to the box; the aspect ratio changes.
     Fill,
+    /// Cover the box, keep the aspect ratio, crop nothing: both sides end
+    /// at or beyond the box. A square box sets the shortest side
+    /// (ADR-0010 D2).
+    Outside,
 }
 
 impl Fit {
@@ -59,6 +63,7 @@ impl Fit {
             Self::Cover => "cover",
             Self::Contain => "contain",
             Self::Fill => "fill",
+            Self::Outside => "outside",
         }
     }
 }
@@ -295,6 +300,10 @@ impl Resize {
                     canvas,
                 }
             }
+            (Fit::Outside, Some(bw), Some(bh)) => {
+                let (ow, oh) = outside(w, h, bw, bh, self.enlarge);
+                plain(ow, oh)
+            }
             (Fit::Fill, Some(bw), Some(bh)) => {
                 let (fw, fh) = if self.enlarge {
                     (bw, bh)
@@ -388,6 +397,25 @@ fn inside(w: u64, h: u64, bw: Option<u64>, bh: Option<u64>, enlarge: bool) -> (u
         (bw, ratio(h, bw, w))
     } else {
         let bh = bh.unwrap_or(h);
+        if !enlarge && bh >= h {
+            return (w, h);
+        }
+        (ratio(w, bh, h), bh)
+    }
+}
+
+/// Cover the box without cropping: the looser bound decides the scale,
+/// the other axis is rounded and so stays at or beyond its bound. Without
+/// `enlarge`, a looser bound at or above its own side leaves the image as
+/// it is.
+fn outside(w: u64, h: u64, bw: u64, bh: u64, enlarge: bool) -> (u64, u64) {
+    // `bw / w >= bh / h`, cross-multiplied: the width bound is looser.
+    if bw * h >= bh * w {
+        if !enlarge && bw >= w {
+            return (w, h);
+        }
+        (bw, ratio(h, bw, w))
+    } else {
         if !enlarge && bh >= h {
             return (w, h);
         }
@@ -613,6 +641,25 @@ mod tests {
     }
 
     #[test]
+    fn outside_sets_the_shortest_side() {
+        let r = boxed(Some(1000), Some(1000), Fit::Outside);
+        // Landscape and portrait both end with 1000 on the short side.
+        assert_eq!(sized(r, 4000, 3000), Some((1333, 1000)));
+        assert_eq!(sized(r, 3000, 4000), Some((1000, 1333)));
+        // Nothing is cropped or padded.
+        let g = r.fit(4000, 3000).unwrap();
+        assert_eq!((g.crop, g.canvas), (None, None));
+        // A box of another shape: both sides end at or beyond it.
+        let wide = boxed(Some(800), Some(200), Fit::Outside);
+        assert_eq!(sized(wide, 1000, 1000), Some((800, 800)));
+        assert_eq!(sized(wide, 3000, 600), Some((1000, 200)));
+        // Without enlarge a short side already under the bound stays.
+        assert_eq!(r.fit(900, 3000), None);
+        let up = Resize { enlarge: true, ..r };
+        assert_eq!(sized(up, 900, 3000), Some((1000, 3333)));
+    }
+
+    #[test]
     fn scale_keeps_the_aspect_ratio() {
         let half = Resize {
             size: Size::Scale(0.5),
@@ -670,7 +717,7 @@ mod tests {
         assert!(Resize::NONE.check().is_ok());
         assert!(Resize::inside(Some(10), None).check().is_ok());
         assert!(Resize::inside(Some(0), None).check().is_err());
-        for fit in [Fit::Cover, Fit::Contain, Fit::Fill] {
+        for fit in [Fit::Cover, Fit::Contain, Fit::Fill, Fit::Outside] {
             assert!(boxed(Some(10), Some(10), fit).check().is_ok());
             let err = boxed(Some(10), None, fit).check().unwrap_err();
             assert!(err.to_string().contains("both"), "{err}");

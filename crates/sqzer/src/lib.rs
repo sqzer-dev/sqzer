@@ -18,8 +18,9 @@
 //!
 //! The pipeline is ADR-0001 D3: [`Sqzer::decode`], [`Sqzer::transform`],
 //! [`Sqzer::encode`]. [`Sqzer::run`] is the three in order. The transform
-//! is [`Sqzer::prepare`] then [`Sqzer::resize_image`], which a caller
-//! wanting several sizes from one decode runs itself:
+//! is [`Sqzer::prepare`] then [`Prepared::resize`], each returning the
+//! value the next stage takes (ADR-0010), which a caller wanting several
+//! sizes from one decode runs itself:
 //!
 //! ```no_run
 //! use sqzer::Sqzer;
@@ -29,8 +30,8 @@
 //! let s = Sqzer::new();
 //! let prepared = s.prepare(s.decode(&std::fs::read("photo.jpg").unwrap()).unwrap()).unwrap();
 //! for width in [480, 960, 1600] {
-//!     let sized = s.resize_image(&prepared, &Resize::inside(Some(width), None)).unwrap();
-//!     let out = s.encode(&sized).unwrap();
+//!     let ready = prepared.resize(&Resize::inside(Some(width), None)).unwrap();
+//!     let out = s.encode(&ready).unwrap();
 //!     std::fs::write(format!("photo-{}w.avif", out.width), &out.bytes).unwrap();
 //! }
 //! ```
@@ -41,14 +42,15 @@ pub use sqzer_metrics as metrics;
 
 mod color;
 mod resize;
+mod stage;
+
+pub use stage::{Prepared, Ready};
 
 use std::sync::Arc;
 
 use sqzer_core::codec::{Encoder, Format, FormatInfo, Tier};
 use sqzer_core::content::{self, Content};
-use std::borrow::Cow;
-
-use sqzer_core::image::{Image, SampleFormat};
+use sqzer_core::image::SampleFormat;
 use sqzer_core::params::{DecodeOpts, EncodeParams, Preset, Resize, Resolved, Subsampling, Target};
 use sqzer_core::resize::{Fit, Size};
 use sqzer_core::{Decoded, Error, Registry, Result};
@@ -361,19 +363,20 @@ impl Sqzer {
     }
 
     /// The stages between decode and encode, ADR-0001 D3:
-    /// [`Sqzer::prepare`], then [`Sqzer::resize_image`] with the resize
-    /// set on this builder. The result is what the encoder sees and what a
-    /// perceptual target is scored against, once [`Sqzer::encode`] has
-    /// added the padding a contain fit still owes.
+    /// [`Sqzer::prepare`], then [`Prepared::resize`] with the resize set on
+    /// this builder, without copying an image the resize leaves alone. The
+    /// result is what the encoder sees and what a perceptual target is
+    /// scored against, once [`Sqzer::encode`] has added the padding a
+    /// contain fit still owes.
     ///
     /// # Errors
-    /// Those of [`Sqzer::prepare`] and [`Sqzer::resize_image`].
-    pub fn transform(&self, decoded: Decoded) -> Result<Decoded> {
-        let prepared = self.prepare(decoded)?;
-        self.resized(Cow::Owned(prepared.image), prepared.info, &self.resize)
+    /// Those of [`Sqzer::prepare`] and [`Prepared::resize`].
+    pub fn transform(&self, decoded: Decoded) -> Result<Ready> {
+        self.prepare(decoded)?.into_ready(&self.resize)
     }
 
-    /// The stages that run once per input, ADR-0007 D2, in this order:
+    /// The stages that run once per input, ADR-0007 D2, in this order. The
+    /// result is resized with [`Prepared::resize`], once per size.
     ///
     /// 1. Colour (ADR-0007): an image carrying an ICC profile is converted
     ///    to sRGB and the profile dropped, unless [`Sqzer::keep_icc`] is
@@ -383,7 +386,8 @@ impl Sqzer {
     /// 2. Range: float samples, which are linear light, are encoded with
     ///    the sRGB curve into 16 bits, clipped at display white. No
     ///    encoder in this build takes float input, and the metric then
-    ///    scores what the encoder gets. See [`Image::to_u16`]. A float
+    ///    scores what the encoder gets. See
+    ///    [`Image::to_u16`](sqzer_core::image::Image::to_u16). A float
     ///    image that keeps its ICC profile under [`Sqzer::keep_icc`] is
     ///    refused: the curve would leave the profile describing samples
     ///    it no longer matches.
@@ -396,7 +400,7 @@ impl Sqzer {
     /// [`sqzer_core::Error::Transform`] for a profile that cannot be
     /// parsed, a LUT profile on float samples, or a kept profile on float
     /// samples.
-    pub fn prepare(&self, decoded: Decoded) -> Result<Decoded> {
+    pub fn prepare(&self, decoded: Decoded) -> Result<Prepared> {
         let image = if self.params.keep_icc {
             decoded.image
         } else {
@@ -415,80 +419,25 @@ impl Sqzer {
         if !self.params.keep_metadata {
             image.strip_metadata();
         }
-        Ok(Decoded {
+        Ok(Prepared {
             image,
             info: decoded.info,
-            canvas: decoded.canvas,
+            max_pixels: self.decode.max_pixels,
         })
     }
 
-    /// The resize stage of ADR-0009, once per size: `prepared` cropped and
-    /// resampled as `resize` says, into a new image. The source is
-    /// borrowed, so one prepared image serves several sizes, and each
-    /// starts from it, never from another size.
-    ///
-    /// Lanczos3 unless the request names another filter, in linear light
-    /// with premultiplied alpha. A cover fit crops in the same pass. A
-    /// contain fit is not padded here: the returned [`Decoded::canvas`]
-    /// records the box, and [`Sqzer::encode`] pads once it knows whether
-    /// the encoder takes alpha, which decides the default background.
-    /// Orientation was applied by the decoder, so the box is that of the
-    /// picture as displayed. An image the request leaves alone comes back
-    /// as a copy. A canvas already on `prepared` is replaced.
+    /// Encode a transformed image. A pending [`Ready::canvas`] is padded
+    /// here, with the background the encoder calls for: the one the resize
+    /// names, else transparent where the encoder takes alpha and white
+    /// where it does not. Everything [`Sqzer::run`] says about targets and
+    /// errors applies; a caller that wants several output formats from one
+    /// input transforms once and calls this per format.
     ///
     /// # Errors
-    /// [`sqzer_core::Error::InvalidParams`] for a request
-    /// [`Resize::check`] refuses or an output over
-    /// [`Sqzer::max_pixels`], [`sqzer_core::Error::Transform`] for a
-    /// resampler refusal.
-    pub fn resize_image(&self, prepared: &Decoded, resize: &Resize) -> Result<Decoded> {
-        self.resized(Cow::Borrowed(&prepared.image), prepared.info, resize)
-    }
-
-    fn resized(&self, image: Cow<'_, Image>, info: FormatInfo, resize: &Resize) -> Result<Decoded> {
-        resize.check()?;
-        let (width, height) = (image.width(), image.height());
-        let Some(geometry) = resize.fit(width, height) else {
-            return Ok(Decoded {
-                image: image.into_owned(),
-                info,
-                canvas: None,
-            });
-        };
-        let (out_w, out_h) = geometry.output();
-        let pixels = u64::from(out_w) * u64::from(out_h);
-        if pixels > self.decode.max_pixels {
-            return Err(Error::InvalidParams(format!(
-                "the resize makes a {width}x{height} image {out_w}x{out_h}, {pixels} pixels, \
-                 over the limit of {}",
-                self.decode.max_pixels
-            )));
-        }
-        let image = if geometry.resamples(width, height) {
-            resize::resample(&image, &geometry, resize.filter)?
-        } else {
-            image.into_owned()
-        };
-        Ok(Decoded {
-            image,
-            info,
-            canvas: geometry.canvas,
-        })
-    }
-
-    /// Encode an already decoded image, as given: the resize is
-    /// [`Sqzer::transform`]'s, not this method's, except that a pending
-    /// [`Decoded::canvas`] is padded here, with the background the encoder
-    /// calls for: the one the resize names, else transparent where the
-    /// encoder takes alpha and white where it does not. Everything
-    /// [`Sqzer::run`] says about targets and errors applies; a caller that
-    /// wants several output formats from one input decodes and transforms
-    /// once and calls this per format.
-    ///
-    /// # Errors
-    /// See [`Sqzer::run`].
-    pub fn encode(&self, decoded: &Decoded) -> Result<Output> {
-        self.encode_with(decoded, |_| {})
+    /// See [`Sqzer::run`], and [`sqzer_core::Error::Unsupported`] for a
+    /// translucent padding on an encoder without alpha (ADR-0010 D3).
+    pub fn encode(&self, ready: &Ready) -> Result<Output> {
+        self.encode_with(ready, |_| {})
     }
 
     /// [`Sqzer::encode`] that reports each step to `observe`, for a caller
@@ -496,21 +445,23 @@ impl Sqzer {
     ///
     /// # Errors
     /// See [`Sqzer::run`].
-    pub fn encode_with(
-        &self,
-        decoded: &Decoded,
-        mut observe: impl FnMut(Progress),
-    ) -> Result<Output> {
-        let (format, content) = self.pick(decoded);
+    pub fn encode_with(&self, ready: &Ready, mut observe: impl FnMut(Progress)) -> Result<Output> {
+        let (format, content) = self.pick(ready);
         let encoder = self.registry.encoder(format)?;
         let caps = encoder.caps();
+        if ready.translucent_padding() && !caps.alpha {
+            return Err(Error::Unsupported {
+                format,
+                what: "a translucent background: it needs an alpha channel".into(),
+            });
+        }
         let padded;
-        let image = match &decoded.canvas {
+        let image = match &ready.canvas {
             Some(canvas) => {
-                padded = resize::pad(&decoded.image, canvas, caps.alpha)?;
+                padded = resize::pad(&ready.image, canvas, caps.alpha)?;
                 &padded
             }
-            None => &decoded.image,
+            None => &ready.image,
         };
 
         let (bytes, target, report) = match self.params.target {
@@ -574,7 +525,7 @@ impl Sqzer {
             format,
             backend: caps.name,
             tier: caps.tier,
-            input: decoded.info,
+            input: ready.info,
             content,
             width: image.width(),
             height: image.height(),
@@ -585,20 +536,22 @@ impl Sqzer {
 }
 
 impl Sqzer {
-    /// The format [`Sqzer::encode`] would write for `decoded`: the one
-    /// set with [`Sqzer::format`], else the content-aware default. Costs a
+    /// The format [`Sqzer::encode`] would write for `ready`: the one set
+    /// with [`Sqzer::format`], else the content-aware default. Costs a
     /// pass over a sample of the pixels and no encode, so a dry run can
     /// name its outputs.
     #[must_use]
-    pub fn pick_format(&self, decoded: &Decoded) -> Format {
-        self.pick(decoded).0
+    pub fn pick_format(&self, ready: &Ready) -> Format {
+        self.pick(ready).0
     }
 
-    fn pick(&self, decoded: &Decoded) -> (Format, Content) {
-        let content = content::classify(&decoded.image);
-        let format = self.format.unwrap_or_else(|| {
-            default_format(&decoded.image, content, &self.params.target, &self.registry)
-        });
+    fn pick(&self, ready: &Ready) -> (Format, Content) {
+        let content = content::classify(&ready.image);
+        // Translucent padding is alpha the output must carry (ADR-0010 D3).
+        let alpha = ready.image.has_alpha() || ready.translucent_padding();
+        let format = self
+            .format
+            .unwrap_or_else(|| default_format(alpha, content, &self.params.target, &self.registry));
         (format, content)
     }
 }
@@ -623,10 +576,10 @@ fn seeded_search(encoder: &dyn Encoder, target: f32) -> Search {
 /// it and to PNG when not, because a lossy codec gains little on such
 /// input. A photograph goes to AVIF when this build has an encoder for it
 /// and, for a perceptual target, a decoder to score its output with; else
-/// PNG for transparent input and JPEG for the rest. Animation is not
-/// modelled on [`Image`] yet, so animated input is treated as its first
-/// frame.
-fn default_format(img: &Image, content: Content, target: &Target, registry: &Registry) -> Format {
+/// PNG for transparent input, `alpha`, and JPEG for the rest. Animation
+/// is not modelled on [`sqzer_core::image::Image`] yet, so animated input is treated as its
+/// first frame.
+fn default_format(alpha: bool, content: Content, target: &Target, registry: &Registry) -> Format {
     if matches!(target, Target::Lossless) {
         return Format::Png;
     }
@@ -641,7 +594,7 @@ fn default_format(img: &Image, content: Content, target: &Target, registry: &Reg
         && (!matches!(target, Target::Ssimulacra2(_)) || registry.has_decoder(Format::Avif));
     if avif {
         Format::Avif
-    } else if img.has_alpha() {
+    } else if alpha {
         Format::Png
     } else {
         Format::Jpeg
@@ -654,7 +607,7 @@ fn default_format(img: &Image, content: Content, target: &Target, registry: &Reg
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 mod tests {
     use super::*;
-    use sqzer_core::image::ColorType;
+    use sqzer_core::image::{ColorType, Image};
 
     /// A flat 4 x 4 block: a graphic by the content heuristic.
     fn flat(color: ColorType) -> Image {
@@ -840,7 +793,8 @@ mod tests {
             .max_height(1600);
         let decoded = s.decode(&png_bytes(ColorType::Rgb)).unwrap();
         let same = s.transform(decoded.clone()).unwrap();
-        assert_eq!(same, decoded);
+        assert_eq!(same.image(), &decoded.image);
+        assert_eq!(same.canvas(), None);
         let out = s.encode(&same).unwrap();
         assert_eq!((out.width, out.height), (64, 64));
     }
@@ -946,6 +900,40 @@ mod tests {
     }
 
     #[test]
+    fn a_translucent_background_needs_an_encoder_with_alpha() {
+        let clear = Resize {
+            background: Some([0, 0, 0, 0]),
+            ..contain(32, 16)
+        };
+        let bytes = png_bytes(ColorType::Rgb);
+        let err = portable()
+            .format(Format::Jpeg)
+            .target(Target::Quality(80.0))
+            .resize(clear)
+            .run(&bytes)
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::Unsupported {
+                    format: Format::Jpeg,
+                    ..
+                }
+            ),
+            "{err}"
+        );
+        // The default format counts it as alpha: without AVIF, an opaque
+        // photo on a clear canvas goes to PNG, not JPEG.
+        let mut narrow = Registry::new();
+        narrow.register_decoder(sqzer_codecs::png::PngDecoder);
+        narrow.register_encoder(sqzer_codecs::png::PngEncoder);
+        narrow.register_encoder(sqzer_codecs::jpeg::MozjpegEncoder);
+        let s = Sqzer::with_registry(narrow).target(Target::Quality(80.0));
+        assert_eq!(s.run(&bytes).unwrap().format, Format::Jpeg);
+        assert_eq!(s.resize(clear).run(&bytes).unwrap().format, Format::Png);
+    }
+
+    #[test]
     fn one_prepared_image_serves_several_sizes() {
         let s = portable().format(Format::Png);
         let prepared = s
@@ -954,18 +942,14 @@ mod tests {
         let sizes: Vec<(u32, u32)> = [48, 16, 32, 100]
             .into_iter()
             .map(|w| {
-                let d = s
-                    .resize_image(&prepared, &Resize::inside(Some(w), None))
-                    .unwrap();
+                let d = prepared.resize(&Resize::inside(Some(w), None)).unwrap();
                 (d.image.width(), d.image.height())
             })
             .collect();
         assert_eq!(sizes, [(48, 48), (16, 16), (32, 32), (64, 64)]);
         // Each size starts from the source: 32 after 16 is as sharp as 32
         // alone.
-        let alone = s
-            .resize_image(&prepared, &Resize::inside(Some(32), None))
-            .unwrap();
+        let alone = prepared.resize(&Resize::inside(Some(32), None)).unwrap();
         let direct = s
             .clone()
             .max_width(32)
@@ -1199,7 +1183,6 @@ mod tests {
                 format: Format::Exr,
                 animated: false,
             },
-            canvas: None,
         };
         let err = portable()
             .keep_icc(true)
@@ -1226,7 +1209,9 @@ mod tests {
     #[test]
     fn progress_reports_the_trials_the_report_lists() {
         let s = Sqzer::new().format(Format::Jpeg);
-        let decoded = s.decode(&png_bytes(ColorType::Rgb)).unwrap();
+        let decoded = s
+            .transform(s.decode(&png_bytes(ColorType::Rgb)).unwrap())
+            .unwrap();
         let mut seen = Vec::new();
         let out = s
             .encode_with(&decoded, |p| match p {
@@ -1258,7 +1243,9 @@ mod tests {
     #[test]
     fn decode_once_encode_many() {
         let s = Sqzer::new().target(Target::Quality(80.0));
-        let decoded = s.decode(&png_bytes(ColorType::Rgb)).unwrap();
+        let decoded = s
+            .transform(s.decode(&png_bytes(ColorType::Rgb)).unwrap())
+            .unwrap();
         assert_eq!(s.pick_format(&decoded), Format::Avif);
         let a = s.clone().format(Format::Jpeg).encode(&decoded).unwrap();
         let b = s.format(Format::Png).encode(&decoded).unwrap();

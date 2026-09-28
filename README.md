@@ -86,8 +86,10 @@ sqzer photo.jpg --keep-metadata -f webp
 sqzer photo.jpg --max-width 1600
 sqzer photo.jpg --max-width 1600 --max-height 1600
 
-# the box in CSS object-fit terms: inside (default), cover crops, contain pads, fill stretches
+# the box in CSS object-fit terms: inside (default), cover crops, contain pads, fill stretches,
+# outside covers without cropping
 sqzer photo.jpg --width 400 --height 400 --fit cover --position top
+sqzer photos/*.jpg --width 1000 --height 1000 --fit outside   # shortest side 1000, portrait or landscape
 sqzer photo.jpg --width 800 --height 800 --fit contain --background white
 sqzer photo.jpg --scale 50%
 sqzer sprite.png --scale 400% --enlarge --filter nearest
@@ -144,19 +146,20 @@ rimage avif in.jpg                   sqzer -f avif in.jpg
 -s <suffix>                          --suffix <suffix>
 -t <threads>                         -j <jobs>        (-t is now --target)
 --quantization / --dithering         --codec-opt png:colors=  (once a quantiser lands)
---resize 1600w                       --width 1600
---resize 900h                        --height 900
---resize 512l                        --width 512 --height 512
---resize 800x600                     --width 800 --height 600 --fit fill
+--resize 1600w                       --width 1600 --enlarge
+--resize 900h                        --height 900 --enlarge
+--resize 512l                        --width 512 --height 512 --enlarge
+--resize 300s                        --width 300 --height 300 --fit outside --enlarge
+--resize 800x600                     --width 800 --height 600 --fit fill --enlarge
 --resize 50%                         --scale 50%
---resize @1.5                        --scale 150%
---resize 300s                        no equivalent
+--resize @1.5                        --scale 150% --enlarge
+--no-upscale / --reduce-only         drop --enlarge: never scaling up is the default
+--no-downscale / --enlarge-only      no equivalent
 --filter <filter>                    --filter <filter>, the same names except hamming
---no-upscale / --reduce-only         the default: sqzer never enlarges without --enlarge
 --backup                             --backup, unchanged, with --in-place
 ```
 
-> **Note**: `rimage` scales an image up to the size asked for unless `--no-upscale` is given. `sqzer` never scales up without `--enlarge`, so add it where the old run relied on enlarging.
+> **Note**: `rimage` scales an image up to the size asked for unless `--no-upscale` is given, which is why the lines above carry `--enlarge`. Most runs only mean to shrink, and for those `--enlarge` can go.
 
 ## Formats
 

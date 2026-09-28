@@ -372,6 +372,8 @@ fn cover_and_contain_fill_the_box_and_the_dry_run_says_how() {
     assert_eq!(size("cover"), (16, 16));
     assert_eq!(size("contain"), (16, 16));
     assert_eq!(size("fill"), (16, 16));
+    // Outside covers the box without cropping: the short side is 16.
+    assert_eq!(size("outside"), (24, 16));
     let plan = |args: &[&str]| {
         let (code, _, err) = run(sb
             .sqzer()

@@ -117,9 +117,9 @@ pub struct Args {
     ///
     /// Lanczos3 in linear light, alpha premultiplied. EXIF orientation is
     /// applied first, so N bounds the picture as displayed. With
-    /// --max-height the image fits inside both. Either flag replaces the
-    /// resize of --preset thumbnail. The same as --width N with the
-    /// default --fit inside.
+    /// `--max-height` the image fits inside both. Either flag replaces the
+    /// resize of `--preset thumbnail`. The same as `--width N` with the
+    /// default `--fit inside`.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..), conflicts_with_all = ["width", "height", "scale", "fit", "enlarge"], help_heading = "Resize")]
     pub max_width: Option<u32>,
 
@@ -132,23 +132,24 @@ pub struct Args {
     /// from one decode, named `photo-480w.avif` and so on, for `srcset`.
     ///
     /// Each width is resized from the source and searched on its own. A
-    /// --template must then contain {width}, and -o must name a
+    /// `--template` must then contain `{width}`, and `-o` must name a
     /// directory.
     #[arg(long, value_name = "N[,N...]", value_delimiter = ',', value_parser = clap::value_parser!(u32).range(1..), hide_short_help = true, help_heading = "Resize")]
     pub width: Vec<u32>,
 
-    /// Target height. With a --width list, applies to every width.
+    /// Target height. With a `--width` list, applies to every width.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..), hide_short_help = true, help_heading = "Resize")]
     pub height: Option<u32>,
 
-    /// How the image meets the --width x --height box, as in CSS
-    /// `object-fit`. Default inside.
+    /// How the image meets the `--width` x `--height` box, as in CSS
+    /// `object-fit`. Default `inside`.
     ///
-    /// inside scales to fit in the box; one side may be given alone.
-    /// cover fills the box and crops the overflow at --position. contain
-    /// fits in the box and pads the rest with --background. fill
-    /// stretches both axes to the box. cover, contain and fill need both
-    /// --width and --height.
+    /// `inside` scales to fit in the box; one side may be given alone.
+    /// `cover` fills the box and crops the overflow at `--position`.
+    /// `contain` fits in the box and pads the rest with `--background`.
+    /// `fill` stretches both axes to the box. `outside` covers the box
+    /// without cropping, so with a square box it sets the shortest side.
+    /// All but `inside` need both `--width` and `--height`.
     #[arg(
         long,
         value_enum,
@@ -158,8 +159,8 @@ pub struct Args {
     )]
     pub fit: Option<FitArg>,
 
-    /// Where --fit cover crops and --fit contain places the image.
-    /// Default center.
+    /// Where `--fit cover` crops and `--fit contain` places the image.
+    /// Default `center`.
     #[arg(
         long,
         value_enum,
@@ -169,24 +170,25 @@ pub struct Args {
     )]
     pub position: Option<PositionArg>,
 
-    /// The padding of --fit contain: `#rgb`, `#rrggbb`, `#rrggbbaa`,
+    /// The padding of `--fit contain`: `#rgb`, `#rrggbb`, `#rrggbbaa`,
     /// `white`, `black` or `transparent`. Default: transparent for a
-    /// format that has alpha, white for one that does not.
+    /// format that has alpha, white for one that does not. A translucent
+    /// colour needs a format with alpha.
     #[arg(long, value_name = "COLOUR", value_parser = parse_colour, hide_short_help = true, help_heading = "Resize")]
     pub background: Option<[u8; 4]>,
 
     /// Scale by a percentage instead of a box, keeping the aspect ratio:
-    /// `50%`. Above 100% needs --enlarge.
+    /// `50%`. Above 100% needs `--enlarge`.
     #[arg(long, value_name = "N%", value_parser = parse_scale, conflicts_with_all = ["width", "height", "fit"], hide_short_help = true, help_heading = "Resize")]
     pub scale: Option<f32>,
 
     /// Allow scaling up. Without it no fit ever scales up: an image
-    /// already inside the box is left alone, cover crops at the source's
-    /// resolution, contain pads without scaling.
+    /// already inside the box is left alone, `cover` crops at the source's
+    /// resolution, `contain` pads without scaling.
     #[arg(long, hide_short_help = true, help_heading = "Resize")]
     pub enlarge: bool,
 
-    /// Resampling filter. Default lanczos3; nearest keeps the exact
+    /// Resampling filter. Default `lanczos3`; `nearest` keeps the exact
     /// colours of pixel art.
     #[arg(
         long,
@@ -410,6 +412,8 @@ pub enum FitArg {
     Contain,
     /// Stretch to the box.
     Fill,
+    /// Cover the box without cropping.
+    Outside,
 }
 
 impl From<FitArg> for Fit {
@@ -419,6 +423,7 @@ impl From<FitArg> for Fit {
             FitArg::Cover => Self::Cover,
             FitArg::Contain => Self::Contain,
             FitArg::Fill => Self::Fill,
+            FitArg::Outside => Self::Outside,
         }
     }
 }

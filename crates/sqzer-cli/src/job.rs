@@ -6,11 +6,11 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use sqzer::Sqzer;
 use sqzer::core::Decoded;
 use sqzer::core::codec::Format;
 use sqzer::core::params::{Resize, Resolved, Target};
 use sqzer::core::resize::{Geometry, Size};
+use sqzer::{Ready, Sqzer};
 
 use crate::budget::{Cost, MemoryBudget, Work, output_pixels};
 use crate::cli::format_name;
@@ -158,7 +158,7 @@ impl Emit<'_> {
         };
         for (resize, geometry) in sizes.iter().zip(geometries) {
             self.stage_resize(geometry);
-            match cfg.sqzer.resize_image(&prepared, resize) {
+            match prepared.resize(resize) {
                 Ok(ready) => self.formats(&ready, geometry, tally),
                 Err(e) => self.failed(&e, tally),
             }
@@ -166,7 +166,7 @@ impl Emit<'_> {
     }
 
     /// Plan or write every requested format of one size.
-    fn formats(&self, ready: &Decoded, geometry: Option<Geometry>, tally: &mut Tally) {
+    fn formats(&self, ready: &Ready, geometry: Option<Geometry>, tally: &mut Tally) {
         let cfg = self.ctx.cfg;
         let formats: Vec<Option<Format>> = if cfg.formats.is_empty() {
             vec![None]
@@ -226,13 +226,6 @@ fn sizes(cfg: &Config) -> Vec<Resize> {
             ..base
         })
         .collect()
-}
-
-/// The size the encoder gets: the canvas a contain fit still owes, else
-/// the image.
-fn output_size(d: &Decoded) -> (u32, u32) {
-    d.canvas
-        .map_or((d.image.width(), d.image.height()), |c| (c.width, c.height))
 }
 
 /// What a resize crops or pads, for the dry run.
@@ -297,16 +290,16 @@ fn describe(input: &Input, decoded: &Decoded, input_len: u64) -> Record {
 /// `--dry-run`: resolve the format and the path, encode nothing.
 fn plan(
     input: &Input,
-    decoded: &Decoded,
+    ready: &Ready,
     sqzer: &Sqzer,
     mut rec: Record,
     geometry: Option<Geometry>,
     ctx: &Ctx<'_>,
 ) -> Record {
-    let format = sqzer.pick_format(decoded);
+    let format = sqzer.pick_format(ready);
     rec.format = Some(format_name(format));
-    rec.content = Some(content_name(sqzer::core::content::classify(&decoded.image)));
-    let (width, height) = output_size(decoded);
+    rec.content = Some(content_name(sqzer::core::content::classify(ready.image())));
+    let (width, height) = ready.output_size();
     rec.output_width = Some(width);
     rec.output_height = Some(height);
     rec.resize_note = geometry.as_ref().and_then(resize_note);
@@ -318,7 +311,13 @@ fn plan(
     rec.tier = Some(caps.tier.to_string());
     // What the encoder would refuse, refused here too, so a plan is one
     // the run can carry out.
-    let img = &decoded.image;
+    if ready.translucent_padding() && !caps.alpha {
+        return rec.fail(&format!(
+            "{} has no alpha channel for a translucent `--background`",
+            caps.name
+        ));
+    }
+    let img = ready.image();
     for (blob, can) in [("EXIF", caps.exif), ("XMP", caps.xmp)] {
         let carried = if blob == "EXIF" {
             img.exif().is_some()
@@ -341,7 +340,14 @@ fn plan(
             None
         }
     };
-    match destination(input, decoded, (width, height), format, quality, ctx) {
+    match destination(
+        input,
+        ready.info().format,
+        (width, height),
+        format,
+        quality,
+        ctx,
+    ) {
         Ok(Destination::Stdout) => rec.output = Some("-".into()),
         Ok(Destination::File(path)) => {
             rec.output = Some(path.display().to_string());
@@ -358,7 +364,7 @@ fn plan(
 /// Encode, place, write.
 fn run(
     input: &Input,
-    decoded: &Decoded,
+    ready: &Ready,
     sqzer: &Sqzer,
     rec: Record,
     ctx: &Ctx<'_>,
@@ -371,7 +377,7 @@ fn run(
         }
     };
     stage(Stage::Encode);
-    let out = match sqzer.encode_with(decoded, |p| stage(Stage::from(p))) {
+    let out = match sqzer.encode_with(ready, |p| stage(Stage::from(p))) {
         Ok(o) => o,
         Err(e) => return (rec.fail(&e), Vec::new()),
     };
@@ -402,7 +408,7 @@ fn run(
 
     let dest = match destination(
         input,
-        decoded,
+        out.input.format,
         (out.width, out.height),
         out.format,
         Some(out.target),
@@ -473,7 +479,7 @@ enum Destination {
 
 fn destination(
     input: &Input,
-    decoded: &Decoded,
+    input_format: Format,
     (width, height): (u32, u32),
     format: Format,
     quality: Option<Resolved>,
@@ -493,7 +499,7 @@ fn destination(
     }
     let naming = Naming {
         input,
-        input_format: decoded.info.format,
+        input_format,
         format,
         width,
         height,

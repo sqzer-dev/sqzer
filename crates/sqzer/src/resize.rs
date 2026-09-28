@@ -94,7 +94,9 @@ fn options(geometry: &Geometry, filter: Filter) -> ResizeOptions {
 
 /// `image` placed on `canvas`. `alpha` says whether the encoder takes an
 /// alpha channel: it decides the default background, transparent or
-/// white, and without it the background is made opaque. The layout grows
+/// white. The encode stage refuses a translucent background for an
+/// encoder without alpha before this runs (ADR-0010 D3); here it is made
+/// opaque only as a guard. The layout grows
 /// to hold the background: a grey image on a coloured background becomes
 /// RGB, an opaque one on a translucent background gains alpha.
 ///
