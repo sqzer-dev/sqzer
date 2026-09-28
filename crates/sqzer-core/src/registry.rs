@@ -3,6 +3,7 @@
 use crate::codec::{Decoder, Encoder, Format, FormatInfo};
 use crate::image::Image;
 use crate::params::DecodeOpts;
+use crate::resize::Canvas;
 use crate::{Error, Result};
 
 /// A format sniff with no decoder behind it: recognises a container so a
@@ -36,6 +37,11 @@ pub struct Decoded {
     pub image: Image,
     /// Detected input format.
     pub info: FormatInfo,
+    /// Padding still owed to the image, ADR-0009 D4: set by the resize
+    /// stage for [`crate::resize::Fit::Contain`], applied by the encode
+    /// stage once the encoder, and so the default background, is known.
+    /// `None` straight out of a decoder.
+    pub canvas: Option<Canvas>,
 }
 
 impl Registry {
@@ -115,7 +121,11 @@ impl Registry {
             match decoder.available() {
                 Ok(()) => {
                     let image = decoder.decode(bytes, opts)?;
-                    return Ok(Decoded { image, info });
+                    return Ok(Decoded {
+                        image,
+                        info,
+                        canvas: None,
+                    });
                 }
                 Err(reason) => {
                     recognised.get_or_insert(info);

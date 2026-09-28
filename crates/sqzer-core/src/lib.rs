@@ -13,6 +13,7 @@ pub mod image;
 pub mod metric;
 pub mod params;
 pub mod registry;
+pub mod resize;
 
 pub use error::{Error, Result};
 pub use registry::{Decoded, Registry};

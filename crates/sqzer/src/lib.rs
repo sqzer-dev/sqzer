@@ -17,7 +17,23 @@
 //! ```
 //!
 //! The pipeline is ADR-0001 D3: [`Sqzer::decode`], [`Sqzer::transform`],
-//! [`Sqzer::encode`]. [`Sqzer::run`] is the three in order.
+//! [`Sqzer::encode`]. [`Sqzer::run`] is the three in order. The transform
+//! is [`Sqzer::prepare`] then [`Sqzer::resize_image`], which a caller
+//! wanting several sizes from one decode runs itself:
+//!
+//! ```no_run
+//! use sqzer::Sqzer;
+//! use sqzer::core::params::Resize;
+//!
+//! // One decode and one colour conversion, three widths.
+//! let s = Sqzer::new();
+//! let prepared = s.prepare(s.decode(&std::fs::read("photo.jpg").unwrap()).unwrap()).unwrap();
+//! for width in [480, 960, 1600] {
+//!     let sized = s.resize_image(&prepared, &Resize::inside(Some(width), None)).unwrap();
+//!     let out = s.encode(&sized).unwrap();
+//!     std::fs::write(format!("photo-{}w.avif", out.width), &out.bytes).unwrap();
+//! }
+//! ```
 
 pub use sqzer_codecs as codecs;
 pub use sqzer_core as core;
@@ -30,8 +46,11 @@ use std::sync::Arc;
 
 use sqzer_core::codec::{Encoder, Format, FormatInfo, Tier};
 use sqzer_core::content::{self, Content};
+use std::borrow::Cow;
+
 use sqzer_core::image::{Image, SampleFormat};
 use sqzer_core::params::{DecodeOpts, EncodeParams, Preset, Resize, Resolved, Subsampling, Target};
+use sqzer_core::resize::{Fit, Size};
 use sqzer_core::{Decoded, Error, Registry, Result};
 use sqzer_metrics::{Reference, Search, SearchReport, seeds};
 
@@ -151,7 +170,7 @@ impl Sqzer {
         &self.decode
     }
 
-    /// The resize bounds as currently configured.
+    /// The resize as currently configured.
     #[must_use]
     pub fn resize_bounds(&self) -> Resize {
         self.resize
@@ -164,7 +183,7 @@ impl Sqzer {
         self.format
     }
 
-    /// Start from a preset: its target, effort and resize bounds replace
+    /// Start from a preset: its target, effort and resize replace
     /// the current ones, everything else is kept. Call it before the
     /// flags that should override it.
     #[must_use]
@@ -178,27 +197,52 @@ impl Sqzer {
 
     /// Scale down to at most this many pixels wide, keeping the aspect
     /// ratio. Never enlarges. With [`Sqzer::max_height`] the image fits
-    /// inside both.
+    /// inside both. Sets the fit to [`Fit::Inside`] and turns enlarging
+    /// off; a factor set before is replaced by the box.
     #[must_use]
-    pub fn max_width(mut self, pixels: u32) -> Self {
-        self.resize.max_width = Some(pixels);
-        self
+    pub fn max_width(self, pixels: u32) -> Self {
+        let height = self.box_side(false);
+        self.bound(Some(pixels), height)
     }
 
     /// Scale down to at most this many pixels tall, keeping the aspect
-    /// ratio. Never enlarges.
+    /// ratio. Never enlarges. See [`Sqzer::max_width`].
     #[must_use]
-    pub fn max_height(mut self, pixels: u32) -> Self {
-        self.resize.max_height = Some(pixels);
+    pub fn max_height(self, pixels: u32) -> Self {
+        let width = self.box_side(true);
+        self.bound(width, Some(pixels))
+    }
+
+    fn box_side(&self, width: bool) -> Option<u32> {
+        match self.resize.size {
+            Size::Box {
+                width: w,
+                height: h,
+            } => {
+                if width {
+                    w
+                } else {
+                    h
+                }
+            }
+            Size::Scale(_) => None,
+        }
+    }
+
+    fn bound(mut self, width: Option<u32>, height: Option<u32>) -> Self {
+        self.resize.size = Size::Box { width, height };
+        self.resize.fit = Fit::Inside;
+        self.resize.enlarge = false;
         self
     }
 
-    /// Both resize bounds at once, replacing the current ones.
-    /// [`Resize::NONE`] turns the stage off, for example after a preset
-    /// that set it.
+    /// The whole resize request, replacing the current one: the box or
+    /// factor, the fit, the position, the padding, enlarging and the
+    /// filter (ADR-0009). [`Resize::NONE`] turns the stage off, for
+    /// example after a preset that set it.
     #[must_use]
-    pub fn resize(mut self, bounds: Resize) -> Self {
-        self.resize = bounds;
+    pub fn resize(mut self, resize: Resize) -> Self {
+        self.resize = resize;
         self
     }
 
@@ -298,7 +342,8 @@ impl Sqzer {
     /// Unknown input, input this build recognises but cannot decode
     /// ([`sqzer_core::Error::DecoderUnavailable`], naming the feature or
     /// the missing library), an image over the pixel limit, a decoder
-    /// failure, a zero resize bound, [`sqzer_core::Error::EncoderUnavailable`]
+    /// failure, a resize [`Resize::check`] refuses or whose output is over
+    /// the pixel limit, [`sqzer_core::Error::EncoderUnavailable`]
     /// for the chosen format, or [`sqzer_core::Error::Unsupported`] for a perceptual
     /// target whose output this build cannot decode.
     pub fn run(&self, input: &[u8]) -> Result<Output> {
@@ -315,7 +360,20 @@ impl Sqzer {
         self.registry.decode(input, &self.decode)
     }
 
-    /// The stages between decode and encode, ADR-0001 D3, in this order:
+    /// The stages between decode and encode, ADR-0001 D3:
+    /// [`Sqzer::prepare`], then [`Sqzer::resize_image`] with the resize
+    /// set on this builder. The result is what the encoder sees and what a
+    /// perceptual target is scored against, once [`Sqzer::encode`] has
+    /// added the padding a contain fit still owes.
+    ///
+    /// # Errors
+    /// Those of [`Sqzer::prepare`] and [`Sqzer::resize_image`].
+    pub fn transform(&self, decoded: Decoded) -> Result<Decoded> {
+        let prepared = self.prepare(decoded)?;
+        self.resized(Cow::Owned(prepared.image), prepared.info, &self.resize)
+    }
+
+    /// The stages that run once per input, ADR-0007 D2, in this order:
     ///
     /// 1. Colour (ADR-0007): an image carrying an ICC profile is converted
     ///    to sRGB and the profile dropped, unless [`Sqzer::keep_icc`] is
@@ -333,27 +391,12 @@ impl Sqzer {
     ///    [`Sqzer::keep_metadata`] is set. Orientation was applied by the
     ///    decoder and the EXIF tag reset there, so kept EXIF never
     ///    contradicts the pixels.
-    /// 4. Resize: fit inside [`Sqzer::max_width`] and [`Sqzer::max_height`],
-    ///    aspect ratio kept, never enlarged, Lanczos3 in linear light with
-    ///    premultiplied alpha. An image that already fits is left alone.
-    ///
-    /// Orientation was applied by the decoder, so the bounds are those of
-    /// the picture as displayed. The result is what the encoder sees and
-    /// what a perceptual target is scored against; the metric reads
-    /// integer samples as sRGB, which under `keep_icc` is an
-    /// approximation applied to both sides of the comparison.
     ///
     /// # Errors
-    /// [`sqzer_core::Error::InvalidParams`] for a bound of zero,
     /// [`sqzer_core::Error::Transform`] for a profile that cannot be
-    /// parsed, a LUT profile on float samples, a kept profile on float
-    /// samples, or a resampler refusal.
-    pub fn transform(&self, decoded: Decoded) -> Result<Decoded> {
-        if self.resize.max_width == Some(0) || self.resize.max_height == Some(0) {
-            return Err(Error::InvalidParams(
-                "a resize bound must be at least one pixel".into(),
-            ));
-        }
+    /// parsed, a LUT profile on float samples, or a kept profile on float
+    /// samples.
+    pub fn prepare(&self, decoded: Decoded) -> Result<Decoded> {
         let image = if self.params.keep_icc {
             decoded.image
         } else {
@@ -373,13 +416,71 @@ impl Sqzer {
             image.strip_metadata();
         }
         Ok(Decoded {
-            image: resize::fit(image, self.resize)?,
+            image,
             info: decoded.info,
+            canvas: decoded.canvas,
+        })
+    }
+
+    /// The resize stage of ADR-0009, once per size: `prepared` cropped and
+    /// resampled as `resize` says, into a new image. The source is
+    /// borrowed, so one prepared image serves several sizes, and each
+    /// starts from it, never from another size.
+    ///
+    /// Lanczos3 unless the request names another filter, in linear light
+    /// with premultiplied alpha. A cover fit crops in the same pass. A
+    /// contain fit is not padded here: the returned [`Decoded::canvas`]
+    /// records the box, and [`Sqzer::encode`] pads once it knows whether
+    /// the encoder takes alpha, which decides the default background.
+    /// Orientation was applied by the decoder, so the box is that of the
+    /// picture as displayed. An image the request leaves alone comes back
+    /// as a copy. A canvas already on `prepared` is replaced.
+    ///
+    /// # Errors
+    /// [`sqzer_core::Error::InvalidParams`] for a request
+    /// [`Resize::check`] refuses or an output over
+    /// [`Sqzer::max_pixels`], [`sqzer_core::Error::Transform`] for a
+    /// resampler refusal.
+    pub fn resize_image(&self, prepared: &Decoded, resize: &Resize) -> Result<Decoded> {
+        self.resized(Cow::Borrowed(&prepared.image), prepared.info, resize)
+    }
+
+    fn resized(&self, image: Cow<'_, Image>, info: FormatInfo, resize: &Resize) -> Result<Decoded> {
+        resize.check()?;
+        let (width, height) = (image.width(), image.height());
+        let Some(geometry) = resize.fit(width, height) else {
+            return Ok(Decoded {
+                image: image.into_owned(),
+                info,
+                canvas: None,
+            });
+        };
+        let (out_w, out_h) = geometry.output();
+        let pixels = u64::from(out_w) * u64::from(out_h);
+        if pixels > self.decode.max_pixels {
+            return Err(Error::InvalidParams(format!(
+                "the resize makes a {width}x{height} image {out_w}x{out_h}, {pixels} pixels, \
+                 over the limit of {}",
+                self.decode.max_pixels
+            )));
+        }
+        let image = if geometry.resamples(width, height) {
+            resize::resample(&image, &geometry, resize.filter)?
+        } else {
+            image.into_owned()
+        };
+        Ok(Decoded {
+            image,
+            info,
+            canvas: geometry.canvas,
         })
     }
 
     /// Encode an already decoded image, as given: the resize is
-    /// [`Sqzer::transform`]'s, not this method's. Everything
+    /// [`Sqzer::transform`]'s, not this method's, except that a pending
+    /// [`Decoded::canvas`] is padded here, with the background the encoder
+    /// calls for: the one the resize names, else transparent where the
+    /// encoder takes alpha and white where it does not. Everything
     /// [`Sqzer::run`] says about targets and errors applies; a caller that
     /// wants several output formats from one input decodes and transforms
     /// once and calls this per format.
@@ -400,10 +501,17 @@ impl Sqzer {
         decoded: &Decoded,
         mut observe: impl FnMut(Progress),
     ) -> Result<Output> {
-        let image = &decoded.image;
         let (format, content) = self.pick(decoded);
         let encoder = self.registry.encoder(format)?;
         let caps = encoder.caps();
+        let padded;
+        let image = match &decoded.canvas {
+            Some(canvas) => {
+                padded = resize::pad(&decoded.image, canvas, caps.alpha)?;
+                &padded
+            }
+            None => &decoded.image,
+        };
 
         let (bytes, target, report) = match self.params.target {
             Target::Ssimulacra2(_) if !caps.lossy => {
@@ -766,14 +874,136 @@ mod tests {
     #[test]
     fn thumbnail_preset_resizes_and_flags_override_it() {
         let s = Sqzer::new().preset(Preset::Thumbnail);
-        assert_eq!(s.resize_bounds(), Preset::Thumbnail.resize());
-        assert_eq!(s.resize_bounds().max_width, Some(512));
+        assert_eq!(s.resize_bounds(), Resize::inside(Some(512), Some(512)));
         // A later preset without a resize clears it.
         assert_eq!(s.clone().preset(Preset::Web).resize_bounds(), Resize::NONE);
         assert_eq!(s.clone().resize(Resize::NONE).resize_bounds(), Resize::NONE);
         let s = s.max_width(100);
-        assert_eq!(s.resize_bounds().max_width, Some(100));
-        assert_eq!(s.resize_bounds().max_height, Some(512));
+        assert_eq!(s.resize_bounds(), Resize::inside(Some(100), Some(512)));
+        // A bound turns a cover fit, enlarging or a factor back into a
+        // plain bound.
+        let cover = Resize {
+            size: Size::Scale(2.0),
+            fit: Fit::Cover,
+            enlarge: true,
+            ..Resize::NONE
+        };
+        let s = Sqzer::new().resize(cover).max_height(64);
+        assert_eq!(s.resize_bounds(), Resize::inside(None, Some(64)));
+    }
+
+    fn contain(w: u32, h: u32) -> Resize {
+        Resize {
+            size: Size::Box {
+                width: Some(w),
+                height: Some(h),
+            },
+            fit: Fit::Contain,
+            ..Resize::NONE
+        }
+    }
+
+    #[test]
+    fn contain_returns_the_full_box_padded_per_encoder() {
+        // 64 x 64 into 32 x 16: resampled to 16 x 16, padded to 32 x 16.
+        let bytes = png_bytes(ColorType::Rgb);
+        let png = portable().format(Format::Png).resize(contain(32, 16));
+        let out = png.run(&bytes).unwrap();
+        assert_eq!((out.width, out.height), (32, 16));
+        // PNG takes alpha: the padding is transparent.
+        let back = png.decode(&out.bytes).unwrap().image;
+        assert_eq!(back.color(), ColorType::Rgba);
+        assert_eq!(&back.samples().as_u8().unwrap()[..4], &[0, 0, 0, 0]);
+        assert_eq!(back.samples().as_u8().unwrap()[16 * 4 + 3], 255);
+        // JPEG does not: white, and the search scored the padded image.
+        let jpeg = portable().format(Format::Jpeg).resize(contain(32, 16));
+        let out = jpeg.run(&bytes).unwrap();
+        assert_eq!((out.width, out.height), (32, 16));
+        assert!(out.report.expect("searched").reached);
+        let back = jpeg.decode(&out.bytes).unwrap().image;
+        // White to JPEG noise: the corner MCU also holds image pixels.
+        assert!(
+            back.samples().as_u8().unwrap()[..3]
+                .iter()
+                .all(|&s| s > 235),
+            "{:?}",
+            &back.samples().as_u8().unwrap()[..3]
+        );
+        // A named background wins over both defaults.
+        let red = Resize {
+            background: Some([255, 0, 0, 255]),
+            ..contain(32, 16)
+        };
+        let out = png.clone().resize(red).run(&bytes).unwrap();
+        let back = png.decode(&out.bytes).unwrap().image;
+        assert_eq!(back.color(), ColorType::Rgb);
+        assert_eq!(&back.samples().as_u8().unwrap()[..3], &[255, 0, 0]);
+        // The canvas is pending after the transform, and applied only by
+        // the encode.
+        let sized = png.transform(png.decode(&bytes).unwrap()).unwrap();
+        assert_eq!((sized.image.width(), sized.image.height()), (16, 16));
+        assert_eq!(sized.canvas.map(|c| (c.width, c.height)), Some((32, 16)));
+    }
+
+    #[test]
+    fn one_prepared_image_serves_several_sizes() {
+        let s = portable().format(Format::Png);
+        let prepared = s
+            .prepare(s.decode(&png_bytes(ColorType::Rgb)).unwrap())
+            .unwrap();
+        let sizes: Vec<(u32, u32)> = [48, 16, 32, 100]
+            .into_iter()
+            .map(|w| {
+                let d = s
+                    .resize_image(&prepared, &Resize::inside(Some(w), None))
+                    .unwrap();
+                (d.image.width(), d.image.height())
+            })
+            .collect();
+        assert_eq!(sizes, [(48, 48), (16, 16), (32, 32), (64, 64)]);
+        // Each size starts from the source: 32 after 16 is as sharp as 32
+        // alone.
+        let alone = s
+            .resize_image(&prepared, &Resize::inside(Some(32), None))
+            .unwrap();
+        let direct = s
+            .clone()
+            .max_width(32)
+            .transform(s.decode(&png_bytes(ColorType::Rgb)).unwrap())
+            .unwrap();
+        assert_eq!(alone, direct);
+    }
+
+    #[test]
+    fn cover_crops_to_the_box() {
+        let cover = Resize {
+            size: Size::Box {
+                width: Some(40),
+                height: Some(20),
+            },
+            fit: Fit::Cover,
+            ..Resize::NONE
+        };
+        let out = portable()
+            .format(Format::Png)
+            .resize(cover)
+            .run(&png_bytes(ColorType::Rgba))
+            .unwrap();
+        assert_eq!((out.width, out.height), (40, 20));
+    }
+
+    #[test]
+    fn an_enlarge_past_the_pixel_limit_is_refused() {
+        let s = portable().max_pixels(10_000).resize(Resize {
+            size: Size::Scale(4.0),
+            enlarge: true,
+            ..Resize::NONE
+        });
+        let err = s
+            .transform(s.decode(&png_bytes(ColorType::Rgb)).unwrap())
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidParams(_)), "{err}");
+        assert!(err.to_string().contains("256x256"), "{err}");
     }
 
     /// The P3-tagged pattern in every container that carries one, decoded
@@ -969,6 +1199,7 @@ mod tests {
                 format: Format::Exr,
                 animated: false,
             },
+            canvas: None,
         };
         let err = portable()
             .keep_icc(true)
