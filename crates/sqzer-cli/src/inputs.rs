@@ -278,7 +278,10 @@ pub fn rimage_hint(argv: &[String]) -> Option<String> {
                     rest.push(flags);
                     resized = true;
                 }
-                None => notes.push(format!("`--resize {spec}` has no sqzer equivalent")),
+                None => notes.push(format!(
+                    "{} has no sqzer equivalent",
+                    crate::report::code(&format!("--resize {spec}"))
+                )),
             }
             continue;
         }
@@ -286,7 +289,10 @@ pub fn rimage_hint(argv: &[String]) -> Option<String> {
             // sqzer never enlarges unless asked, so these are its default.
             "--downscale" | "--upscale" | "--no-upscale" | "--reduce-only" => {}
             "--no-downscale" | "--enlarge-only" => {
-                notes.push(format!("`{a}` has no sqzer equivalent"));
+                notes.push(format!(
+                    "{} has no sqzer equivalent",
+                    crate::report::code(a)
+                ));
             }
             "-d" => rest.push("-o".into()),
             "-s" => rest.push("--suffix".into()),

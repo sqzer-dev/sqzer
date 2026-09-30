@@ -15,7 +15,7 @@ use crate::budget::Work;
 use crate::cli::{Args, OUTPUT_FORMATS, format_name};
 use crate::inputs::Input;
 use crate::output::{Placement, Template};
-use crate::report::{Feedback, Need, render_unavailable};
+use crate::report::{Feedback, Need, code, render_unavailable};
 
 /// A refusal with its exit code.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,7 +149,7 @@ pub fn build(args: Args, base: Sqzer) -> Result<Config, Failure> {
     };
 
     let pattern = |g: &String| {
-        Pattern::new(g).map_err(|e| Failure::usage(format!("`{g}` is not a valid glob: {e}")))
+        Pattern::new(g).map_err(|e| Failure::usage(format!("{} is not a valid glob: {e}", code(g))))
     };
     let include = args.include.iter().map(pattern).collect::<Result<_, _>>()?;
     let exclude = args.exclude.iter().map(pattern).collect::<Result<_, _>>()?;
@@ -359,7 +359,9 @@ fn codec_opts(args: &Args, mut sqzer: Sqzer) -> Result<Sqzer, Failure> {
             .filter(|f| OUTPUT_FORMATS.contains(f))
             .ok_or_else(|| {
                 Failure::usage(format!(
-                    "`{opt}`: unknown codec `{codec}`; one of {}",
+                    "{}: unknown codec {}; one of {}",
+                    code(opt),
+                    code(codec),
                     OUTPUT_FORMATS
                         .iter()
                         .map(|&f| format_name(f))
@@ -370,8 +372,9 @@ fn codec_opts(args: &Args, mut sqzer: Sqzer) -> Result<Sqzer, Failure> {
         let codec = format_name(format);
         let enc = sqzer.registry().encoder(format).map_err(|_| {
             Failure::usage(format!(
-                "`{opt}`: no {format} encoder in this build to take it; `sqzer --list-codecs` \
-                 shows what there is"
+                "{}: no {format} encoder in this build to take it; `sqzer --list-codecs` \
+                 shows what there is",
+                code(opt)
             ))
         })?;
         let caps = enc.caps();
@@ -387,8 +390,10 @@ fn codec_opts(args: &Args, mut sqzer: Sqzer) -> Result<Sqzer, Failure> {
                 format!("{} accepts {}", caps.name, known.join(", "))
             };
             return Err(Failure::usage(format!(
-                "`{opt}`: unknown {codec} option `{key}`; {known}. `sqzer --list-codecs -v` \
-                 describes each"
+                "{}: unknown {codec} option {}; {known}. `sqzer --list-codecs -v` \
+                 describes each",
+                code(opt),
+                code(key)
             )));
         }
         sqzer = sqzer.codec_opt(codec, key, value);
@@ -452,7 +457,8 @@ impl Config {
 fn split_codec_opt(opt: &str) -> Result<(&str, &str, &str), Failure> {
     let bad = || {
         Failure::usage(format!(
-            "`{opt}`: a codec option is `codec:key=value`, for example `jpeg:progressive=false`"
+            "{}: a codec option is `codec:key=value`, for example `jpeg:progressive=false`",
+            code(opt)
         ))
     };
     let (codec, rest) = opt.split_once(':').ok_or_else(bad)?;

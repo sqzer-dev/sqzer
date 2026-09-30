@@ -306,10 +306,28 @@ fn literal_styles() -> (Style, Style) {
 /// argument: `'x'`, plain quotes, `x` in clap's `invalid` style (yellow)
 /// up to the first `;` or line break, where the problem is stated, and in
 /// its `valid` style (green) after, where the fix is. The source keeps
-/// its backticks, and `--json` carries them as written. An unpaired
-/// backtick is printed as it is.
+/// its backticks, and `--json` carries them as written.
+///
+/// Spans follow `CommonMark` code spans: a run of N backticks opens one and
+/// the next run of exactly N closes it, and one space just inside each
+/// end is dropped when both are there. So [`code`] can wrap user text
+/// that holds backticks itself, and the JSON text stays valid Markdown. A
+/// run with no closing run is printed as it is.
 pub fn styled(message: &str) -> String {
     styled_in(message, Style::new())
+}
+
+/// User text, a path or a glob, as a span of [`styled`]: fenced with one
+/// backtick more than its longest run of them, and padded with a space
+/// when it starts or ends with one.
+pub fn code(text: &str) -> String {
+    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest + 1);
+    if text.starts_with('`') || text.ends_with('`') {
+        format!("{fence} {text} {fence}")
+    } else {
+        format!("{fence}{text}{fence}")
+    }
 }
 
 /// [`styled`] with the text around the spans in `base`, so a dimmed line
@@ -328,24 +346,47 @@ fn styled_in(message: &str, base: Style) -> String {
     let mut rest = message;
     let mut suggesting = false;
     while let Some(open) = rest.find('`') {
-        let (before, after) = (&rest[..open], &rest[open + 1..]);
-        suggesting |= before.contains([';', '\n']);
-        let Some(close) = after.find('`') else {
-            break;
+        let before = &rest[..open];
+        let run = rest[open..].len() - rest[open..].trim_start_matches('`').len();
+        let after = &rest[open + run..];
+        let Some((content, next)) = closing_run(after, run) else {
+            // No closing run: the backticks are text.
+            plain.push_str(&rest[..open + run]);
+            rest = after;
+            continue;
         };
+        suggesting |= before.contains([';', '\n']);
         plain.push_str(before);
         plain.push('\'');
         flush(&mut out, &mut plain);
-        out.push_str(&paint(
-            if suggesting { fix } else { problem },
-            &after[..close],
-        ));
+        out.push_str(&paint(if suggesting { fix } else { problem }, content));
         plain.push('\'');
-        rest = &after[close + 1..];
+        rest = next;
     }
     plain.push_str(rest);
     flush(&mut out, &mut plain);
     out
+}
+
+/// The content of a span opened by `run` backticks, up to the next run of
+/// exactly that many, with the `CommonMark` space stripping, and the text
+/// after it. `None` when no such run follows.
+fn closing_run(after: &str, run: usize) -> Option<(&str, &str)> {
+    let mut at = 0;
+    while let Some(i) = after[at..].find('`') {
+        let start = at + i;
+        let len = after[start..].len() - after[start..].trim_start_matches('`').len();
+        if len == run {
+            let content = &after[..start];
+            let content = match content.strip_prefix(' ').and_then(|c| c.strip_suffix(' ')) {
+                Some(inner) if !inner.trim().is_empty() => inner,
+                _ => content,
+            };
+            return Some((content, &after[start + len..]));
+        }
+        at = start + len;
+    }
+    None
 }
 
 /// `dir/` dimmed, the file name in `name_style`, padded to `width`
@@ -1027,6 +1068,19 @@ mod tests {
         // Plain text and an unpaired backtick pass through.
         assert_eq!(styled("no input matched"), "no input matched");
         assert_eq!(styled("stray ` here"), "stray ` here");
+        // User text with backticks of its own survives `code`.
+        for text in ["a`b.txt", "`x", "y`", "``", "plain", "a ``b`` c"] {
+            let message = format!("{}: cannot read; try `-0`", code(text));
+            assert_eq!(
+                styled(&message),
+                format!(
+                    "{}: cannot read; try {}",
+                    lit(problem, text),
+                    lit(fix, "-0")
+                ),
+                "{text}"
+            );
+        }
         // A dimmed line stays dimmed around the span.
         assert_eq!(
             styled_in("larger; `--force` writes it", DIM),

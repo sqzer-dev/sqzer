@@ -99,8 +99,12 @@ fn run(args: Args) -> Result<ExitCode, Failure> {
 
     let mut raw = cfg.inputs.clone();
     if let Some(list) = &cfg.files_from {
-        let more = inputs::files_from(list, cfg.null)
-            .map_err(|e| Failure::usage(format!("`--files-from {}`: {e}", list.display())))?;
+        let more = inputs::files_from(list, cfg.null).map_err(|e| {
+            Failure::usage(format!(
+                "`--files-from` {}: {e}",
+                report::code(&list.display().to_string())
+            ))
+        })?;
         raw.extend(more);
     }
     let registry = cfg.sqzer.registry();
