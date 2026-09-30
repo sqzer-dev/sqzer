@@ -96,7 +96,7 @@ SVG is left to the browser, under a rule that covers more than SVG: the package'
 The API is the builder, as ADR-0001 D8 said, spelled the way JavaScript spells it. Three calls:
 
 ```ts
-import init, { optimize, decode, codecs } from "sqzer";
+import init, { optimize, decode, decodeAny, fromPixels, codecs } from "sqzer";
 await init();
 
 // everything in one call: probe, decode, prepare, resize, encode
