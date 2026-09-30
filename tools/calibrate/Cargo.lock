@@ -950,14 +950,14 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "heif-dl"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "libloading",
 ]
 
 [[package]]
 name = "heif-imageio"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "objc2-core-foundation",
  "objc2-core-graphics",
@@ -966,7 +966,7 @@ dependencies = [
 
 [[package]]
 name = "heif-wic"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "windows",
 ]
@@ -2273,7 +2273,7 @@ checksum = "b9be42f50aa861c555654aa3a37f52f4b1074bacf4e48fe0ef7fa584e80f1f0f"
 
 [[package]]
 name = "sqzer"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "fast_image_resize",
@@ -2297,7 +2297,7 @@ dependencies = [
 
 [[package]]
 name = "sqzer-codecs"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "avif-parse",
  "exr",
@@ -2330,11 +2330,11 @@ dependencies = [
 
 [[package]]
 name = "sqzer-core"
-version = "0.1.1"
+version = "0.2.0"
 
 [[package]]
 name = "sqzer-metrics"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "fast-ssim2",
  "sqzer-core",
@@ -2342,7 +2342,7 @@ dependencies = [
 
 [[package]]
 name = "sqzer-native-tier"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "sqzer-codecs",
 ]
