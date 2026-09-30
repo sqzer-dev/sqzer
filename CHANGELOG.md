@@ -4,7 +4,7 @@
 
 ## 0.2.0
 
-### ⚠ BREAKING CHANGES
+### ⚠️ BREAKING CHANGES
 
 * **core:** `Resize` is the full request of ADR-0009 (`size`, `fit`, `position`, `background`, `enlarge`, `filter`) instead of `max_width` and `max_height`. `Resize::inside(width, height)` builds the old bounds, and `Resize::fit` returns an `Option<Geometry>` instead of an `Option<(u32, u32)>`; the output size is `Geometry::output`
 * **sqzer:** `Sqzer::transform` returns a `Ready`, and `Sqzer::encode`, `encode_with` and `pick_format` take one (ADR-0010). A caller that encoded a `Decoded` directly calls `Sqzer::prepare` then `Prepared::resize`, or `Sqzer::transform`, first
