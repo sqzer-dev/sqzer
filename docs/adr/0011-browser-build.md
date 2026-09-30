@@ -78,10 +78,14 @@ Under that rule `oxipng` is the PNG encoder on every target, with `freestanding`
 The wasm CI job changes meaning. It proved that no C reaches the browser build; now it proves that the browser build compiles and that its one C dependency is the one chosen. The old guarantee becomes an explicit check in the same job:
 
 ```sh
-# who depends on `cc` in the wasm32 graph: libdeflate-sys builds C, sqzer-rav1d
-# lists cc and nasm-rs for its assembly, which is off. anything else fails the job
-cargo tree -p sqzer-wasm --target wasm32-unknown-unknown -i cc --prefix none --depth 1 \
-  | grep -v '^cc \|^libdeflate-sys \|^sqzer-rav1d ' && exit 1 || true
+# who depends on `cc` in the wasm32 graph. a failed query fails the step (the
+# assignment carries cargo's exit status under `set -e`), and so does an answer
+# without libdeflate-sys, which would mean oxipng lost its C build. sqzer-rav1d
+# lists cc and nasm-rs for its assembly, which is off. anything else fails too
+users=$(cargo tree -p sqzer-wasm --target wasm32-unknown-unknown -i cc --prefix none --depth 1)
+grep -q '^libdeflate-sys ' <<<"$users" || { echo "libdeflate-sys no longer builds C for wasm32"; exit 1; }
+extra=$(grep -v '^cc \|^libdeflate-sys \|^sqzer-rav1d ' <<<"$users" || true)
+test -z "$extra" || { printf 'unexpected C build dependency on wasm32:\n%s\n' "$extra"; exit 1; }
 ```
 
 Anyone building `sqzer` for wasm32 needs `clang`. That is documented in the README, `CONTRIBUTING.md` and `CLAUDE.md` next to the desktop C compiler requirement it mirrors.
@@ -142,7 +146,7 @@ The first real publish replaces the placeholder's metadata: `wasm-pack` writes `
 
 A static page in a repository of its own, `sqzer-dev/sqzer.dev`: plain HTML, one ES module and one worker script, no framework and no bundler. It depends on the published package by version, `sqzer@0.3.0` from npm through jsDelivr, never on a checkout of this repository. It starts in its own repository because of where `ROADMAP.md` says it ends: the full browser build over `sqzer-codecs-agpl` is AGPL-3.0, and so is any page that bundles it. A page under that licence cannot live in a tree licensed MIT or Apache-2.0, and moving it later would mean carrying its history out and relicensing it in place. The page is MIT or Apache-2.0 until the AGPL package exists, and the version it imports is the only line that changes when it switches. It offers a drop zone (also paste and a file picker), the output format, the target with a quality alternative, a width, before-and-after with the sizes and the score, and download. Encoding runs in the worker with `onTrial` driving a progress line. It sends nothing anywhere: no analytics, no error reporting.
 
-That repository's Pages workflow deploys on every merge to its `main`, so a page change never waits for a release of the crates. A release here is followed by a one-line pull request there bumping the version the page imports; that step joins the release checklist of ADR-0006 item 5. This repository's release workflow does not touch the page. `sqzer.dev` moves from GoDaddy parking to GitHub Pages: the apex on the four Pages A records, `www` as a CNAME, `CNAME` in the page repository. One Pages site per repository is then no constraint: the page has its own, and docs for the crates, if they ever want a site, get a subdomain from this one. Pages sends no custom headers, which is fine for a single-threaded page and is one more reason threads are out.
+That repository's Pages workflow deploys on every merge to its `main`, so a page change never waits for a release of the crates. A release here is followed by a one-line pull request there bumping the version the page imports. That step is written into the release procedure of `CLAUDE.md`, the Releases bullet under Workflow, with action item 5, and the page repository runs Dependabot on its `sqzer` dependency as the backstop, so a bump nobody made still arrives as a pull request. This repository's release workflow does not touch the page. `sqzer.dev` moves from GoDaddy parking to GitHub Pages: the apex on the four Pages A records, `www` as a CNAME, `CNAME` in the page repository. One Pages site per repository is then no constraint: the page has its own, and docs for the crates, if they ever want a site, get a subdomain from this one. Pages sends no custom headers, which is fine for a single-threaded page and is one more reason threads are out.
 
 ---
 
@@ -190,7 +194,7 @@ That repository's Pages workflow deploys on every merge to its `main`, so a page
 - `.cargo/config.toml` with `simd128` for wasm32; `ci.yml`'s wasm job gains `wasm-pack test --node` over the fixtures and the `cc` check; `dist-workspace.toml`, `publish-npm.yml`.
 - README, `CONTRIBUTING.md`, `CLAUDE.md`: "pure Rust" and "C-free" become the D1 wording; the AVIF and `oxipng` notes are rewritten; the layout entry for `crates/sqzer-wasm`, and a link to the page and its repository.
 - `CHANGELOG.md` when the code lands: `codecs` entries for AVIF decoding and `oxipng` on wasm32 and for the `rav1d` crate change, a `wasm` entry for the package.
-- The release checklist of ADR-0006 item 5 gains a step after the tag: bump the version `sqzer-dev/sqzer.dev` imports.
+- The Releases bullet of `CLAUDE.md` gains a step after the tag: bump the version `sqzer-dev/sqzer.dev` imports, or merge the Dependabot pull request that does.
 - The `ROADMAP.md` 0.3 note about the browser build's gaps shrinks to lossy WebP and JPEG XL, both licence gaps, and SVG text without fonts.
 
 ---
@@ -201,7 +205,7 @@ That repository's Pages workflow deploys on every merge to its `main`, so a page
 2. [ ] `oxipng` on wasm32 with `freestanding`, the `png` encoder removed, the golden PNG test running on wasm32 too; `.cargo/config.toml`; the `cc` check in `ci.yml`.
 3. [ ] The `sqzer-wasm` surface of D3 with `wasm-pack test --node` over the fixtures: every format in and out, an `EncoderUnavailable` for JPEG XL with `availableIn`, `onTrial` called once per trial, `maxPixels` refusing a 25 megapixel header.
 4. [ ] `publish-npm.yml`, the `dist` config and `dist generate`; the trusted publisher on npmjs.com; a rehearsal with `pr-run-mode = "upload"` on a branch, then the first publish with the 0.3.0 tag.
-5. [ ] `github.com/sqzer-dev/sqzer.dev`: the page, its Pages workflow, `CNAME`, DNS for `sqzer.dev`, and this README pointing at the page.
+5. [ ] `github.com/sqzer-dev/sqzer.dev`: the page, its Pages workflow, `CNAME`, Dependabot on `sqzer`, DNS for `sqzer.dev`; this README pointing at the page and the version bump in the Releases bullet of `CLAUDE.md`.
 6. [ ] The wording changes of section 5 in README, `CONTRIBUTING.md`, `CLAUDE.md` and `ROADMAP.md`.
 7. [ ] Measure `wasm-opt -O` on the search and the AVIF encode; enable it in `[package.metadata.wasm-pack]` only if it is faster.
 
