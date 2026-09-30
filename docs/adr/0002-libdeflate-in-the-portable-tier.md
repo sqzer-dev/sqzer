@@ -1,6 +1,7 @@
 # ADR-0002: `libdeflate` in the portable tier
 
 **Status:** Accepted
+**Superseded by:** ADR-0011 for the wasm32 gate: `oxipng` builds there too, with `libdeflate` in `freestanding` mode and `clang` on the build machine
 **Date:** 2026-09-06
 **Deciders:** Vlad (sole maintainer)
 **Scope:** One exception to the "portable means pure Rust" rule of ADR-0001 D2, and how it is fenced.

@@ -192,7 +192,7 @@ agpl       reserved. Never a default dependency, never in the library.
 
 > **Note**: Input-only formats decode to their first image: the first frame of an animated GIF, the first page of a TIFF, the largest entry of an ICO. An SVG is rasterised at its own size, one CSS pixel per pixel, with the system's fonts for text (none on wasm32); references to files on disk are ignored, `data:` URLs are rendered, `.svgz` is not read. TIFF files in CMYK or YCbCr are refused rather than converted.
 
-> **Note**: AVIF decoding is desktop only. `rav1d` does not compile for `wasm32`, so the WASM build recognises AVIF input but has no decoder for it. AVIF encoding builds everywhere, but a perceptual target needs the output decoded to score it, so on `wasm32` AVIF takes an explicit quality only and the default output format there is JPEG.
+> **Note**: AVIF decoding is desktop only. `rav1d` does not compile for `wasm32`, so the WASM build has no AVIF decoder and reports AVIF input as an unrecognised format. AVIF encoding builds everywhere, but a perceptual target needs the output decoded to score it, so on `wasm32` AVIF takes an explicit quality only and the default output format there is JPEG.
 
 > **Note**: `oxipng` is the one portable backend that is not pure Rust: its DEFLATE step is `libdeflate`, a vendored C library compiled by `cc` with no system package to install. It is compiled out on `wasm32`, where the plain `png` writer takes its place, so the WASM build stays C-free. [`docs/adr/0002-libdeflate-in-the-portable-tier.md`](docs/adr/0002-libdeflate-in-the-portable-tier.md) has the reasoning.
 

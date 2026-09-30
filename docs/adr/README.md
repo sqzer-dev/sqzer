@@ -13,6 +13,7 @@ One file per decision, numbered, never edited after acceptance. A superseded rec
 0008-memory-budget.md                    `-j` bounded by estimated memory, not decoded pixels: per-mode costs, three quarters of available memory through `sysinfo` and the cgroup, capped by the old pixel rule, the oversized-file warning
 0009-resize-interface.md                 resize in CSS `object-fit` terms: `--width`, `--height`, `--fit`, `--position`, never enlarge by default, a width list for `srcset`; replaces the resize section of 0003
 0010-stage-types-and-fit-outside.md     `Prepared` and `Ready` in place of 0009's stage methods, `--fit outside` for the shortest side, a translucent `--background` needs alpha
+0011-browser-build.md                    the npm package and the page on `sqzer.dev`: portable means runs everywhere (a C compiler may be needed to build), `oxipng` on wasm32 through `freestanding`, AVIF decoding through a published `rav1d` fork, the JavaScript API, `simd128`, a `dist` publish job with npm trusted publishing, GitHub Pages
 ```
 
 Template for new records: copy the headings from `0001` (Context, Decision, Options considered, Trade-offs, Consequences, Action items).
