@@ -101,8 +101,10 @@ pub fn resolve(args: &[String], opts: &Options<'_>) -> Resolved {
             Ok(meta) => {
                 if meta.is_dir() {
                     if !opts.recursive {
-                        out.failures
-                            .push((arg.to_string(), "is a directory; pass -r to recurse".into()));
+                        out.failures.push((
+                            arg.to_string(),
+                            "is a directory; pass `-r` to recurse".into(),
+                        ));
                         continue;
                     }
                     let mut found = Vec::new();
@@ -276,7 +278,10 @@ pub fn rimage_hint(argv: &[String]) -> Option<String> {
                     rest.push(flags);
                     resized = true;
                 }
-                None => notes.push(format!("`--resize {spec}` has no sqzer equivalent")),
+                None => notes.push(format!(
+                    "{} has no sqzer equivalent",
+                    crate::report::code(&format!("--resize {spec}"))
+                )),
             }
             continue;
         }
@@ -284,7 +289,10 @@ pub fn rimage_hint(argv: &[String]) -> Option<String> {
             // sqzer never enlarges unless asked, so these are its default.
             "--downscale" | "--upscale" | "--no-upscale" | "--reduce-only" => {}
             "--no-downscale" | "--enlarge-only" => {
-                notes.push(format!("`{a}` has no sqzer equivalent"));
+                notes.push(format!(
+                    "{} has no sqzer equivalent",
+                    crate::report::code(a)
+                ));
             }
             "-d" => rest.push("-o".into()),
             "-s" => rest.push("--suffix".into()),
@@ -301,13 +309,11 @@ pub fn rimage_hint(argv: &[String]) -> Option<String> {
         line.push(' ');
         line.push_str(&rest.join(" "));
     }
-    let notes = if notes.is_empty() {
-        String::new()
-    } else {
-        format!("\n  {}", notes.join("\n  "))
-    };
+    // The notes are part of the problem, so they go on the first line,
+    // where the error styling colours spans as the thing at fault.
+    let notes: String = notes.iter().flat_map(|n| [", and ", n.as_str()]).collect();
     Some(format!(
-        "`sqzer {first}` is rimage syntax. try:\n    {line}{notes}\nsee the README for the flag \
+        "`sqzer {first}` is rimage syntax{notes}. try:\n    {line}\nsee the README for the flag \
          mapping"
     ))
 }
@@ -434,7 +440,7 @@ mod tests {
             &[dir.to_string_lossy().into_owned()],
             &opts(false, &[], &[]),
         );
-        assert!(r.failures[0].1.contains("pass -r"));
+        assert!(r.failures[0].1.contains("pass `-r`"));
     }
 
     #[test]

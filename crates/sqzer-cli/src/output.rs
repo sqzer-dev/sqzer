@@ -12,6 +12,7 @@ use sqzer::core::codec::Format;
 use sqzer::core::params::Resolved;
 
 use crate::inputs::Input;
+use crate::report::code;
 
 /// The placement flags, checked.
 #[derive(Debug, Clone, Default)]
@@ -70,12 +71,12 @@ impl std::fmt::Display for PlaceError {
             Self::OverwritesInput => {
                 write!(
                     f,
-                    "output would overwrite input; use -o, --suffix or --in-place"
+                    "output would overwrite input; use `-o`, `--suffix` or `--in-place`"
                 )
             }
             Self::InPlaceChangesFormat { from, to } => write!(
                 f,
-                "--in-place would turn {from} into {to}; drop -f or use -o"
+                "`--in-place` would turn {from} into {to}; drop `-f` or use `-o`"
             ),
         }
     }
@@ -187,12 +188,13 @@ impl Template {
         while let Some(open) = rest.find('{') {
             let after = &rest[open + 1..];
             let Some(close) = after.find('}') else {
-                return Err(format!("unclosed `{{` in template `{t}`"));
+                return Err(format!("unclosed `{{` in template {}", code(t)));
             };
             let key = &after[..close];
             if !PLACEHOLDERS.contains(&key) {
                 return Err(format!(
-                    "unknown placeholder `{{{key}}}` in template; one of {}",
+                    "unknown placeholder {} in template; one of {}",
+                    code(&format!("{{{key}}}")),
                     PLACEHOLDERS
                         .iter()
                         .map(|p| format!("{{{p}}}"))
@@ -203,7 +205,7 @@ impl Template {
             rest = &after[close + 1..];
         }
         if rest.contains('}') {
-            return Err(format!("stray `}}` in template `{t}`"));
+            return Err(format!("stray `}}` in template {}", code(t)));
         }
         Ok(Self(t.to_string()))
     }

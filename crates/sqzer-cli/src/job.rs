@@ -144,7 +144,7 @@ impl Emit<'_> {
             let hint = if cfg.sqzer.resize_bounds().enlarge {
                 "drop one"
             } else {
-                "--enlarge scales it up, or drop one"
+                "`--enlarge` scales it up, or drop one"
             };
             let msg = format!(
                 "widths {} and {} both give {w}x{h} from this {width}x{height} image; {hint}",
@@ -255,7 +255,7 @@ fn oversized(name: &str, (w, h): (u32, u32), estimate: u64, ctx: &Ctx<'_>) -> St
     );
     if ctx.cfg.work == Work::Search {
         msg.push_str(
-            "\n  the target search is most of that; -q sets an explicit quality and skips it",
+            "\n  the target search is most of that; `-q` sets an explicit quality and skips it",
         );
     }
     msg
@@ -326,7 +326,7 @@ fn plan(
         };
         if carried && !can {
             return rec.fail(&format!(
-                "{} does not support {blob} metadata; drop --keep-metadata or pick another format",
+                "{} does not support {blob} metadata; drop `--keep-metadata` or pick another format",
                 caps.name
             ));
         }
@@ -352,7 +352,7 @@ fn plan(
         Ok(Destination::File(path)) => {
             rec.output = Some(path.display().to_string());
             if path.exists() && !ctx.cfg.force && !ctx.cfg.placement.in_place {
-                return rec.fail(&"output exists; --force overwrites it");
+                return rec.fail(&"output exists; `--force` overwrites it");
             }
         }
         Err(e) => return rec.fail(&e),
@@ -437,7 +437,7 @@ fn run(
     if !cfg.force && out.bytes.len() as u64 > input_len {
         rec.status = Status::Skipped;
         rec.reason = Some(format!(
-            "output ({} bytes) is larger than input ({input_len} bytes); --force writes it anyway",
+            "output ({} bytes) is larger than input ({input_len} bytes); `--force` writes it anyway",
             out.bytes.len()
         ));
         return (rec, details);
@@ -448,7 +448,7 @@ fn run(
             if backup.exists() && !cfg.force {
                 return (
                     rec.fail(&format!(
-                        "backup {} exists; --force overwrites it",
+                        "backup {} exists; `--force` overwrites it",
                         backup.display()
                     )),
                     details,
@@ -462,7 +462,7 @@ fn run(
             }
         }
     } else if path.exists() && !cfg.force {
-        return (rec.fail(&"output exists; --force overwrites it"), details);
+        return (rec.fail(&"output exists; `--force` overwrites it"), details);
     }
     stage(Stage::Write);
     match write_atomic(&path, &out.bytes) {

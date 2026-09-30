@@ -190,7 +190,7 @@ fn shape_3_recursive_mirrors_the_tree() {
     // A directory without -r is refused, and alone it means nothing matched.
     let (code, _, err) = run(sb.sqzer().args(["assets"]));
     assert_eq!(code, 3, "{err}");
-    assert!(err.contains("pass -r"), "{err}");
+    assert!(err.contains("pass '-r'"), "{err}");
     assert!(err.contains("no input matched"), "{err}");
 }
 
@@ -681,10 +681,10 @@ fn exit_2_on_argument_errors() {
         ),
         (
             &["in.jpg", "-x", "jpeg:nope=1"],
-            "unknown jpeg option `nope`",
+            "unknown jpeg option 'nope'",
         ),
         (&["in.jpg", "-x", "avif:bit_depth"], "codec:key=value"),
-        (&["-", "-o", "out"], "exactly one -f"),
+        (&["-", "-o", "out"], "exactly one '-f'"),
         (&["-", "-f", "png", "--json"], "both go to stdout"),
         (&["in.jpg", "--template", "{nope}"], "unknown placeholder"),
         (&["in.jpg", "--backup"], "in-place"),
@@ -764,13 +764,13 @@ fn exit_3_when_nothing_can_be_done() {
         err.contains("this build encodes: JPEG (mozjpeg-rs, portable)"),
         "{err}"
     );
-    assert!(err.contains("`native-jxl`"), "{err}");
+    assert!(err.contains("'native-jxl'"), "{err}");
     assert!(err.contains("sqzer --list-codecs"), "{err}");
 
     let (code, _, err) = run(sb.sqzer().args(["in.jpg", "-f", "webp", "-q", "80"]));
     assert_eq!(code, 3, "{err}");
     assert!(err.contains("for lossy output"), "{err}");
-    assert!(err.contains("`native-webp`"), "{err}");
+    assert!(err.contains("'native-webp'"), "{err}");
 
     // No build adds lossless JPEG, so no feature is named.
     let (code, _, err) = run(sb.sqzer().args(["in.jpg", "-f", "jpeg", "--lossless"]));
@@ -826,7 +826,7 @@ fn in_place_with_backup_keeps_the_original() {
     let (code, _, err) = run(sb.sqzer().args(["photo.jpg", "--in-place", "-f", "avif"]));
     assert_eq!(code, 1);
     assert!(
-        err.contains("--in-place would turn JPEG into AVIF"),
+        err.contains("'--in-place' would turn JPEG into AVIF"),
         "{err}"
     );
 }

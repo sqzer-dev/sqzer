@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+* **cli:** errors and warnings style flags and values the way `clap` does: `'--width'` quoted, in yellow where it names the problem and in green where it names the fix. `--color never`, `NO_COLOR` and a pipe keep the quotes without the colour. The `error` and `reason` fields of `--json` carry the same text with backticks around each flag
+
 ## 0.2.0
 
 ### ⚠️ BREAKING CHANGES
