@@ -140,9 +140,9 @@ The first real publish replaces the placeholder's metadata: `wasm-pack` writes `
 
 ### D6. The page: `web/` in this repository, GitHub Pages on `sqzer.dev`
 
-A static page under `web/`, plain HTML, one ES module and one worker script, no framework and no bundler. It imports the package built from the same commit. It offers a drop zone (also paste and a file picker), the output format, the target with a quality alternative, a width, before-and-after with the sizes and the score, and download. Encoding runs in the worker with `onTrial` driving a progress line. It sends nothing anywhere: no analytics, no error reporting.
+A static page under `web/`, plain HTML, one ES module and one worker script, no framework and no bundler. It depends on the published package by version, `sqzer@0.3.0` from npm through jsDelivr, never on a path into this repository, so the page can move to a repository of its own without a rebuild the day it gains a build step or a cadence of its own. It offers a drop zone (also paste and a file picker), the output format, the target with a quality alternative, a width, before-and-after with the sizes and the score, and download. Encoding runs in the worker with `onTrial` driving a progress line. It sends nothing anywhere: no analytics, no error reporting.
 
-A Pages workflow deploys `web/` plus the freshly built package on every release tag, after the publish job, so the page always shows the released package. `sqzer.dev` moves from GoDaddy parking to GitHub Pages: the apex on the four Pages A records, `www` as a CNAME, `web/CNAME` in the repository. Pages sends no custom headers, which is fine for a single-threaded page and is one more reason threads are out.
+A Pages workflow deploys `web/` on every merge to `main` and on every release tag after the publish job, so a page change never waits for a release and a release shows up on the page the same day. The version the page imports is bumped in the release PR, so the page always names a package that exists. `sqzer.dev` moves from GoDaddy parking to GitHub Pages: the apex on the four Pages A records, `www` as a CNAME, `web/CNAME` in the repository. Pages sends no custom headers, which is fine for a single-threaded page and is one more reason threads are out.
 
 ---
 
@@ -187,6 +187,7 @@ A Pages workflow deploys `web/` plus the freshly built package on every release 
 - `.cargo/config.toml` with `simd128` for wasm32; `ci.yml`'s wasm job gains `wasm-pack test --node` over the fixtures and the `cc` check; `dist-workspace.toml`, `publish-npm.yml`, a Pages workflow, `web/`.
 - README, `CONTRIBUTING.md`, `CLAUDE.md`: "pure Rust" and "C-free" become the D1 wording; the AVIF and `oxipng` notes are rewritten; the layout entry for `crates/sqzer-wasm` and the `web/` directory.
 - `CHANGELOG.md` when the code lands: `codecs` entries for AVIF decoding and `oxipng` on wasm32 and for the `rav1d` crate change, a `wasm` entry for the package.
+- The page's version pin becomes part of the release checklist of ADR-0006 item 5: bump it in the release PR next to the workspace version.
 - The `ROADMAP.md` 0.3 note about the browser build's gaps shrinks to lossy WebP and JPEG XL, both licence gaps, and SVG text without fonts.
 
 ---
