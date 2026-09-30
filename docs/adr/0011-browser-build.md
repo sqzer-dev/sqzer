@@ -138,11 +138,11 @@ The package is synchronous and single-threaded, like the library. A page runs it
 
 The first real publish replaces the placeholder's metadata: `wasm-pack` writes `license`, `repository` and `description` from `Cargo.toml`.
 
-### D6. The page: `web/` in this repository, GitHub Pages on `sqzer.dev`
+### D6. The page: its own repository, `sqzer-dev/sqzer.dev`, on GitHub Pages
 
-A static page under `web/`, plain HTML, one ES module and one worker script, no framework and no bundler. It depends on the published package by version, `sqzer@0.3.0` from npm through jsDelivr, never on a path into this repository, so the page can move to a repository of its own without a rebuild the day it gains a build step or a cadence of its own. It offers a drop zone (also paste and a file picker), the output format, the target with a quality alternative, a width, before-and-after with the sizes and the score, and download. Encoding runs in the worker with `onTrial` driving a progress line. It sends nothing anywhere: no analytics, no error reporting.
+A static page in a repository of its own, `sqzer-dev/sqzer.dev`: plain HTML, one ES module and one worker script, no framework and no bundler. It depends on the published package by version, `sqzer@0.3.0` from npm through jsDelivr, never on a checkout of this repository. It starts in its own repository because of where `ROADMAP.md` says it ends: the full browser build over `sqzer-codecs-agpl` is AGPL-3.0, and so is any page that bundles it. A page under that licence cannot live in a tree licensed MIT or Apache-2.0, and moving it later would mean carrying its history out and relicensing it in place. The page is MIT or Apache-2.0 until the AGPL package exists, and the version it imports is the only line that changes when it switches. It offers a drop zone (also paste and a file picker), the output format, the target with a quality alternative, a width, before-and-after with the sizes and the score, and download. Encoding runs in the worker with `onTrial` driving a progress line. It sends nothing anywhere: no analytics, no error reporting.
 
-A Pages workflow deploys `web/` on every merge to `main` and on every release tag after the publish job, so a page change never waits for a release and a release shows up on the page the same day. The version the page imports is bumped in the release PR, so the page always names a package that exists. `sqzer.dev` moves from GoDaddy parking to GitHub Pages: the apex on the four Pages A records, `www` as a CNAME, `web/CNAME` in the repository. Pages sends no custom headers, which is fine for a single-threaded page and is one more reason threads are out.
+That repository's Pages workflow deploys on every merge to its `main`, so a page change never waits for a release of the crates. A release here is followed by a one-line pull request there bumping the version the page imports; that step joins the release checklist of ADR-0006 item 5. This repository's release workflow does not touch the page. `sqzer.dev` moves from GoDaddy parking to GitHub Pages: the apex on the four Pages A records, `www` as a CNAME, `CNAME` in the page repository. One Pages site per repository is then no constraint: the page has its own, and docs for the crates, if they ever want a site, get a subdomain from this one. Pages sends no custom headers, which is fine for a single-threaded page and is one more reason threads are out.
 
 ---
 
@@ -166,6 +166,8 @@ A Pages workflow deploys `web/` on every merge to `main` and on every release ta
 
 **Cloudflare Pages.** Custom headers, so threads would be possible later. Rejected for now: one more account and deploy path for a benefit D4 rules out.
 
+**The page under `web/` in this repository.** A wasm API change and the page that uses it in one pull request, the fixtures next door, the CI job loading the page against the package it just built. Rejected: the page becomes AGPL with the full build of `ROADMAP.md`, which this repository cannot hold, and once the page depends on the published package the same-commit convenience is not needed.
+
 ---
 
 ## 4. Trade-offs
@@ -176,6 +178,7 @@ A Pages workflow deploys `web/` on every merge to `main` and on every release ta
 - 1.9 MB over the wire before the first image. A lean package would be a third of that.
 - One thread. Large images are slow on the page; the width control is the mitigation.
 - `wasm-pack` in CI, a second toolchain to keep current.
+- Two repositories for one feature. A change to the wasm API and to the page that uses it is two pull requests, and the page can lag a release by the version bump.
 
 ---
 
@@ -184,10 +187,10 @@ A Pages workflow deploys `web/` on every merge to `main` and on every release ta
 - ADR-0002's wasm32 gate is superseded; the record carries a line saying so.
 - `sqzer-codecs`: `sqzer-rav1d` on every target, `oxipng` on every target with `freestanding` on wasm32, the `png` encoder module deleted, AVIF probe and decode registered everywhere.
 - `sqzer-wasm`: the D3 surface, `cdylib`, `wasm-bindgen`, `js-sys`, `serde`, `serde-wasm-bindgen`, `tsify-next`, `console_error_panic_hook`.
-- `.cargo/config.toml` with `simd128` for wasm32; `ci.yml`'s wasm job gains `wasm-pack test --node` over the fixtures and the `cc` check; `dist-workspace.toml`, `publish-npm.yml`, a Pages workflow, `web/`.
-- README, `CONTRIBUTING.md`, `CLAUDE.md`: "pure Rust" and "C-free" become the D1 wording; the AVIF and `oxipng` notes are rewritten; the layout entry for `crates/sqzer-wasm` and the `web/` directory.
+- `.cargo/config.toml` with `simd128` for wasm32; `ci.yml`'s wasm job gains `wasm-pack test --node` over the fixtures and the `cc` check; `dist-workspace.toml`, `publish-npm.yml`.
+- README, `CONTRIBUTING.md`, `CLAUDE.md`: "pure Rust" and "C-free" become the D1 wording; the AVIF and `oxipng` notes are rewritten; the layout entry for `crates/sqzer-wasm`, and a link to the page and its repository.
 - `CHANGELOG.md` when the code lands: `codecs` entries for AVIF decoding and `oxipng` on wasm32 and for the `rav1d` crate change, a `wasm` entry for the package.
-- The page's version pin becomes part of the release checklist of ADR-0006 item 5: bump it in the release PR next to the workspace version.
+- The release checklist of ADR-0006 item 5 gains a step after the tag: bump the version `sqzer-dev/sqzer.dev` imports.
 - The `ROADMAP.md` 0.3 note about the browser build's gaps shrinks to lossy WebP and JPEG XL, both licence gaps, and SVG text without fonts.
 
 ---
@@ -198,7 +201,7 @@ A Pages workflow deploys `web/` on every merge to `main` and on every release ta
 2. [ ] `oxipng` on wasm32 with `freestanding`, the `png` encoder removed, the golden PNG test running on wasm32 too; `.cargo/config.toml`; the `cc` check in `ci.yml`.
 3. [ ] The `sqzer-wasm` surface of D3 with `wasm-pack test --node` over the fixtures: every format in and out, an `EncoderUnavailable` for JPEG XL with `availableIn`, `onTrial` called once per trial, `maxPixels` refusing a 25 megapixel header.
 4. [ ] `publish-npm.yml`, the `dist` config and `dist generate`; the trusted publisher on npmjs.com; a rehearsal with `pr-run-mode = "upload"` on a branch, then the first publish with the 0.3.0 tag.
-5. [ ] `web/`, the Pages workflow, DNS for `sqzer.dev`, and the README pointing at the page.
+5. [ ] `github.com/sqzer-dev/sqzer.dev`: the page, its Pages workflow, `CNAME`, DNS for `sqzer.dev`, and this README pointing at the page.
 6. [ ] The wording changes of section 5 in README, `CONTRIBUTING.md`, `CLAUDE.md` and `ROADMAP.md`.
 7. [ ] Measure `wasm-opt -O` on the search and the AVIF encode; enable it in `[package.metadata.wasm-pack]` only if it is faster.
 
