@@ -73,7 +73,7 @@
     },
     {
       "id": "changelog",
-      "rule": "A behaviour change updates `CHANGELOG.md` under Unreleased in the same PR, as `* **scope:** subject` under `### Features`, `### Bug Fixes` or `### Performance Improvements`, with the crate as the scope.",
+      "rule": "A behaviour change updates `CHANGELOG.md` under Unreleased in the same PR, as `* **scope:** subject` under `### Features`, `### Bug Fixes` or `### Performance Improvements`, with the crate as the scope. A change that breaks the library API or the CLI also goes under `### ⚠️ BREAKING CHANGES`, first in its release, saying what to do instead; that heading is the one exception to the emoji and sentence-case rules.",
       "severity": "medium"
     },
     {

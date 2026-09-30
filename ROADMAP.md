@@ -4,7 +4,7 @@ What comes next for `sqzer`, roughly in order. `sqzer` is maintained by one pers
 
 Want to help with an item? Open an issue or a discussion first, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-## 0.2: in the browser
+## 0.3: in the browser
 
 The "Squoosh replacement" is not complete without a page you can drop an image on (ADR-0001 item 10).
 
@@ -12,15 +12,6 @@ The "Squoosh replacement" is not complete without a page you can drop an image o
 - A small drag-and-drop page on top of it.
 
 > **Note**: The browser build inherits the portable tier's gaps. `rav1d` does not compile for `wasm32`, so AVIF input cannot be decoded there and AVIF output takes an explicit quality instead of the perceptual target. PNG goes through the plain `png` writer instead of `oxipng`, and lossy WebP and JPEG XL cannot be written at all.
-
-## Resize
-
-Everything past `--max-width` and `--max-height`: crop to a box, pad to a box, scale by a factor, choose the filter, and several widths from one decode for `srcset`. The interface is settled in [ADR-0009](docs/adr/0009-resize-interface.md), in CSS `object-fit` terms instead of the `rimage` grammar ADR-0003 planned:
-
-```sh
-sqzer photo.jpg --width 400 --height 400 --fit cover --position top
-sqzer photo.jpg --width 480,960,1600 -f avif,webp
-```
 
 ## Coming from `rimage`
 
@@ -34,7 +25,7 @@ Palette reduction for PNG, `rimage`'s `--quantization`, as a codec option:
 
 ## A full build in the browser
 
-After 0.2, a second browser build over `sqzer-codecs-agpl` that fills the portable tier's gaps with imazen's pure-Rust codecs: lossy WebP (`zenwebp`), JPEG XL encoding, AVIF decoding, HEIC input, and PNG quantisation through `imagequant`. It would power the drag-and-drop page at `sqzer.dev` and make it a full Squoosh replacement.
+After 0.3, a second browser build over `sqzer-codecs-agpl` that fills the portable tier's gaps with imazen's pure-Rust codecs: lossy WebP (`zenwebp`), JPEG XL encoding, AVIF decoding, HEIC input, and PNG quantisation through `imagequant`. It would power the drag-and-drop page at `sqzer.dev` and make it a full Squoosh replacement.
 
 > **Note**: That build is AGPL-3.0, and so is anything that bundles it. It ships as its own package, never as the default `sqzer` package or in the library, which stay permissive. Whether those crates build for `wasm32` is not verified yet; that check and a new ADR come first.
 

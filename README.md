@@ -204,7 +204,7 @@ crates/sqzer-codecs    every backend behind a feature flag
 crates/sqzer-metrics   SSIMULACRA2 and the target-quality search
 crates/sqzer           library facade, the thing you depend on
 crates/sqzer-cli       the binary, `sqzer`
-crates/sqzer-wasm      browser build, portable tier only. A placeholder until 0.2
+crates/sqzer-wasm      browser build, portable tier only. A placeholder until 0.3
 crates/sqzer-native-tier  what `native` means per target, no code
 docs/adr               design decisions
 dist-workspace.toml    the release matrix for `cargo-dist`
