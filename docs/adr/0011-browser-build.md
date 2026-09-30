@@ -87,9 +87,11 @@ The exit is upstream: the shim goes to `memorysafety/rav1d` as a pull request, a
 
 > **Note**: crates.io refuses git dependencies, so a fork means a published crate. This is the `re_rav1d` pattern with the sqzer organisation holding the crate instead of a third party.
 
-### D3. One package, `sqzer` on npm, the whole portable tier
+### D3. One package, `sqzer` on npm, the portable tier minus SVG, the browser's canvas for input it cannot decode
 
-The package is `sqzer` on npm, an ES module built with `wasm-pack build --target web`, which every bundler and the bare browser load, and its version is the workspace version. It carries the whole portable tier: every decoder, `mozjpeg-rs`, `oxipng`, `image-webp` lossless and `ravif`. That is 1.9 MB over brotli by the table above; a page loads it once, and one package with one capability list is easier to explain than a feature matrix. Feature subsets are the answer if size ever becomes the complaint, not part of this record.
+The package is `sqzer` on npm, an ES module built with `wasm-pack build --target web`, which every bundler and the bare browser load, and its version is the workspace version. It carries the portable tier minus `svg`: every raster decoder, `mozjpeg-rs`, `oxipng`, `image-webp` lossless and `ravif`. That is 1.4 MB over brotli by the table above; a page loads it once, and one package with one capability list is easier to explain than a feature matrix. Feature subsets are the answer if size ever becomes the complaint, not part of this record.
+
+SVG is left to the browser, under a rule that covers more than SVG: the package's own decoder comes first, the browser's canvas decodes what the package cannot, and the canvas is never used inside the search loop. `resvg` on wasm32 has no fonts, so for SVG the browser is the more capable decoder today, and its output is the same 8-bit sRGB `resvg` would give. For HEIC on Safari the browser is the only decoder, at 8 bits. When a build carries a more capable decoder, the AGPL build of `ROADMAP.md` with its HEIC decoder for one, the fallback stops firing for that format on its own, because it only runs where the package has nothing. `sqzer-wasm` selects the codec features itself, as `sqzer-codecs` features under `sqzer` with default features off, so the wasm build and the library's `portable` feature can differ by that one entry.
 
 The API is the builder, as ADR-0001 D8 said, spelled the way JavaScript spells it. Three calls:
 
@@ -102,6 +104,10 @@ const out = optimize(bytes, { format: "avif", target: 70, width: 1600 });
 
 // decode once, encode as often as a slider moves
 const image = decode(bytes, { maxPixels: 24_000_000 });
+// the same, with the browser's canvas for what `decode` cannot read: SVG, HEIC on Safari
+const image2 = await decodeAny(bytes, { maxPixels: 24_000_000, width: 1600 });
+// pixels from anywhere else, a canvas say
+const image3 = fromPixels(rgba, width, height);
 image.width; image.height; image.format; image.alpha; image.animated;
 const a = image.encode({ format: "webp", lossless: true });
 const b = image.encode({ format: "jpeg", quality: 80, onTrial: (t) => {} });
@@ -149,7 +155,9 @@ That repository's Pages workflow deploys on every merge to its `main`, so a page
 
 **Threads through `wasm-bindgen-rayon`.** Rejected: nightly, `build-std`, and isolation headers the host cannot send. The single-threaded search on a 12 megapixel photo is 18 seconds; the page mitigates with a width, not with threads.
 
-**The browser's own decoders for AVIF, HEIC and JPEG XL, through `createImageBitmap`.** Free decoders, HEIC on Safari included. Rejected for this record: decoding is asynchronous and the search calls the decoder inside a synchronous loop, so it needs JSPI, which `wasm-bindgen` calls experimental; and the browser returns 8-bit sRGB only. Worth revisiting for HEIC input, which has no other route to the browser.
+**The browser's own decoders through `createImageBitmap`, everywhere.** Free decoders, HEIC on Safari included. Rejected inside the search loop: decoding is asynchronous and the search calls the decoder inside a synchronous loop, so it needs JSPI, which `wasm-bindgen` calls experimental; and the browser returns 8-bit sRGB only, which would score a different image than the encoder wrote. Accepted for input, as D3's fallback, where being asynchronous costs nothing and where the package has no decoder or, for SVG, a worse one.
+
+**`resvg` on wasm32 with fonts loaded at run time.** `fontdb::load_font_data` works there, and `queryLocalFonts()` hands over installed font files. Rejected: that API is Chromium only, HTTPS, behind a permission prompt, and main thread only; every other browser would need fetched web fonts, with no answer for CJK. The browser's canvas has every font the user has, in every browser, without a prompt. A `loadFonts` entry can come later if a consumer wants output identical to the CLI.
 
 **A `miniz_oxide` backend for `oxipng`.** A hundred-line patch upstream would keep the wasm32 build C-free. Rejected as the plan: upstream deleted that backend in 7.0.0 for ratio and speed and considers `freestanding` its wasm answer, so acceptance is uncertain, and D1 makes it unnecessary. It can still be offered upstream.
 
@@ -179,12 +187,12 @@ That repository's Pages workflow deploys on every merge to its `main`, so a page
 
 - ADR-0002's wasm32 gate is superseded; the record carries a line saying so.
 - `sqzer-codecs`: `sqzer-rav1d` on every target, `oxipng` on every target with `freestanding` on wasm32, the `png` encoder module deleted, AVIF probe and decode registered everywhere.
-- `sqzer-wasm`: the D3 surface, `cdylib`, `wasm-bindgen`, `js-sys`, `serde`, `serde-wasm-bindgen`, `tsify-next`, `console_error_panic_hook`.
+- `sqzer-wasm`: the D3 surface, `decodeAny` as a `wasm-bindgen` JS snippet so the fallback ships with the package, `fromPixels`, `cdylib`, `wasm-bindgen`, `js-sys`, `serde`, `serde-wasm-bindgen`, `tsify-next`, `console_error_panic_hook`.
 - `.cargo/config.toml` with `simd128` for wasm32; `ci.yml`'s wasm job gains `wasm-pack test --node` over the fixtures; `dist-workspace.toml`, `publish-npm.yml`.
 - README, `CONTRIBUTING.md`, `CLAUDE.md`: "pure Rust" and "C-free" become the D1 wording; the AVIF and `oxipng` notes are rewritten; the layout entry for `crates/sqzer-wasm`, and a link to the page and its repository.
 - `CHANGELOG.md` when the code lands: `codecs` entries for AVIF decoding and `oxipng` on wasm32 and for the `rav1d` crate change, a `wasm` entry for the package.
 - The Releases bullet of `CLAUDE.md` gains a step after the tag: bump the version `sqzer-dev/sqzer.dev` imports, or merge the Dependabot pull request that does.
-- The `ROADMAP.md` 0.3 note about the browser build's gaps shrinks to lossy WebP and JPEG XL, both licence gaps, and SVG text without fonts.
+- The `ROADMAP.md` 0.3 note about the browser build's gaps shrinks to lossy WebP and JPEG XL, both licence gaps. SVG comes from the browser with the user's fonts, which is better than the CLI does on wasm32.
 
 ---
 
@@ -192,7 +200,7 @@ That repository's Pages workflow deploys on every merge to its `main`, so a page
 
 1. [ ] `github.com/sqzer-dev/rav1d`: branch `sqzer` on upstream `main` with the shim, published as `sqzer-rav1d`; the same shim as a pull request upstream. `sqzer-codecs` on it for every target; the `paste` ignore dropped if it can be; the AVIF fixtures decoded in the wasm test.
 2. [ ] `oxipng` on wasm32 with `freestanding`, the `png` encoder removed, the golden PNG test running on wasm32 too; `.cargo/config.toml`.
-3. [ ] The `sqzer-wasm` surface of D3 with `wasm-pack test --node` over the fixtures: every format in and out, an `EncoderUnavailable` for JPEG XL with `availableIn`, `onTrial` called once per trial, `maxPixels` refusing a 25 megapixel header.
+3. [ ] The `sqzer-wasm` surface of D3 with `wasm-pack test --node` over the fixtures: every raster format in and out, an `EncoderUnavailable` for JPEG XL with `availableIn`, `onTrial` called once per trial, `maxPixels` refusing a 25 megapixel header, `fromPixels` round-tripping a fixture's pixels. `decodeAny` cannot run in Node; it is checked in Chrome, Firefox and Safari with item 5, including `createImageBitmap` on an SVG blob inside a Worker, which may need the main thread in some of them.
 4. [ ] `publish-npm.yml`, the `dist` config and `dist generate`; the trusted publisher on npmjs.com; a rehearsal with `pr-run-mode = "upload"` on a branch, then the first publish with the 0.3.0 tag.
 5. [ ] `github.com/sqzer-dev/sqzer.dev`: the page, its Pages workflow, `CNAME`, Dependabot on `sqzer`, DNS for `sqzer.dev`; this README pointing at the page and the version bump in the Releases bullet of `CLAUDE.md`.
 6. [ ] The wording changes of section 5 in README, `CONTRIBUTING.md`, `CLAUDE.md` and `ROADMAP.md`.

@@ -55,7 +55,7 @@
     },
     {
       "path": "docs/adr/0011-browser-build.md",
-      "description": "The browser build: portable means runs everywhere and may need a C compiler to build, oxipng on wasm32 through freestanding, AVIF decoding through the sqzer-rav1d fork on every target, the JavaScript API of sqzer-wasm, simd128, the dist publish job for npm, the page in its own repository",
+      "description": "The browser build: portable means runs everywhere and may need a C compiler to build, oxipng on wasm32 through freestanding, AVIF decoding through the sqzer-rav1d fork on every target, the JavaScript API of sqzer-wasm with the browser's canvas as input fallback, simd128, the dist publish job for npm, the page in its own repository",
       "scope": ["crates/sqzer-wasm/**", "crates/sqzer-codecs/**", ".cargo/**", ".github/**", "dist-workspace.toml"]
     }
   ]
