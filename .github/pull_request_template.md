@@ -11,5 +11,6 @@
 ## Checklist
 
 - [ ] `CHANGELOG.md` has an entry under `## Unreleased`, if behaviour changes
+- [ ] a new ADR has its row in `docs/adr/README.md` and its entry in `.greptile/files.json`, if there is one
 - [ ] tests cover the change; golden scores are unchanged, or the PR says why they moved
 - [ ] `cargo fmt`, `cargo clippy --all-features`, `cargo test`, `cargo doc` and `cargo deny check` pass locally
