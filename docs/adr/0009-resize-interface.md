@@ -1,6 +1,7 @@
 # ADR-0009: The resize interface
 
 **Status:** Accepted
+**Superseded by:** ADR-0010 for the stage methods of D4: `Prepared` and `Ready` types instead of `prepare` and `resize` on `Sqzer` and a canvas on `Decoded`
 **Date:** 2026-09-27
 **Deciders:** Vlad (sole maintainer)
 **Scope:** How a user asks for a size: the resize flags of the CLI, the `Resize` type in `sqzer-core`, and what the resize stage does for each fit. Replaces the "Resize" section of ADR-0003 (`--resize` with `rimage`'s grammar, `--filter`), none of which beyond `--max-width` and `--max-height` was built. Nothing here changes the stage order of ADR-0007 D2 (orient, colour, resize, encode), the resampler (`fast_image_resize`, Lanczos3 in linear light with premultiplied alpha), or the rule that the metric scores the resized image.
@@ -175,10 +176,10 @@ Colour conversion runs once, and every width starts from the same colour-managed
 
 ## 6. Action items
 
-1. [ ] `Resize`, `Fit`, `Position`, `Filter` and `Size` in `sqzer-core` with the geometry of D2 as pure functions, tested on the corner cases: one side given, a box larger than the image with and without `--enlarge`, extreme aspect ratios, a one-pixel result.
-2. [ ] The facade: `prepare` and `resize` of D4 with `transform` kept on top, the pending canvas on `Decoded` applied in `encode`; `SrcCropping::FitIntoDestination` for `cover`, the pad for `contain` in every layout and sample width with the per-encoder background, a library test that `run` with `contain` returns the full box; the filter mapping.
-3. [ ] The CLI flags and rules of D1, the width list and naming of D3, the dry run showing crop and padding; check the ADR-0008 estimate for a file with several widths.
-4. [ ] README: the resize examples and the `rimage` migration table; the `rimage` hint.
+1. [x] `Resize`, `Fit`, `Position`, `Filter` and `Size` in `sqzer-core` with the geometry of D2 as pure functions, tested on the corner cases: one side given, a box larger than the image with and without `--enlarge`, extreme aspect ratios, a one-pixel result. (Done in `sqzer-core::resize`. A request `Resize::check` refuses is still given a lenient geometry, so the dry run can describe it; the facade and the CLI refuse it first.)
+2. [x] The facade: `prepare` and `resize` of D4 with `transform` kept on top, the pending canvas on `Decoded` applied in `encode`; `SrcCropping::FitIntoDestination` for `cover`, the pad for `contain` in every layout and sample width with the per-encoder background, a library test that `run` with `contain` returns the full box; the filter mapping. (Done, with two departures. The stage methods became the `Prepared` and `Ready` types of ADR-0010, since the builder already has `Sqzer::resize(Resize)`, and the canvas is on `Ready`, not `Decoded`. The cover crop is the box `Resize::fit` computes, passed to `fast_image_resize` as `SrcCropping::Crop`, so the dry run and the resampler cannot disagree; the box is the one `FitIntoDestination` would compute. The filter reads its support past the crop edge, as it would anywhere in the picture. `nearest` resamples the encoded values without the alpha multiply, so pixel art keeps its exact colours.)
+3. [x] The CLI flags and rules of D1, the width list and naming of D3, the dry run showing crop and padding; check the ADR-0008 estimate for a file with several widths. (Done. The estimate needs no new term: the widths run one after another, so the largest output counts, and the prepared image kept alive between them, at most 8 bytes a pixel, is inside the decode term that `Work::estimate` adds instead of overlapping. Duplicate paths are caught where they can arise: widths of the same output size per file before any encode, a format named twice and a template that cannot tell outputs apart as argument errors. Two inputs mapped to one path by `-o` are still caught at write time, as in `0.1.0`.)
+4. [x] README: the resize examples and the `rimage` migration table; the `rimage` hint. (Done. `rimage` reads `WxH` as an exact size, so it maps to `--fit fill`; `Nl` maps to a square `inside` box; `Ns` has no equivalent and the hint says so.)
 5. [x] On acceptance, the superseded line on ADR-0003.
 
 ## Sources

@@ -58,15 +58,27 @@ impl Work {
     }
 }
 
-/// Pixels the encoder gets from a `w` x `h` header after `resize`. The
-/// header is read before EXIF orientation, which may swap the sides, and
-/// a one-sided bound then fits a different box: the larger of the two.
-pub fn output_pixels(resize: Resize, w: u32, h: u32) -> u64 {
-    let fit = |w, h| {
-        let (w, h) = resize.fit(w, h).unwrap_or((w, h));
+/// Pixels the encoder gets from a `w` x `h` header after the largest of
+/// `sizes`, a contain fit's padding included. The header is read before
+/// EXIF orientation, which may swap the sides, and a one-sided bound then
+/// fits a different box: the larger of the two.
+///
+/// A `--width` list runs its widths one after another, so the largest is
+/// the peak (ADR-0009 action item 3). The prepared image stays alive
+/// while they run, at most 8 bytes a pixel as 16-bit RGBA, which the
+/// decode term already counts: [`Work::estimate`] adds the decode and the
+/// encode instead of taking the larger, and the decoder's own buffers are
+/// gone by then.
+pub fn output_pixels(sizes: &[Resize], w: u32, h: u32) -> u64 {
+    let fit = |resize: &Resize, w, h| {
+        let (w, h) = resize.fit(w, h).map_or((w, h), |g| g.output());
         u64::from(w) * u64::from(h)
     };
-    fit(w, h).max(fit(h, w))
+    sizes
+        .iter()
+        .map(|r| fit(r, w, h).max(fit(r, h, w)))
+        .max()
+        .unwrap_or(u64::from(w) * u64::from(h))
 }
 
 /// Memory available to this process now: the system's, or the lowest
@@ -296,14 +308,35 @@ mod tests {
 
     #[test]
     fn output_pixels_cover_either_orientation() {
-        let one_sided = Resize {
-            max_width: Some(1000),
-            max_height: None,
-        };
+        let one_sided = Resize::inside(Some(1000), None);
         // A 2000x1000 header rotated to 1000x2000 is encoded whole.
-        assert_eq!(output_pixels(one_sided, 2000, 1000), 2_000_000);
-        assert_eq!(output_pixels(one_sided, 1000, 2000), 2_000_000);
-        assert_eq!(output_pixels(Resize::default(), 30, 20), 600);
+        assert_eq!(output_pixels(&[one_sided], 2000, 1000), 2_000_000);
+        assert_eq!(output_pixels(&[one_sided], 1000, 2000), 2_000_000);
+        assert_eq!(output_pixels(&[Resize::default()], 30, 20), 600);
+    }
+
+    #[test]
+    fn output_pixels_take_the_largest_size_and_the_padding() {
+        use sqzer::core::resize::{Fit, Size};
+        let widths = [100, 400, 200].map(|w| Resize::inside(Some(w), None));
+        assert_eq!(output_pixels(&widths, 800, 800), 160_000);
+        // A contain canvas is what gets encoded.
+        let contain = Resize {
+            size: Size::Box {
+                width: Some(500),
+                height: Some(500),
+            },
+            fit: Fit::Contain,
+            ..Resize::NONE
+        };
+        assert_eq!(output_pixels(&[contain], 100, 10), 250_000);
+        // So is an enlarged image.
+        let double = Resize {
+            size: Size::Scale(2.0),
+            enlarge: true,
+            ..Resize::NONE
+        };
+        assert_eq!(output_pixels(&[double], 100, 10), 4_000);
     }
 
     #[cfg(target_os = "linux")]

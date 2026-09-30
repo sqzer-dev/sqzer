@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use clap::{ArgAction, Parser, ValueEnum};
 use sqzer::core::codec::Format;
 use sqzer::core::params::{Preset, Subsampling};
+use sqzer::core::resize::{Filter, Fit, Position};
 
 /// The six command shapes of ADR-0001 D5, printed under both help tiers.
 const EXAMPLES: &str = "\
@@ -17,6 +18,7 @@ Examples:
   sqzer ./assets -r -f avif -o ./dist      recurse, mirror the tree into dist
   sqzer *.png --preset lossless -f webp    lossless conversion
   sqzer in.png -t 60 --max-width 1600      lower perceptual target, plus a resize
+  sqzer in.jpg --width 480,960 -f avif     srcset widths from one decode: in-480w.avif, in-960w.avif
   sqzer in.png --json                      sizes, scores, chosen params, one line per output
   sqzer --list-codecs                      what this build decodes and encodes, and from which tier
 
@@ -77,8 +79,7 @@ pub struct Args {
 
     /// Named settings: web (target 70), thumbnail (60, fit inside 512 x
     /// 512), archive (85), lossless. Explicit --target, --quality,
-    /// --lossless, --effort, --max-width and --max-height override the
-    /// preset.
+    /// --lossless, --effort and the resize flags override the preset.
     #[arg(long, value_enum, value_name = "NAME", help_heading = "Quality")]
     pub preset: Option<PresetArg>,
 
@@ -116,15 +117,87 @@ pub struct Args {
     ///
     /// Lanczos3 in linear light, alpha premultiplied. EXIF orientation is
     /// applied first, so N bounds the picture as displayed. With
-    /// --max-height the image fits inside both. Either flag replaces the
-    /// resize of --preset thumbnail.
-    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..), help_heading = "Resize")]
+    /// `--max-height` the image fits inside both. Either flag replaces the
+    /// resize of `--preset thumbnail`. The same as `--width N` with the
+    /// default `--fit inside`.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..), conflicts_with_all = ["width", "height", "scale", "fit", "enlarge"], help_heading = "Resize")]
     pub max_width: Option<u32>,
 
     /// Scale down to at most N pixels tall, keeping the aspect ratio.
     /// Never enlarges.
-    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..), help_heading = "Resize")]
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..), conflicts_with_all = ["width", "height", "scale", "fit", "enlarge"], help_heading = "Resize")]
     pub max_height: Option<u32>,
+
+    /// Target width. A comma-separated list writes one output per width
+    /// from one decode, named `photo-480w.avif` and so on, for `srcset`.
+    ///
+    /// Each width is resized from the source and searched on its own. A
+    /// `--template` must then contain `{width}`, and `-o` must name a
+    /// directory.
+    #[arg(long, value_name = "N[,N...]", value_delimiter = ',', value_parser = clap::value_parser!(u32).range(1..), hide_short_help = true, help_heading = "Resize")]
+    pub width: Vec<u32>,
+
+    /// Target height. With a `--width` list, applies to every width.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..), hide_short_help = true, help_heading = "Resize")]
+    pub height: Option<u32>,
+
+    /// How the image meets the `--width` x `--height` box, as in CSS
+    /// `object-fit`. Default `inside`.
+    ///
+    /// `inside` scales to fit in the box; one side may be given alone.
+    /// `cover` fills the box and crops the overflow at `--position`.
+    /// `contain` fits in the box and pads the rest with `--background`.
+    /// `fill` stretches both axes to the box. `outside` covers the box
+    /// without cropping, so with a square box it sets the shortest side.
+    /// All but `inside` need both `--width` and `--height`.
+    #[arg(
+        long,
+        value_enum,
+        value_name = "FIT",
+        hide_short_help = true,
+        help_heading = "Resize"
+    )]
+    pub fit: Option<FitArg>,
+
+    /// Where `--fit cover` crops and `--fit contain` places the image.
+    /// Default `center`.
+    #[arg(
+        long,
+        value_enum,
+        value_name = "POSITION",
+        hide_short_help = true,
+        help_heading = "Resize"
+    )]
+    pub position: Option<PositionArg>,
+
+    /// The padding of `--fit contain`: `#rgb`, `#rrggbb`, `#rrggbbaa`,
+    /// `white`, `black` or `transparent`. Default: transparent for a
+    /// format that has alpha, white for one that does not. A translucent
+    /// colour needs a format with alpha.
+    #[arg(long, value_name = "COLOUR", value_parser = parse_colour, hide_short_help = true, help_heading = "Resize")]
+    pub background: Option<[u8; 4]>,
+
+    /// Scale by a percentage instead of a box, keeping the aspect ratio:
+    /// `50%`. Above 100% needs `--enlarge`.
+    #[arg(long, value_name = "N%", value_parser = parse_scale, conflicts_with_all = ["width", "height", "fit"], hide_short_help = true, help_heading = "Resize")]
+    pub scale: Option<f32>,
+
+    /// Allow scaling up. Without it no fit ever scales up: an image
+    /// already inside the box is left alone, `cover` crops at the source's
+    /// resolution, `contain` pads without scaling.
+    #[arg(long, hide_short_help = true, help_heading = "Resize")]
+    pub enlarge: bool,
+
+    /// Resampling filter. Default `lanczos3`; `nearest` keeps the exact
+    /// colours of pixel art.
+    #[arg(
+        long,
+        value_enum,
+        value_name = "FILTER",
+        hide_short_help = true,
+        help_heading = "Resize"
+    )]
+    pub filter: Option<FilterArg>,
 
     // ---- Output placement
     /// Output file, when there is one input and one format and PATH has
@@ -328,6 +401,102 @@ impl From<PresetArg> for Preset {
     }
 }
 
+/// `--fit` values, mirroring [`Fit`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum FitArg {
+    /// Fit inside the box, keep the aspect ratio.
+    Inside,
+    /// Cover the box, crop the overflow.
+    Cover,
+    /// Fit inside the box, pad to it.
+    Contain,
+    /// Stretch to the box.
+    Fill,
+    /// Cover the box without cropping.
+    Outside,
+}
+
+impl From<FitArg> for Fit {
+    fn from(f: FitArg) -> Self {
+        match f {
+            FitArg::Inside => Self::Inside,
+            FitArg::Cover => Self::Cover,
+            FitArg::Contain => Self::Contain,
+            FitArg::Fill => Self::Fill,
+            FitArg::Outside => Self::Outside,
+        }
+    }
+}
+
+/// `--position` values, mirroring [`Position`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum PositionArg {
+    /// Centred.
+    Center,
+    /// Top edge.
+    Top,
+    /// Bottom edge.
+    Bottom,
+    /// Left edge.
+    Left,
+    /// Right edge.
+    Right,
+    /// Top-left corner.
+    TopLeft,
+    /// Top-right corner.
+    TopRight,
+    /// Bottom-left corner.
+    BottomLeft,
+    /// Bottom-right corner.
+    BottomRight,
+}
+
+impl From<PositionArg> for Position {
+    fn from(p: PositionArg) -> Self {
+        match p {
+            PositionArg::Center => Self::Center,
+            PositionArg::Top => Self::Top,
+            PositionArg::Bottom => Self::Bottom,
+            PositionArg::Left => Self::Left,
+            PositionArg::Right => Self::Right,
+            PositionArg::TopLeft => Self::TopLeft,
+            PositionArg::TopRight => Self::TopRight,
+            PositionArg::BottomLeft => Self::BottomLeft,
+            PositionArg::BottomRight => Self::BottomRight,
+        }
+    }
+}
+
+/// `--filter` values, mirroring [`Filter`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum FilterArg {
+    /// Lanczos3, sharp with little ringing.
+    Lanczos3,
+    /// Mitchell-Netravali bicubic, softer.
+    Mitchell,
+    /// Catmull-Rom bicubic.
+    CatmullRom,
+    /// Bilinear.
+    Bilinear,
+    /// Box, every source pixel weighted equally.
+    Box,
+    /// Nearest neighbour, for pixel art.
+    Nearest,
+}
+
+impl From<FilterArg> for Filter {
+    fn from(f: FilterArg) -> Self {
+        match f {
+            FilterArg::Lanczos3 => Self::Lanczos3,
+            FilterArg::Mitchell => Self::Mitchell,
+            FilterArg::CatmullRom => Self::CatmullRom,
+            FilterArg::Bilinear => Self::Bilinear,
+            FilterArg::Box => Self::Box,
+            FilterArg::Nearest => Self::Nearest,
+        }
+    }
+}
+
 /// `--subsampling` values, mirroring [`Subsampling`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum SubsamplingArg {
@@ -401,6 +570,44 @@ fn parse_quality(s: &str) -> Result<f32, String> {
         return Err("quality is 0 to 100".into());
     }
     Ok(q)
+}
+
+/// `50%` to `0.5`.
+fn parse_scale(s: &str) -> Result<f32, String> {
+    let bad = || format!("`{s}` is not a percentage; try 50%");
+    let digits = s.strip_suffix('%').ok_or_else(bad)?;
+    let n: f32 = digits.trim().parse().map_err(|_| bad())?;
+    if !n.is_finite() || n <= 0.0 {
+        return Err("a scale is a percentage above 0".into());
+    }
+    Ok(n / 100.0)
+}
+
+/// `#rgb`, `#rrggbb`, `#rrggbbaa` or a name, to RGBA.
+fn parse_colour(s: &str) -> Result<[u8; 4], String> {
+    match s.to_ascii_lowercase().as_str() {
+        "white" => return Ok([255; 4]),
+        "black" => return Ok([0, 0, 0, 255]),
+        "transparent" => return Ok([0; 4]),
+        _ => {}
+    }
+    let bad =
+        || format!("`{s}` is not a colour; try #rrggbb, #rrggbbaa, white, black or transparent");
+    let hex = s.strip_prefix('#').unwrap_or(s);
+    if !hex.is_ascii() {
+        return Err(bad());
+    }
+    let byte = |i: usize, len: usize| {
+        u8::from_str_radix(&hex[i..i + len], 16)
+            .map(|v| if len == 1 { v * 17 } else { v })
+            .map_err(|_| bad())
+    };
+    match hex.len() {
+        3 => Ok([byte(0, 1)?, byte(1, 1)?, byte(2, 1)?, 255]),
+        6 => Ok([byte(0, 2)?, byte(2, 2)?, byte(4, 2)?, 255]),
+        8 => Ok([byte(0, 2)?, byte(2, 2)?, byte(4, 2)?, byte(6, 2)?]),
+        _ => Err(bad()),
+    }
 }
 
 fn parse_pixels(s: &str) -> Result<u64, String> {
@@ -484,6 +691,16 @@ mod tests {
             &["a.png", "--max-width", "0"],
             &["a.png", "--max-height", "0"],
             &["a.png", "--max-width", "wide"],
+            &["a.png", "--max-width", "10", "--width", "10"],
+            &["a.png", "--max-height", "10", "--fit", "cover"],
+            &["a.png", "--scale", "50%", "--width", "10"],
+            &["a.png", "--scale", "50"],
+            &["a.png", "--scale", "0%"],
+            &["a.png", "--width", "0"],
+            &["a.png", "--width", "10,,20"],
+            &["a.png", "--fit", "stretch"],
+            &["a.png", "--background", "#12"],
+            &["a.png", "--filter", "hamming"],
         ] {
             let err = parse(bad).unwrap_err();
             assert_eq!(err.exit_code(), 2, "{bad:?}: {err}");
@@ -529,6 +746,47 @@ mod tests {
         assert_eq!(parse_pixels("1G").unwrap(), 1_000_000_000);
         assert!(parse_pixels("lots").is_err());
         assert!(parse_pixels("0").is_err());
+    }
+
+    #[test]
+    fn resize_flags_parse() {
+        let a = parse(&[
+            "a.png",
+            "--width",
+            "480,960",
+            "--height",
+            "300",
+            "--fit",
+            "cover",
+            "--position",
+            "top-left",
+            "--filter",
+            "catmull-rom",
+            "--enlarge",
+        ])
+        .unwrap();
+        assert_eq!(a.width, vec![480, 960]);
+        assert_eq!(a.height, Some(300));
+        assert_eq!(a.fit, Some(FitArg::Cover));
+        assert_eq!(a.position, Some(PositionArg::TopLeft));
+        assert_eq!(a.filter, Some(FilterArg::CatmullRom));
+        assert!(a.enlarge);
+        assert_eq!(
+            parse(&["a.png", "--scale", "12.5%"]).unwrap().scale,
+            Some(0.125)
+        );
+    }
+
+    #[test]
+    fn colours_parse() {
+        assert_eq!(parse_colour("#fff").unwrap(), [255; 4]);
+        assert_eq!(parse_colour("#FF8000").unwrap(), [255, 128, 0, 255]);
+        assert_eq!(parse_colour("00000080").unwrap(), [0, 0, 0, 128]);
+        assert_eq!(parse_colour("Transparent").unwrap(), [0; 4]);
+        assert_eq!(parse_colour("black").unwrap(), [0, 0, 0, 255]);
+        for bad in ["", "#ff", "#gggggg", "red", "#ffé"] {
+            assert!(parse_colour(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

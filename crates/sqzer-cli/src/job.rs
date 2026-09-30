@@ -1,14 +1,16 @@
 //! One input through the pipeline: read, probe, reserve its memory,
-//! decode and resize once, then encode and place every requested output.
+//! decode and prepare once, resize once per width, then encode and place
+//! every requested output.
 
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use sqzer::Sqzer;
 use sqzer::core::Decoded;
 use sqzer::core::codec::Format;
-use sqzer::core::params::{Resolved, Target};
+use sqzer::core::params::{Resize, Resolved, Target};
+use sqzer::core::resize::{Geometry, Size};
+use sqzer::{Ready, Sqzer};
 
 use crate::budget::{Cost, MemoryBudget, Work, output_pixels};
 use crate::cli::format_name;
@@ -46,6 +48,7 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> Tally {
         Err(e) => return fail(Record::failed(name, &format!("cannot read: {e}"))),
     };
     let input_len = bytes.len() as u64;
+    let sizes = sizes(cfg);
     // The header sizes the budget reservation; a file no usable decoder
     // claims reserves the maximum and gets its error from the decode
     // below, which knows whether the format is unknown or merely
@@ -62,7 +65,7 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> Tally {
         },
         |(w, h)| {
             let pixels = u64::from(w) * u64::from(h);
-            let out = output_pixels(cfg.sqzer.resize_bounds(), w, h);
+            let out = output_pixels(&sizes, w, h);
             Cost {
                 bytes: cfg.work.estimate(pixels, out),
                 pixels,
@@ -87,38 +90,159 @@ pub fn process(input: &Input, ctx: &Ctx<'_>) -> Tally {
     };
     // The record describes the input; everything after this line sees the
     // image the encoder will get.
-    let base = describe(input, &decoded, input_len);
-    let (width, height) = (decoded.image.width(), decoded.image.height());
-    if let Some(w) = &worker
-        && cfg.sqzer.resize_bounds().fit(width, height).is_some()
-    {
-        w.stage(Stage::Resize);
-    }
-    let decoded = match cfg.sqzer.transform(decoded) {
-        Ok(d) => d,
-        Err(e) => return fail(base.fail(&e)),
+    let emit = Emit {
+        input,
+        base: describe(input, &decoded, input_len),
+        ctx,
+        worker: worker.as_ref(),
     };
-
-    let formats: Vec<Option<Format>> = if cfg.formats.is_empty() {
-        vec![None]
-    } else {
-        cfg.formats.iter().copied().map(Some).collect()
-    };
-    for format in formats {
-        let sqzer = match format {
-            Some(f) => cfg.sqzer.clone().format(f),
-            None => cfg.sqzer.clone(),
-        };
-        let base = base.clone();
-        let (record, details) = if cfg.dry_run {
-            (plan(input, &decoded, &sqzer, base, ctx), Vec::new())
-        } else {
-            run(input, &decoded, &sqzer, base, ctx, worker.as_ref())
-        };
-        tally.add(&record);
-        ctx.printer.record(&record, &details);
-    }
+    emit.sizes(decoded, &sizes, &mut tally);
     tally
+}
+
+/// Everything after the decode, for one input: the resize of each size
+/// and the outputs of each.
+struct Emit<'a> {
+    input: &'a Input,
+    /// The record fields known from the input.
+    base: Record,
+    ctx: &'a Ctx<'a>,
+    worker: Option<&'a Worker<'a>>,
+}
+
+impl Emit<'_> {
+    /// Prepare `decoded`, resize it to each of `sizes` and write every
+    /// format of each.
+    fn sizes(&self, decoded: Decoded, sizes: &[Resize], tally: &mut Tally) {
+        let cfg = self.ctx.cfg;
+        let (width, height) = (decoded.image.width(), decoded.image.height());
+
+        // One size: the prepared image is resized in place of a copy.
+        if cfg.widths.is_empty() {
+            let geometry = cfg.sqzer.resize_bounds().fit(width, height);
+            self.stage_resize(geometry);
+            match cfg.sqzer.transform(decoded) {
+                Ok(ready) => self.formats(&ready, geometry, tally),
+                Err(e) => self.failed(&e, tally),
+            }
+            return;
+        }
+
+        // A width list: every width from the one prepared image. Widths
+        // that come out the same size would write the same file.
+        let geometries: Vec<Option<Geometry>> =
+            sizes.iter().map(|r| r.fit(width, height)).collect();
+        let dims: Vec<(u32, u32)> = geometries
+            .iter()
+            .map(|g| g.map_or((width, height), |g| g.output()))
+            .collect();
+        if let Some((i, j)) = (0..dims.len())
+            .flat_map(|j| (0..j).map(move |i| (i, j)))
+            .find(|&(i, j)| dims[i] == dims[j])
+        {
+            let (w, h) = dims[i];
+            let hint = if cfg.sqzer.resize_bounds().enlarge {
+                "drop one"
+            } else {
+                "--enlarge scales it up, or drop one"
+            };
+            let msg = format!(
+                "widths {} and {} both give {w}x{h} from this {width}x{height} image; {hint}",
+                cfg.widths[i], cfg.widths[j]
+            );
+            return self.failed(&msg, tally);
+        }
+        let prepared = match cfg.sqzer.prepare(decoded) {
+            Ok(d) => d,
+            Err(e) => return self.failed(&e, tally),
+        };
+        for (resize, geometry) in sizes.iter().zip(geometries) {
+            self.stage_resize(geometry);
+            match prepared.resize(resize) {
+                Ok(ready) => self.formats(&ready, geometry, tally),
+                Err(e) => self.failed(&e, tally),
+            }
+        }
+    }
+
+    /// Plan or write every requested format of one size.
+    fn formats(&self, ready: &Ready, geometry: Option<Geometry>, tally: &mut Tally) {
+        let cfg = self.ctx.cfg;
+        let formats: Vec<Option<Format>> = if cfg.formats.is_empty() {
+            vec![None]
+        } else {
+            cfg.formats.iter().copied().map(Some).collect()
+        };
+        for format in formats {
+            let sqzer = match format {
+                Some(f) => cfg.sqzer.clone().format(f),
+                None => cfg.sqzer.clone(),
+            };
+            let base = self.base.clone();
+            let (record, details) = if cfg.dry_run {
+                let rec = plan(self.input, ready, &sqzer, base, geometry, self.ctx);
+                (rec, Vec::new())
+            } else {
+                run(self.input, ready, &sqzer, base, self.ctx, self.worker)
+            };
+            tally.add(&record);
+            self.ctx.printer.record(&record, &details);
+        }
+    }
+
+    fn stage_resize(&self, geometry: Option<Geometry>) {
+        if let Some(w) = self.worker
+            && geometry.is_some()
+        {
+            w.stage(Stage::Resize);
+        }
+    }
+
+    fn failed(&self, error: &dyn std::fmt::Display, tally: &mut Tally) {
+        let rec = self.base.clone().fail(error);
+        tally.add(&rec);
+        self.ctx.printer.record(&rec, &[]);
+    }
+}
+
+/// The resize of each output size: the one on `sqzer`, or one per width
+/// of a `--width` list, each with the list's shared height.
+fn sizes(cfg: &Config) -> Vec<Resize> {
+    let base = cfg.sqzer.resize_bounds();
+    if cfg.widths.is_empty() {
+        return vec![base];
+    }
+    let height = match base.size {
+        Size::Box { height, .. } => height,
+        Size::Scale(_) => None,
+    };
+    cfg.widths
+        .iter()
+        .map(|&w| Resize {
+            size: Size::Box {
+                width: Some(w),
+                height,
+            },
+            ..base
+        })
+        .collect()
+}
+
+/// What a resize crops or pads, for the dry run.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn resize_note(g: &Geometry) -> Option<String> {
+    let px = |v: f64| v.round() as u64;
+    if let Some(c) = g.crop {
+        return Some(format!(
+            "crop {}x{} at {},{}",
+            px(c.width),
+            px(c.height),
+            px(c.left),
+            px(c.top)
+        ));
+    }
+    g.canvas
+        .map(|c| format!("pad {}x{} at {},{}", g.width, g.height, c.x, c.y))
 }
 
 /// The warning for a file whose estimate alone is over the budget. It
@@ -164,12 +288,21 @@ fn describe(input: &Input, decoded: &Decoded, input_len: u64) -> Record {
 }
 
 /// `--dry-run`: resolve the format and the path, encode nothing.
-fn plan(input: &Input, decoded: &Decoded, sqzer: &Sqzer, mut rec: Record, ctx: &Ctx<'_>) -> Record {
-    let format = sqzer.pick_format(decoded);
+fn plan(
+    input: &Input,
+    ready: &Ready,
+    sqzer: &Sqzer,
+    mut rec: Record,
+    geometry: Option<Geometry>,
+    ctx: &Ctx<'_>,
+) -> Record {
+    let format = sqzer.pick_format(ready);
     rec.format = Some(format_name(format));
-    rec.content = Some(content_name(sqzer::core::content::classify(&decoded.image)));
-    rec.output_width = Some(decoded.image.width());
-    rec.output_height = Some(decoded.image.height());
+    rec.content = Some(content_name(sqzer::core::content::classify(ready.image())));
+    let (width, height) = ready.output_size();
+    rec.output_width = Some(width);
+    rec.output_height = Some(height);
+    rec.resize_note = geometry.as_ref().and_then(resize_note);
     let caps = match sqzer.registry().encoder(format) {
         Ok(e) => e.caps(),
         Err(e) => return rec.fail(&e),
@@ -178,7 +311,13 @@ fn plan(input: &Input, decoded: &Decoded, sqzer: &Sqzer, mut rec: Record, ctx: &
     rec.tier = Some(caps.tier.to_string());
     // What the encoder would refuse, refused here too, so a plan is one
     // the run can carry out.
-    let img = &decoded.image;
+    if ready.translucent_padding() && !caps.alpha {
+        return rec.fail(&format!(
+            "{} has no alpha channel for a translucent `--background`",
+            caps.name
+        ));
+    }
+    let img = ready.image();
     for (blob, can) in [("EXIF", caps.exif), ("XMP", caps.xmp)] {
         let carried = if blob == "EXIF" {
             img.exif().is_some()
@@ -201,7 +340,14 @@ fn plan(input: &Input, decoded: &Decoded, sqzer: &Sqzer, mut rec: Record, ctx: &
             None
         }
     };
-    match destination(input, decoded, format, quality, ctx) {
+    match destination(
+        input,
+        ready.info().format,
+        (width, height),
+        format,
+        quality,
+        ctx,
+    ) {
         Ok(Destination::Stdout) => rec.output = Some("-".into()),
         Ok(Destination::File(path)) => {
             rec.output = Some(path.display().to_string());
@@ -218,7 +364,7 @@ fn plan(input: &Input, decoded: &Decoded, sqzer: &Sqzer, mut rec: Record, ctx: &
 /// Encode, place, write.
 fn run(
     input: &Input,
-    decoded: &Decoded,
+    ready: &Ready,
     sqzer: &Sqzer,
     rec: Record,
     ctx: &Ctx<'_>,
@@ -231,7 +377,7 @@ fn run(
         }
     };
     stage(Stage::Encode);
-    let out = match sqzer.encode_with(decoded, |p| stage(Stage::from(p))) {
+    let out = match sqzer.encode_with(ready, |p| stage(Stage::from(p))) {
         Ok(o) => o,
         Err(e) => return (rec.fail(&e), Vec::new()),
     };
@@ -260,7 +406,14 @@ fn run(
         }
     )];
 
-    let dest = match destination(input, decoded, out.format, Some(out.target), ctx) {
+    let dest = match destination(
+        input,
+        out.input.format,
+        (out.width, out.height),
+        out.format,
+        Some(out.target),
+        ctx,
+    ) {
         Ok(d) => d,
         Err(e) => return (rec.fail(&e), details),
     };
@@ -326,7 +479,8 @@ enum Destination {
 
 fn destination(
     input: &Input,
-    decoded: &Decoded,
+    input_format: Format,
+    (width, height): (u32, u32),
     format: Format,
     quality: Option<Resolved>,
     ctx: &Ctx<'_>,
@@ -336,15 +490,19 @@ fn destination(
         return Ok(match &placement.output {
             None => Destination::Stdout,
             Some(p) if placement.single_file => Destination::File(p.clone()),
-            Some(dir) => Destination::File(dir.join(format!("stdin.{}", format.extension()))),
+            Some(dir) => Destination::File(dir.join(format!(
+                "stdin{}.{}",
+                placement.width_tag(width),
+                format.extension()
+            ))),
         });
     }
     let naming = Naming {
         input,
-        input_format: decoded.info.format,
+        input_format,
         format,
-        width: decoded.image.width(),
-        height: decoded.image.height(),
+        width,
+        height,
         quality,
     };
     placement

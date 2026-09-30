@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Features
+
+* **cli:** resize flags of ADR-0009: `--width` and `--height` with `--fit inside|cover|contain|fill|outside` in CSS `object-fit` terms, `outside` setting the shortest side with a square box (ADR-0010), `--position` for where cover crops and contain places the image, `--background` for the padding of contain (a translucent one needs a format with alpha, else exit 3), `--scale 50%`, `--enlarge` to allow scaling up, and `--filter` (`lanczos3`, `mitchell`, `catmull-rom`, `bilinear`, `box`, `nearest`). `--max-width` and `--max-height` behave as before
+* **cli:** `--width 480,960,1600` writes one output per width and format from one decode, named `photo-480w.avif` and so on for `srcset`, each width searched on its own. Widths that come out the same size are refused before anything is encoded
+* **cli:** a dry run shows what a resize crops or pads, `48x32 -> 16x16 crop 32x32 at 0,0`
+* **cli:** the `rimage` hint translates `--resize` specs into the new flags, `--enlarge` included unless the command passed `--no-upscale`
+* **core:** `Resize` is the full request of ADR-0009 (`size`, `fit`, `position`, `background`, `enlarge`, `filter`) and `Resize::fit` returns a `Geometry` with the crop and the canvas. `Resize::inside` builds the old bounds. A breaking change for library callers that build the struct
+* **sqzer:** a type per stage, ADR-0010: `Sqzer::prepare` returns a `Prepared`, `Prepared::resize` a `Ready` once per size, and `Sqzer::transform` both in one step. `Sqzer::encode`, `encode_with` and `pick_format` take a `Ready`, so a raw `Decoded` goes through `prepare` first. `encode` pads a contain fit with the background its encoder calls for, transparent where it takes alpha and white where it does not, and refuses a translucent one on an encoder without alpha with `Error::Unsupported`
+
+### Bug Fixes
+
+* **cli:** `-f png,png`, and a `--template` without `{ext}` or `{format}` under several `-f` formats, are argument errors instead of writing one file over another
+
 ## 0.1.1
 
 ### Features

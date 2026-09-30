@@ -1,8 +1,9 @@
 //! SVG via `resvg` (Apache-2.0 OR MIT). Decoder only: the document is
 //! rasterised at its own size, one CSS pixel per pixel, at 96 dpi: the
 //! `width` and `height` attributes, else the `viewBox`, else the bounds
-//! of what it draws. The resize stage scales that raster down like any
-//! other input; a render scale comes with `--resize`. Embedded raster
+//! of what it draws. The resize stage scales that raster like any other
+//! input, so `--enlarge` resamples it instead of rendering the vectors at
+//! the larger size; a render scale is not wired up yet. Embedded raster
 //! images (`data:` URLs) are rendered, references to files on disk are
 //! refused. Text is shaped with the system's fonts on desktop targets and
 //! not at all on wasm32, which has no file system. Compressed `.svgz` is
