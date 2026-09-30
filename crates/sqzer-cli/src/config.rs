@@ -92,7 +92,7 @@ pub struct Config {
 pub fn build(args: Args, base: Sqzer) -> Result<Config, Failure> {
     if args.inputs.is_empty() && args.files_from.is_none() {
         return Err(Failure::usage(
-            "no input given; pass files, globs or a directory with -r. `sqzer -h` shows the flags",
+            "no input given; pass files, globs or a directory with `-r`. `sqzer -h` shows the flags",
         ));
     }
     let sqzer = quality_flags(&args, base);
@@ -413,15 +413,15 @@ impl Config {
         if stdin > 0 {
             if self.formats.len() != 1 {
                 return Err(Failure::usage(
-                    "reading stdin needs exactly one -f, there is no file name to infer from",
+                    "reading stdin needs exactly one `-f`, there is no file name to infer from",
                 ));
             }
             if self.placement.in_place {
-                return Err(Failure::usage("--in-place has no meaning for stdin"));
+                return Err(Failure::usage("`--in-place` has no meaning for stdin"));
             }
             if self.placement.output.is_none() && self.feedback.json && !self.dry_run {
                 return Err(Failure::usage(
-                    "--json and the image cannot both go to stdout; pass -o for the image",
+                    "`--json` and the image cannot both go to stdout; pass `-o` for the image",
                 ));
             }
         }

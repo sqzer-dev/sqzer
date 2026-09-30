@@ -288,7 +288,64 @@ fn paint(style: Style, text: &str) -> String {
 /// own indentation after the first line.
 pub fn error_line(message: &str) {
     let mut err = anstream::stderr().lock();
-    let _ = writeln!(err, "{} {message}", paint(ERROR, "error:"));
+    let _ = writeln!(err, "{} {}", paint(ERROR, "error:"), styled(message));
+}
+
+/// clap's styles for an argument at fault and for a suggested one, from
+/// the command itself so a custom `Styles` changes both.
+fn literal_styles() -> (Style, Style) {
+    static STYLES: std::sync::LazyLock<(Style, Style)> = std::sync::LazyLock::new(|| {
+        let cmd = <crate::cli::Args as clap::CommandFactory>::command();
+        let styles = cmd.get_styles();
+        (*styles.get_invalid(), *styles.get_valid())
+    });
+    *STYLES
+}
+
+/// `message` with each backticked span rendered the way clap renders an
+/// argument: `'x'`, plain quotes, `x` in clap's `invalid` style (yellow)
+/// up to the first `;` or line break, where the problem is stated, and in
+/// its `valid` style (green) after, where the fix is. The source keeps
+/// its backticks, and `--json` carries them as written. An unpaired
+/// backtick is printed as it is.
+pub fn styled(message: &str) -> String {
+    styled_in(message, Style::new())
+}
+
+/// [`styled`] with the text around the spans in `base`, so a dimmed line
+/// stays dimmed on both sides of a span.
+fn styled_in(message: &str, base: Style) -> String {
+    let (problem, fix) = literal_styles();
+    let mut out = String::with_capacity(message.len());
+    // Text since the last span, painted in `base` in one piece.
+    let mut plain = String::new();
+    let flush = |out: &mut String, plain: &mut String| {
+        if !plain.is_empty() {
+            out.push_str(&paint(base, plain));
+            plain.clear();
+        }
+    };
+    let mut rest = message;
+    let mut suggesting = false;
+    while let Some(open) = rest.find('`') {
+        let (before, after) = (&rest[..open], &rest[open + 1..]);
+        suggesting |= before.contains([';', '\n']);
+        let Some(close) = after.find('`') else {
+            break;
+        };
+        plain.push_str(before);
+        plain.push('\'');
+        flush(&mut out, &mut plain);
+        out.push_str(&paint(
+            if suggesting { fix } else { problem },
+            &after[..close],
+        ));
+        plain.push('\'');
+        rest = &after[close + 1..];
+    }
+    plain.push_str(rest);
+    flush(&mut out, &mut plain);
+    out
 }
 
 /// `dir/` dimmed, the file name in `name_style`, padded to `width`
@@ -492,7 +549,7 @@ impl Printer {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         self.suspend(|| {
             let mut err = anstream::stderr().lock();
-            let _ = writeln!(err, "{} {message}", paint(WARNING, "warning:"));
+            let _ = writeln!(err, "{} {}", paint(WARNING, "warning:"), styled(message));
         });
     }
 
@@ -528,7 +585,7 @@ impl Printer {
                     "{} {}: {}",
                     paint(ERROR, "error:"),
                     paint(NAME, &where_),
-                    r.error.as_deref().unwrap_or("failed")
+                    styled(r.error.as_deref().unwrap_or("failed"))
                 );
             }
             _ if fb.progress => {
@@ -646,7 +703,7 @@ impl Printer {
                 format!(
                     "{input} {arrow} {output}  {}  {}",
                     paint(LARGER, "skipped"),
-                    paint(DIM, r.reason.as_deref().unwrap_or(""))
+                    styled_in(r.reason.as_deref().unwrap_or(""), DIM)
                 )
             }
             Status::Planned => {
@@ -828,8 +885,8 @@ pub fn render_unavailable(format: Format, need: Need, registry: &Registry) -> St
     }
     if need != Need::Any && existing.is_some() {
         let fix = match need {
-            Need::Lossy => "drop -q for the lossless output this build can write",
-            _ => "drop --lossless for lossy output",
+            Need::Lossy => "drop `-q` for the lossless output this build can write",
+            _ => "drop `--lossless` for lossy output",
         };
         lines.push(format!("  or {fix}"));
     }
@@ -945,6 +1002,44 @@ mod tests {
 
     #[cfg(feature = "portable")]
     #[test]
+    fn backticked_spans_render_like_clap_arguments() {
+        let (problem, fix) = literal_styles();
+        // clap's own defaults: yellow for the argument at fault, green for
+        // the suggestion.
+        assert_eq!(problem, AnsiColor::Yellow.on_default());
+        assert_eq!(fix, AnsiColor::Green.on_default());
+        let lit = |style, t| format!("'{}'", paint(style, t));
+        assert_eq!(
+            styled("`--width` lists 320 twice"),
+            format!("{} lists 320 twice", lit(problem, "--width"))
+        );
+        // After the first `;` or line break, a span is the fix.
+        assert_eq!(
+            styled("`-f` is `gif`; drop `-f`\n  run `sqzer -h`"),
+            format!(
+                "{} is {}; drop {}\n  run {}",
+                lit(problem, "-f"),
+                lit(problem, "gif"),
+                lit(fix, "-f"),
+                lit(fix, "sqzer -h")
+            )
+        );
+        // Plain text and an unpaired backtick pass through.
+        assert_eq!(styled("no input matched"), "no input matched");
+        assert_eq!(styled("stray ` here"), "stray ` here");
+        // A dimmed line stays dimmed around the span.
+        assert_eq!(
+            styled_in("larger; `--force` writes it", DIM),
+            format!(
+                "{}{}{}",
+                paint(DIM, "larger; '"),
+                paint(fix, "--force"),
+                paint(DIM, "' writes it")
+            )
+        );
+    }
+
+    #[test]
     fn unavailable_renderer_names_the_fix() {
         let reg = sqzer::codecs::registry();
         let text = render_unavailable(Format::Jxl, Need::Any, &reg);
@@ -966,7 +1061,7 @@ mod tests {
         let text = render_unavailable(Format::WebP, Need::Lossy, &reg);
         assert!(text.contains("for lossy output"), "{text}");
         assert!(text.contains("`native-webp`"), "{text}");
-        assert!(text.contains("drop -q"), "{text}");
+        assert!(text.contains("drop `-q`"), "{text}");
         let text = render_unavailable(Format::Jpeg, Need::Lossless, &reg);
         assert!(text.contains("no build offers lossless JPEG"), "{text}");
     }

@@ -70,12 +70,12 @@ impl std::fmt::Display for PlaceError {
             Self::OverwritesInput => {
                 write!(
                     f,
-                    "output would overwrite input; use -o, --suffix or --in-place"
+                    "output would overwrite input; use `-o`, `--suffix` or `--in-place`"
                 )
             }
             Self::InPlaceChangesFormat { from, to } => write!(
                 f,
-                "--in-place would turn {from} into {to}; drop -f or use -o"
+                "`--in-place` would turn {from} into {to}; drop `-f` or use `-o`"
             ),
         }
     }
