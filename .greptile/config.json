@@ -47,7 +47,7 @@
     },
     {
       "id": "portable-stays-pure",
-      "rule": "The `portable` feature set is permissively licensed, needs no system library at build or run time, produces identical output on every target and builds on `wasm32-unknown-unknown`. Vendored C built by `cc` is allowed (`libdeflate` for `oxipng`, ADR-0002 and ADR-0011 D1), so a C compiler may be needed; a C library that cannot go everywhere goes behind a `native-*` feature. In the wasm32 graph only `libdeflate-sys` and `sqzer-rav1d` may depend on `cc`. Nothing in `sqzer-core` spawns threads; `rayon` spawns nothing on wasm.",
+      "rule": "The `portable` feature set is permissively licensed, needs no system library at build or run time, produces identical output on every target and builds on `wasm32-unknown-unknown`. Vendored C built by `cc` is allowed (`libdeflate` for `oxipng`, ADR-0002 and ADR-0011 D1), so a C compiler may be needed; a C library that cannot go everywhere goes behind a `native-*` feature. The wasm32 CI job proves the tier builds without a libc; nothing more is asserted about C. Nothing in `sqzer-core` spawns threads; `rayon` spawns nothing on wasm.",
       "scope": [
         "crates/**"
       ],

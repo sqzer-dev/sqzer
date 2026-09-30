@@ -75,18 +75,7 @@ native     C libraries that cannot go everywhere. Opt-in, desktop only, as befor
 
 Under that rule `oxipng` is the PNG encoder on every target, with `freestanding` enabled through a `[target.'cfg(target_arch = "wasm32")'.dependencies]` entry. The `png`-writer fallback and the `cfg(not(target_arch = "wasm32"))` gates in `sqzer-codecs` go. This supersedes the wasm32 gate of ADR-0002; that record's reasoning about `libdeflate` on desktop stands.
 
-The wasm CI job changes meaning. It proved that no C reaches the browser build; now it proves that the browser build compiles and that its one C dependency is the one chosen. The old guarantee becomes an explicit check in the same job:
-
-```sh
-# who depends on `cc` in the wasm32 graph. a failed query fails the step (the
-# assignment carries cargo's exit status under `set -e`), and so does an answer
-# without libdeflate-sys, which would mean oxipng lost its C build. sqzer-rav1d
-# lists cc and nasm-rs for its assembly, which is off. anything else fails too
-users=$(cargo tree -p sqzer-wasm --target wasm32-unknown-unknown -i cc --prefix none --depth 1)
-grep -q '^libdeflate-sys ' <<<"$users" || { echo "libdeflate-sys no longer builds C for wasm32"; exit 1; }
-extra=$(grep -v '^cc \|^libdeflate-sys \|^sqzer-rav1d ' <<<"$users" || true)
-test -z "$extra" || { printf 'unexpected C build dependency on wasm32:\n%s\n' "$extra"; exit 1; }
-```
+The wasm CI job changes meaning. It proved that no C reaches the browser build; now it proves that the browser build compiles for `wasm32-unknown-unknown`, a target with no libc. That is the whole check: C that needs a libc, or any header one provides, fails to compile there on its own, which is exactly how `oxipng` failed before `freestanding`. No allow-list of which crates may build C, and nothing to keep in step with the dependency graph.
 
 Anyone building `sqzer` for wasm32 needs `clang`. That is documented in the README, `CONTRIBUTING.md` and `CLAUDE.md` next to the desktop C compiler requirement it mirrors.
 
@@ -177,7 +166,7 @@ That repository's Pages workflow deploys on every merge to its `main`, so a page
 ## 4. Trade-offs
 
 - A C compiler for wasm32 builds. Anyone depending on `sqzer` and targeting wasm32 themselves needs `clang`. Desktop users need a C compiler for the same crate already, so this is documentation, not a new class of requirement.
-- The wasm job no longer catches an accidental C dependency by failing to build; the `cargo tree` check does, and only if it is kept.
+- The wasm job no longer proves the browser build is C-free, only that it builds without a libc. A vendored C dependency that compiles freestanding gets in unnoticed by CI; the licence and dependency rules of the PR template are what catch it.
 - A fork to carry, even a 15-line one, until upstream releases. The alternative was depending on an archived fork of an older upstream.
 - 1.9 MB over the wire before the first image. A lean package would be a third of that.
 - One thread. Large images are slow on the page; the width control is the mitigation.
@@ -191,7 +180,7 @@ That repository's Pages workflow deploys on every merge to its `main`, so a page
 - ADR-0002's wasm32 gate is superseded; the record carries a line saying so.
 - `sqzer-codecs`: `sqzer-rav1d` on every target, `oxipng` on every target with `freestanding` on wasm32, the `png` encoder module deleted, AVIF probe and decode registered everywhere.
 - `sqzer-wasm`: the D3 surface, `cdylib`, `wasm-bindgen`, `js-sys`, `serde`, `serde-wasm-bindgen`, `tsify-next`, `console_error_panic_hook`.
-- `.cargo/config.toml` with `simd128` for wasm32; `ci.yml`'s wasm job gains `wasm-pack test --node` over the fixtures and the `cc` check; `dist-workspace.toml`, `publish-npm.yml`.
+- `.cargo/config.toml` with `simd128` for wasm32; `ci.yml`'s wasm job gains `wasm-pack test --node` over the fixtures; `dist-workspace.toml`, `publish-npm.yml`.
 - README, `CONTRIBUTING.md`, `CLAUDE.md`: "pure Rust" and "C-free" become the D1 wording; the AVIF and `oxipng` notes are rewritten; the layout entry for `crates/sqzer-wasm`, and a link to the page and its repository.
 - `CHANGELOG.md` when the code lands: `codecs` entries for AVIF decoding and `oxipng` on wasm32 and for the `rav1d` crate change, a `wasm` entry for the package.
 - The Releases bullet of `CLAUDE.md` gains a step after the tag: bump the version `sqzer-dev/sqzer.dev` imports, or merge the Dependabot pull request that does.
@@ -202,7 +191,7 @@ That repository's Pages workflow deploys on every merge to its `main`, so a page
 ## 6. Action items
 
 1. [ ] `github.com/sqzer-dev/rav1d`: branch `sqzer` on upstream `main` with the shim, published as `sqzer-rav1d`; the same shim as a pull request upstream. `sqzer-codecs` on it for every target; the `paste` ignore dropped if it can be; the AVIF fixtures decoded in the wasm test.
-2. [ ] `oxipng` on wasm32 with `freestanding`, the `png` encoder removed, the golden PNG test running on wasm32 too; `.cargo/config.toml`; the `cc` check in `ci.yml`.
+2. [ ] `oxipng` on wasm32 with `freestanding`, the `png` encoder removed, the golden PNG test running on wasm32 too; `.cargo/config.toml`.
 3. [ ] The `sqzer-wasm` surface of D3 with `wasm-pack test --node` over the fixtures: every format in and out, an `EncoderUnavailable` for JPEG XL with `availableIn`, `onTrial` called once per trial, `maxPixels` refusing a 25 megapixel header.
 4. [ ] `publish-npm.yml`, the `dist` config and `dist generate`; the trusted publisher on npmjs.com; a rehearsal with `pr-run-mode = "upload"` on a branch, then the first publish with the 0.3.0 tag.
 5. [ ] `github.com/sqzer-dev/sqzer.dev`: the page, its Pages workflow, `CNAME`, Dependabot on `sqzer`, DNS for `sqzer.dev`; this README pointing at the page and the version bump in the Releases bullet of `CLAUDE.md`.
