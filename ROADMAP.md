@@ -11,7 +11,7 @@ The "Squoosh replacement" is not complete without a page you can drop an image o
 - `sqzer-wasm`: the portable tier as a WebAssembly package, `sqzer` on npm. The API, the build and how it is published are [`docs/adr/0011-browser-build.md`](docs/adr/0011-browser-build.md).
 - A small drag-and-drop page on top of it, at `sqzer.dev`.
 
-> **Note**: The browser build inherits the portable tier's licence gaps: lossy WebP and JPEG XL cannot be written. AVIF decodes on `wasm32` already. `oxipng` reaches it with ADR-0011; until that code lands, PNG there goes through the plain `png` writer.
+> **Note**: The browser build inherits the portable tier's licence gaps: lossy WebP and JPEG XL cannot be written. Everything else the portable tier does, it does on `wasm32` too, AVIF decoding and `oxipng` included (ADR-0011).
 
 ## Coming from `rimage`
 

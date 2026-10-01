@@ -1,0 +1,7 @@
+# wasm SIMD for every wasm32 build of the workspace (ADR-0011 D4). `yuv` and
+# `fast_image_resize` compile `v128` code whatever this says, so the module
+# needs SIMD either way; with the flag `fast-ssim2` takes its `wasm128` path
+# and the target search runs about 1.7x faster. Every browser since Safari
+# 16.4 has it.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]
