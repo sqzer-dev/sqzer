@@ -42,6 +42,21 @@
       "path": "docs/adr/0008-memory-budget.md",
       "description": "How --jobs is bounded: per-mode memory estimates, three quarters of available memory, the cgroup walk, the oversized-file warning",
       "scope": ["crates/sqzer-cli/**"]
+    },
+    {
+      "path": "docs/adr/0009-resize-interface.md",
+      "description": "The resize interface: --width, --height, --fit, --position, --background, --scale, --enlarge, --filter in CSS object-fit terms, never enlarge by default, the width list for srcset",
+      "scope": ["crates/sqzer-core/src/resize.rs", "crates/sqzer/src/resize.rs", "crates/sqzer-cli/**"]
+    },
+    {
+      "path": "docs/adr/0010-stage-types-and-fit-outside.md",
+      "description": "A type per pipeline stage: Sqzer::prepare gives a Prepared, Prepared::resize a Ready, encode takes a Ready; --fit outside; a translucent background needs an encoder with alpha",
+      "scope": ["crates/sqzer/src/**", "crates/sqzer-cli/**"]
+    },
+    {
+      "path": "docs/adr/0011-browser-build.md",
+      "description": "The browser build: portable means runs everywhere and may need a C compiler to build, oxipng on wasm32 through freestanding, AVIF decoding through the sqzer-rav1d fork on every target, the JavaScript API of sqzer-wasm with the browser's canvas as input fallback, simd128, the dist publish job for npm, the page in its own repository",
+      "scope": ["crates/sqzer-wasm/**", "crates/sqzer-codecs/**", ".cargo/**", ".github/**", "dist-workspace.toml"]
     }
   ]
 }

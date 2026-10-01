@@ -9,7 +9,7 @@ English is preferred for issues, pull requests and discussions; if you can, add 
 ## Before you start
 
 - Anything bigger than a small fix: open an issue or a discussion first, so we agree on the approach before you spend time on it. [`ROADMAP.md`](ROADMAP.md) has what is planned and what is not.
-- Architecture lives in [`docs/adr`](docs/adr). Read [`0001-system-design.md`](docs/adr/0001-system-design.md) before touching the crate layout, the codec traits or the pipeline. A change to a decision gets a new numbered ADR; an accepted one is never edited.
+- Architecture lives in [`docs/adr`](docs/adr). Read [`0001-system-design.md`](docs/adr/0001-system-design.md) before touching the crate layout, the codec traits or the pipeline. A change to a decision gets a new numbered ADR; an accepted one is never edited. A new ADR comes with its row in [`docs/adr/README.md`](docs/adr/README.md) and an entry in `.greptile/files.json`, so the review bot reads it too.
 - Usage questions go to [Discussions](https://github.com/sqzer-dev/sqzer/discussions/categories/q-a), not issues.
 - Security problems go through [private vulnerability reporting](https://github.com/sqzer-dev/sqzer/security/advisories/new), never a public issue. See [`SECURITY.md`](SECURITY.md).
 

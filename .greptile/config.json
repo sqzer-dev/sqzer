@@ -47,7 +47,7 @@
     },
     {
       "id": "portable-stays-pure",
-      "rule": "The `portable` feature set must stay pure Rust, permissively licensed and buildable on `wasm32-unknown-unknown`. C bindings go behind a `native-*` feature. Nothing in `sqzer-core` spawns threads; `rayon` is compiled out on wasm.",
+      "rule": "The `portable` feature set is permissively licensed, needs no system library at build or run time, produces identical output on every target and builds on `wasm32-unknown-unknown`. Vendored C built by `cc` is allowed (`libdeflate` for `oxipng`, ADR-0002 and ADR-0011 D1), so a C compiler may be needed; a C library that cannot go everywhere goes behind a `native-*` feature. The wasm32 CI job proves the tier builds without a libc; nothing more is asserted about C. Nothing in `sqzer-core` spawns threads; `rayon` spawns nothing on wasm.",
       "scope": [
         "crates/**"
       ],
@@ -78,9 +78,10 @@
     },
     {
       "id": "accepted-adrs",
-      "rule": "An accepted ADR is never rewritten; ticking or annotating its own action items is fine. An architecture change gets a new numbered file and a row in `docs/adr/README.md`.",
+      "rule": "An accepted ADR is never rewritten; ticking or annotating its own action items and adding a `Superseded by` line at the top are fine. An architecture change gets a new numbered file, a row in `docs/adr/README.md`, an entry in `.greptile/files.json` scoped to the code it governs, and an update to any rule in `.greptile/config.json` it changes, all in the same PR.",
       "scope": [
-        "docs/adr/**"
+        "docs/adr/**",
+        ".greptile/**"
       ],
       "severity": "medium"
     },
