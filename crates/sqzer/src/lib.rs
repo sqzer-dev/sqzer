@@ -672,7 +672,7 @@ mod tests {
         // Without a WebP encoder the graphic goes to PNG.
         let mut narrow = Registry::new();
         narrow.register_decoder(sqzer_codecs::png::PngDecoder);
-        narrow.register_encoder(sqzer_codecs::png::PngEncoder);
+        narrow.register_encoder(sqzer_codecs::oxipng::OxipngEncoder);
         narrow.register_encoder(sqzer_codecs::avif::RavifEncoder);
         let out = Sqzer::with_registry(narrow)
             .target(Target::Quality(80.0))
@@ -926,7 +926,7 @@ mod tests {
         // photo on a clear canvas goes to PNG, not JPEG.
         let mut narrow = Registry::new();
         narrow.register_decoder(sqzer_codecs::png::PngDecoder);
-        narrow.register_encoder(sqzer_codecs::png::PngEncoder);
+        narrow.register_encoder(sqzer_codecs::oxipng::OxipngEncoder);
         narrow.register_encoder(sqzer_codecs::jpeg::MozjpegEncoder);
         let s = Sqzer::with_registry(narrow).target(Target::Quality(80.0));
         assert_eq!(s.run(&bytes).unwrap().format, Format::Jpeg);
@@ -1349,7 +1349,7 @@ mod tests {
     fn without_avif_a_lossy_target_falls_back_by_alpha() {
         let mut narrow = Registry::new();
         narrow.register_decoder(sqzer_codecs::png::PngDecoder);
-        narrow.register_encoder(sqzer_codecs::png::PngEncoder);
+        narrow.register_encoder(sqzer_codecs::oxipng::OxipngEncoder);
         narrow.register_encoder(sqzer_codecs::jpeg::MozjpegEncoder);
         let sqzer = Sqzer::with_registry(narrow).target(Target::Quality(80.0));
         assert_eq!(

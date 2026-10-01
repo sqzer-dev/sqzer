@@ -170,7 +170,8 @@ Encode: JPEG, PNG, WebP, AVIF, JPEG XL.
 Backends come in tiers, mirrored by Cargo features:
 
 ```
-portable   pure Rust, permissive licences, builds on wasm32. Always on.
+portable   permissive licences, no system library, every target including
+           wasm32. Always on.
            JPEG (mozjpeg-rs / zune-jpeg), PNG (oxipng), AVIF (ravif / rav1d),
            WebP (image-webp, lossless write), JXL decode (jxl-oxide).
            Input only: GIF (gif), TIFF (tiff), BMP, TGA, ICO, QOI and PNM (image,
@@ -194,7 +195,7 @@ agpl       reserved. Never a default dependency, never in the library.
 
 > **Note**: AVIF decodes on every target, `wasm32` included, through `sqzer-rav1d`: upstream `rav1d` `main` with its safe Rust API, which no upstream release carries yet, and a stand-in for the `libc` names `wasm32` lacks. The fork is dropped for `rav1d` itself once a release has both. [`docs/adr/0011-browser-build.md`](docs/adr/0011-browser-build.md) has the reasoning.
 
-> **Note**: `oxipng` is the one portable backend that is not pure Rust: its DEFLATE step is `libdeflate`, a vendored C library compiled by `cc` with no system package to install. It is compiled out on `wasm32`, where the plain `png` writer takes its place, so the WASM build stays C-free. [`docs/adr/0002-libdeflate-in-the-portable-tier.md`](docs/adr/0002-libdeflate-in-the-portable-tier.md) has the reasoning.
+> **Note**: `oxipng` is the one portable backend that is not pure Rust: its DEFLATE step is `libdeflate`, a vendored C library compiled by `cc` with no system package to install. `wasm32` has no libc, so there it is built in its `freestanding` mode and the build needs `clang` on `PATH`; from the same pixels it writes the same PNG, byte for byte. [`docs/adr/0002-libdeflate-in-the-portable-tier.md`](docs/adr/0002-libdeflate-in-the-portable-tier.md) and [`docs/adr/0011-browser-build.md`](docs/adr/0011-browser-build.md) have the reasoning.
 
 ## Layout
 
@@ -235,7 +236,8 @@ cargo test -p sqzer-codecs -p sqzer -p sqzer-cli --features sqzer-codecs/native,
 dist plan
 dist build --artifacts=local
 
-# prove the portable tier stays C-free
+# prove the portable tier builds for a target with no libc. needs clang on
+# PATH, for oxipng's libdeflate
 cargo build -p sqzer-wasm --target wasm32-unknown-unknown
 
 # licence allow-list, runs in CI

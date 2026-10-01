@@ -52,14 +52,14 @@ pub mod native;
     feature = "jpeg",
     feature = "webp-lossless",
     feature = "avif",
-    all(feature = "png", not(target_arch = "wasm32")),
+    feature = "png",
     feature = "native-webp",
     feature = "native-jxl",
     feature = "native-avif",
     feature = "native-jpegli",
 ))]
 mod opts;
-#[cfg(all(feature = "png", not(target_arch = "wasm32")))]
+#[cfg(feature = "png")]
 pub mod oxipng;
 #[cfg(feature = "png")]
 pub mod png;
@@ -97,12 +97,7 @@ pub fn register_portable(reg: &mut Registry) {
     #[cfg(feature = "png")]
     {
         reg.register_decoder(png::PngDecoder);
-        // `oxipng` carries C (`libdeflate`), so wasm32 gets the plain
-        // `png` writer instead. ADR-0002.
-        #[cfg(not(target_arch = "wasm32"))]
         reg.register_encoder(oxipng::OxipngEncoder);
-        #[cfg(target_arch = "wasm32")]
-        reg.register_encoder(png::PngEncoder);
     }
     #[cfg(feature = "webp-lossless")]
     {

@@ -19,7 +19,7 @@ The toolchain, the native tier's C dependencies and the calibration harness are 
 
 ```sh
 # portable tier: pure Rust apart from the vendored libdeflate, which needs
-# a C compiler on desktop targets
+# a C compiler: gcc, clang or MSVC on desktop targets, clang for wasm32
 cargo build --workspace
 cargo test --workspace
 
@@ -38,7 +38,7 @@ cargo test --workspace
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo deny check
 
-# proves the portable tier stays free of C
+# proves the portable tier builds for a target with no libc; needs clang
 cargo build -p sqzer-wasm --target wasm32-unknown-unknown
 ```
 

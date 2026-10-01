@@ -1,9 +1,9 @@
 //! PNG via `oxipng` (MIT): a filter and colour-type search over the raw
 //! pixels, with `libdeflate` or `zopfli` for the DEFLATE step.
 //!
-//! Desktop only. `libdeflate` is a vendored C library, so this module is
-//! compiled out on wasm32 and the plain writer in [`crate::png`] is
-//! registered there instead. ADR-0002 records the exception.
+//! On every target. `libdeflate` is a vendored C library, the one C
+//! dependency of the portable tier (ADR-0002); on wasm32 it is built in its
+//! `freestanding` mode, which needs `clang` and no libc (ADR-0011 D1).
 
 use oxipng::{
     BitDepth, ColorType as PngColor, Deflater, Options, RawImage, StripChunks, ZopfliOptions,

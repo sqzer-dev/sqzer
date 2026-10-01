@@ -472,24 +472,12 @@ fn jpeg_icc_survives_a_round_trip() {
     assert_eq!(back.icc(), src.icc());
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn png_output_is_smaller_than_the_plain_writer() {
-    use sqzer_codecs::png::PngEncoder;
-    use sqzer_core::codec::Encoder;
-    let reg = registry();
-    let src = test_image(ColorType::Rgba);
-    let params = Target::Lossless.into_params();
-    let plain = PngEncoder.encode(&src, &params).unwrap().len();
-    let optimised = reg
-        .encoder(Format::Png)
-        .unwrap()
-        .encode(&src, &params)
-        .unwrap()
-        .len();
-    assert!(
-        optimised < plain,
-        "oxipng {optimised} bytes should beat the plain writer's {plain}"
+fn png_is_written_by_oxipng() {
+    // One PNG encoder, on every target (ADR-0011 D1).
+    assert_eq!(
+        registry().encoder(Format::Png).unwrap().caps().name,
+        "oxipng"
     );
 }
 

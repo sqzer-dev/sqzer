@@ -32,7 +32,7 @@ Dependency direction is strictly downward: `core` and the three `heif-*` crates 
 
 Three Cargo feature groups in `sqzer-codecs`:
 
-- `portable`: pure Rust, permissive licence, must build on `wasm32-unknown-unknown`. Default.
+- `portable`: permissive licence, no system library, must build on `wasm32-unknown-unknown`, which has no libc. Pure Rust apart from vendored C built by `cc` (`libdeflate` for `oxipng`), so the wasm32 build needs `clang` (ADR-0011 D1). Default.
 - `native`: C bindings (`native-webp`, `native-jxl`, `native-avif`, `native-heif`, `native-jpegli`). Opt-in, desktop only. The crate choices are in `docs/adr/0004-native-tier.md`; `jpegxl-rs` is GPL and banned.
 - `agpl`: reserved, empty. When populated it lives in a separate `sqzer-codecs-agpl` crate.
 
@@ -50,7 +50,7 @@ When a requested output format has no encoder in the current build, return `Erro
 - Default mode is a perceptual target (`Target::Ssimulacra2(70.0)`), searched by bisection with a cap of 6 encodes. Explicit `Target::Quality` disables the search.
 - Metadata is stripped by default. ICC is converted to sRGB unless `keep_icc`. EXIF orientation is applied then removed.
 - Decompression-bomb guard: `DecodeOpts::max_pixels`, default 268 megapixels. Respect it in every decoder.
-- Parallelism is per file, in the CLI, with `rayon`. Encoders get an explicit thread budget. Nothing in `sqzer-core` spawns threads. `rayon` is compiled out on wasm.
+- Parallelism is per file, in the CLI, with `rayon`. Encoders get an explicit thread budget. Nothing in `sqzer-core` spawns threads. On wasm nothing spawns at all: `rayon` is in the graph through `rav1e` and runs sequentially.
 - `#![forbid(unsafe_code)]` is set at the workspace level. Do not add `unsafe` anywhere else; if a backend needs it, it gets a binding crate of its own with a safe API, the way the three `heif-*` crates do.
 
 ## Commands
@@ -58,7 +58,7 @@ When a requested output format has no encoder in the current build, return `Erro
 ```sh
 cargo build --workspace                                   # portable tier
 cargo build -p sqzer-cli --features native                # needs C libs on PATH / vcpkg
-cargo build -p sqzer-wasm --target wasm32-unknown-unknown # proves portable stays C-free
+cargo build -p sqzer-wasm --target wasm32-unknown-unknown # proves portable builds without a libc; needs clang
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features     # pedantic is on, warnings are errors in CI
 cargo fmt --all

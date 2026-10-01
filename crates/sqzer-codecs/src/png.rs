@@ -1,20 +1,13 @@
-//! PNG via the `png` crate (MIT/Apache). Decoder and a baseline encoder.
+//! PNG decoding via the `png` crate (MIT/Apache). The encoder is
+//! [`crate::oxipng`], on every target.
 //!
 //! The decoder keeps ICC, EXIF (`eXIf`) and XMP (`iTXt`), wherever in the
 //! file the chunks sit, and applies the EXIF orientation when
 //! `DecodeOpts::apply_orientation` asks for it, as the JPEG decoder does.
-//!
-//! The encoder here is the plain `png` writer with adaptive filtering. It is
-//! correct and fast but not small. On desktop targets the registry uses
-//! [`crate::oxipng`] instead; this one is registered on wasm32, where
-//! `oxipng`'s C dependency cannot go (ADR-0002), and stays public for
-//! callers who want the fast path.
 
-use std::borrow::Cow;
-
-use sqzer_core::codec::{Decoder, DecoderCaps, Encoder, EncoderCaps, Format, FormatInfo, Tier};
+use sqzer_core::codec::{Decoder, DecoderCaps, Format, FormatInfo, Tier};
 use sqzer_core::image::{ColorType, Image, Metadata, Orientation, Samples};
-use sqzer_core::params::{DecodeOpts, EncodeParams};
+use sqzer_core::params::DecodeOpts;
 use sqzer_core::{Error, Result};
 
 const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
@@ -171,89 +164,6 @@ fn has_actl_chunk(bytes: &[u8]) -> bool {
     false
 }
 
-/// PNG encoder: lossless, 8 or 16 bit, any channel layout. Fast, not
-/// small; see the module docs.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct PngEncoder;
-
-static ENCODER_CAPS: EncoderCaps = EncoderCaps {
-    format: Format::Png,
-    name: "png",
-    lossy: false,
-    lossless: true,
-    alpha: true,
-    animation: false,
-    bit_depth: &[8, 16],
-    hdr: false,
-    exif: true,
-    xmp: true,
-    quality_range: 100.0..=100.0,
-    effort_range: 0..=10,
-    tier: Tier::Portable,
-    options: &[],
-};
-
-impl Encoder for PngEncoder {
-    fn caps(&self) -> &EncoderCaps {
-        &ENCODER_CAPS
-    }
-
-    fn encode(&self, img: &Image, params: &EncodeParams) -> Result<Vec<u8>> {
-        // PNG is lossless whatever the target says; a quality only has to be
-        // resolved, it is not used.
-        params.resolved()?;
-        if let Some((key, _)) = params.codec_opts("png").next() {
-            return Err(Error::InvalidParams(format!("unknown png option `{key}`")));
-        }
-
-        let color = match img.color() {
-            ColorType::Gray => png::ColorType::Grayscale,
-            ColorType::GrayAlpha => png::ColorType::GrayscaleAlpha,
-            ColorType::Rgb => png::ColorType::Rgb,
-            ColorType::Rgba => png::ColorType::Rgba,
-        };
-        let (bit_depth, bytes): (png::BitDepth, Cow<'_, [u8]>) = match img.samples() {
-            Samples::U8(v) => (png::BitDepth::Eight, Cow::Borrowed(v)),
-            Samples::U16(v) => (
-                png::BitDepth::Sixteen,
-                Cow::Owned(v.iter().flat_map(|s| s.to_be_bytes()).collect()),
-            ),
-            Samples::F32(_) => {
-                return Err(Error::Unsupported {
-                    format: Format::Png,
-                    what: "float (HDR) samples".into(),
-                });
-            }
-        };
-
-        let mut info = png::Info::with_size(img.width(), img.height());
-        info.color_type = color;
-        info.bit_depth = bit_depth;
-        info.icc_profile = img.icc().map(Cow::Borrowed);
-        info.exif_metadata = img.exif().map(Cow::Borrowed);
-        let xmp = img.xmp().map(xmp_text).transpose()?;
-
-        let mut out = Vec::new();
-        let mut encoder = png::Encoder::with_info(&mut out, info).map_err(codec_err)?;
-        if let Some(xmp) = xmp {
-            encoder
-                .add_itxt_chunk(XMP_KEYWORD.to_string(), xmp)
-                .map_err(codec_err)?;
-        }
-        encoder.set_compression(match params.effort {
-            0 => png::Compression::Fastest,
-            1..=3 => png::Compression::Fast,
-            4..=7 => png::Compression::Balanced,
-            _ => png::Compression::High,
-        });
-        encoder.set_filter(png::Filter::Adaptive);
-        let mut writer = encoder.write_header().map_err(codec_err)?;
-        writer.write_image_data(&bytes).map_err(codec_err)?;
-        writer.finish().map_err(codec_err)?;
-        Ok(out)
-    }
-}
-
 fn codec_err(e: impl std::fmt::Display) -> Error {
     Error::Codec(e.to_string())
 }
@@ -308,11 +218,11 @@ mod tests {
         let img = Image::from_u8(2, 1, ColorType::Rgb, vec![10, 20, 30, 40, 50, 60])
             .unwrap()
             .with_exif(Some(crate::exif::tiff_with_orientation(6)));
-        let params = EncodeParams {
+        let params = sqzer_core::params::EncodeParams {
             target: sqzer_core::params::Target::Lossless,
-            ..EncodeParams::default()
+            ..Default::default()
         };
-        PngEncoder.encode(&img, &params).unwrap()
+        sqzer_core::codec::Encoder::encode(&crate::oxipng::OxipngEncoder, &img, &params).unwrap()
     }
 
     /// The byte range of the first chunk of type `kind`, length, type, data

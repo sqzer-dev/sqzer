@@ -159,8 +159,9 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      # --no-default-features on the codec crate proves a C dependency
-      # cannot sneak into the portable tier.
+      # Proves the portable tier builds for a target with no libc
+      # (ADR-0011 D1). `oxipng`'s `libdeflate` is C in freestanding mode;
+      # the runner's clang compiles it, nothing is installed.
       - run: cargo build -p sqzer-wasm --target wasm32-unknown-unknown
 
   lint:

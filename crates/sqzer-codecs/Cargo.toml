@@ -11,7 +11,8 @@ repository.workspace = true
 [features]
 default = ["portable"]
 
-# Tier 1: pure Rust, permissive. Must build on wasm32.
+# Tier 1: permissive, no system library, builds for every target including
+# wasm32. Vendored C built by `cc` is allowed (ADR-0011 D1).
 portable = [
     "png",
     "jpeg",
@@ -29,8 +30,7 @@ portable = [
     "exr",
     "svg",
 ]
-# `oxipng` is the PNG writer on desktop targets; on wasm32 it is compiled
-# out (see below) and the plain `png` writer takes its place.
+# `oxipng` is the PNG writer on every target; the `png` crate is the reader.
 # `kamadak-exif` reads the orientation of an `eXIf` chunk.
 png = ["dep:png", "dep:oxipng", "dep:kamadak-exif"]
 jpeg = ["dep:mozjpeg-rs", "dep:zune-jpeg", "dep:kamadak-exif"]
@@ -131,17 +131,23 @@ avif-parse = { version = "2.1.0", optional = true }
 rav1d = { package = "sqzer-rav1d", version = "0.1.0", optional = true, default-features = false, features = ["bitdepth_8", "bitdepth_16"] }
 # YUV to RGB, 8 to 16 bit. BSD-3-Clause OR Apache-2.0.
 yuv = { version = "0.8.17", optional = true }
+# PNG optimiser. MIT. Its DEFLATE step is `libdeflate`, a vendored C
+# library built by `cc`: the one C dependency of the portable tier
+# (ADR-0002, and ADR-0011 D1 for wasm32, see below). `parallel` is off
+# (single-threaded encoders, ADR-0001 D3), `zopfli` (Apache-2.0, pure Rust)
+# backs the top effort level.
+oxipng = { version = "10.2.1", optional = true, default-features = false, features = ["zopfli"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# wasm32 has no libc. `freestanding` builds `libdeflate` with
+# `-ffreestanding -nostdlib`, so the build needs `clang` and nothing else.
+oxipng = { version = "10.2.1", optional = true, default-features = false, features = ["freestanding"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # `<text>` in an SVG needs fonts; on desktop targets `resvg` reads the
 # system's, memory-mapped. wasm32 has no file system and renders text
 # with whatever is embedded, which is nothing.
 resvg = { version = "0.48.1", optional = true, default-features = false, features = ["system-fonts", "memmap-fonts"] }
-# PNG optimiser. MIT. Its DEFLATE step is `libdeflate`, a vendored C
-# library built by `cc`, which is why it is desktop only: see ADR-0002.
-# `parallel` is off (single-threaded encoders, ADR-0001 D3), `zopfli`
-# (Apache-2.0, pure Rust) backs the top effort level.
-oxipng = { version = "10.2.1", optional = true, default-features = false, features = ["zopfli"] }
 
 # ---- native tier ----
 # `libwebp` through imazen's safe wrapper. MIT OR Apache-2.0; `libwebp-sys`
