@@ -60,9 +60,9 @@ deny = [
 yanked = "deny"
 ignore = [
     # `paste` is archived, not vulnerable: a proc macro that only runs at
-    # build time. It reaches us through `re_rav1d` and `rav1e`. Drop this
+    # build time. It reaches us through `sqzer-rav1d` and `rav1e`. Drop this
     # entry when both have moved to a release without it.
-    { id = "RUSTSEC-2024-0436", reason = "unmaintained proc macro, build-time only, via re_rav1d and rav1e" },
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained proc macro, build-time only, via sqzer-rav1d and rav1e" },
 ]
 
 [sources]

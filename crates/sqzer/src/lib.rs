@@ -336,9 +336,9 @@ impl Sqzer {
     /// mode and skips the search.
     ///
     /// > **Note**: scoring needs the output format decodable in this
-    /// > build. On `wasm32` AVIF is encode-only, so a perceptual target
-    /// > for AVIF there returns [`sqzer_core::Error::Unsupported`], and
-    /// > the default format falls back to JPEG.
+    /// > build. A registry with an encoder and no decoder for a format
+    /// > returns [`sqzer_core::Error::Unsupported`] for a perceptual
+    /// > target there, and the default format steps around it.
     ///
     /// # Errors
     /// Unknown input, input this build recognises but cannot decode
@@ -1297,7 +1297,7 @@ mod tests {
         assert_eq!(&out.bytes[8..12], b"WEBP");
     }
 
-    /// The wasm32 shape: an AVIF encoder with no AVIF decoder.
+    /// An AVIF encoder with no AVIF decoder, as a narrowed registry can be.
     fn encode_only_avif() -> Registry {
         let mut narrow = Registry::new();
         narrow.register_decoder(sqzer_codecs::png::PngDecoder);

@@ -171,7 +171,7 @@ Backends come in tiers, mirrored by Cargo features:
 
 ```
 portable   pure Rust, permissive licences, builds on wasm32. Always on.
-           JPEG (mozjpeg-rs / zune-jpeg), PNG (oxipng), AVIF (ravif / re_rav1d),
+           JPEG (mozjpeg-rs / zune-jpeg), PNG (oxipng), AVIF (ravif / rav1d),
            WebP (image-webp, lossless write), JXL decode (jxl-oxide).
            Input only: GIF (gif), TIFF (tiff), BMP, TGA, ICO, QOI and PNM (image,
            decoders only), SVG rasterised by resvg.
@@ -192,7 +192,7 @@ agpl       reserved. Never a default dependency, never in the library.
 
 > **Note**: Input-only formats decode to their first image: the first frame of an animated GIF, the first page of a TIFF, the largest entry of an ICO. An SVG is rasterised at its own size, one CSS pixel per pixel, with the system's fonts for text (none on wasm32); references to files on disk are ignored, `data:` URLs are rendered, `.svgz` is not read. TIFF files in CMYK or YCbCr are refused rather than converted.
 
-> **Note**: AVIF decoding is desktop only. `rav1d` does not compile for `wasm32`, so the WASM build has no AVIF decoder and reports AVIF input as an unrecognised format. AVIF encoding builds everywhere, but a perceptual target needs the output decoded to score it, so on `wasm32` AVIF takes an explicit quality only and the default output format there is JPEG.
+> **Note**: AVIF decodes on every target, `wasm32` included, through `sqzer-rav1d`: upstream `rav1d` `main` with its safe Rust API, which no upstream release carries yet, and a stand-in for the `libc` names `wasm32` lacks. The fork is dropped for `rav1d` itself once a release has both. [`docs/adr/0011-browser-build.md`](docs/adr/0011-browser-build.md) has the reasoning.
 
 > **Note**: `oxipng` is the one portable backend that is not pure Rust: its DEFLATE step is `libdeflate`, a vendored C library compiled by `cc` with no system package to install. It is compiled out on `wasm32`, where the plain `png` writer takes its place, so the WASM build stays C-free. [`docs/adr/0002-libdeflate-in-the-portable-tier.md`](docs/adr/0002-libdeflate-in-the-portable-tier.md) has the reasoning.
 

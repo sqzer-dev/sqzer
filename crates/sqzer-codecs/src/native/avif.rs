@@ -3,7 +3,7 @@
 //! `libaom-sys` (both BSD-2-Clause; libaom itself is BSD-2-Clause plus the
 //! Alliance for Open Media patent licence). Both libraries are vendored and built with
 //! cmake; x86 builds need `nasm`. Takes over the AVIF format from `ravif`
-//! when `native-avif` is on; decoding stays with `re_rav1d`.
+//! when `native-avif` is on; decoding stays with `rav1d`.
 
 use libavif::{AvifImage, RgbPixels, YuvFormat};
 use sqzer_core::codec::{CodecOption, Encoder, EncoderCaps, Format, Tier};

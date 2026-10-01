@@ -1,9 +1,9 @@
-//! AVIF decoding: `avif-parse` (MPL-2.0) splits the container, `re_rav1d`
+//! AVIF decoding: `avif-parse` (MPL-2.0) splits the container, `rav1d`
 //! (BSD-2) decodes the AV1 payloads, `yuv` (BSD-3/Apache) converts to RGB.
 //!
-//! Desktop only. Upstream `rav1d` does not compile for wasm32, so this
-//! module is `cfg`'d out there and the `avif` feature adds only the encoder
-//! to the WASM build (ADR-0001 D6 names this as the accepted gap).
+//! On every target, wasm32 included. The crate is `sqzer-rav1d`, upstream
+//! `rav1d` `main` with its safe Rust API and a stand-in for the `libc`
+//! names wasm32 lacks (ADR-0011 D2).
 //!
 //! `avif-parse` does not surface the `colr` box, `irot` and `imir` or the
 //! Exif and XMP items, so those come from the HEIF container walk in
@@ -25,9 +25,9 @@
 
 use std::io::Cursor;
 
-use re_rav1d::dav1d::{
-    Decoder as Av1Decoder, Error as Av1Error, Picture, PixelLayout, PlanarImageComponent, Settings,
-    pixel,
+use rav1d::{
+    Decoder as Av1Decoder, Picture, PixelLayout, PlanarImageComponent, Rav1dError as Av1Error,
+    Settings, pixel,
 };
 use sqzer_core::codec::{Decoder, DecoderCaps, Format, FormatInfo, Tier};
 use sqzer_core::image::{ColorType, Image, Orientation, Samples};
@@ -43,7 +43,7 @@ pub struct AvifDecoder;
 
 static DECODER_CAPS: DecoderCaps = DecoderCaps {
     format: Format::Avif,
-    name: "re_rav1d",
+    name: "rav1d",
     animation: false,
     tier: Tier::Portable,
 };
@@ -244,21 +244,21 @@ fn decode_av1(obu: &[u8]) -> Result<Picture> {
     settings.set_n_threads(1);
     settings.set_max_frame_delay(1);
     let mut decoder = Av1Decoder::with_settings(&settings).map_err(codec_err)?;
-    match decoder.send_data(obu.to_vec(), None, None, None) {
-        Ok(()) | Err(Av1Error::Again) => {}
+    match decoder.send_data(obu.into(), None, None, None) {
+        Ok(()) | Err(Av1Error::TryAgain) => {}
         Err(e) => return Err(codec_err(e)),
     }
     loop {
         match decoder.get_picture() {
             Ok(picture) => return Ok(picture),
-            Err(Av1Error::Again) => match decoder.send_pending_data() {
+            Err(Av1Error::TryAgain) => match decoder.send_pending_data() {
                 Ok(()) => {
                     return decoder.get_picture().map_err(|e| match e {
-                        Av1Error::Again => Error::Codec("AV1 payload holds no picture".into()),
+                        Av1Error::TryAgain => Error::Codec("AV1 payload holds no picture".into()),
                         other => codec_err(other),
                     });
                 }
-                Err(Av1Error::Again) => {}
+                Err(Av1Error::TryAgain) => {}
                 Err(e) => return Err(codec_err(e)),
             },
             Err(e) => return Err(codec_err(e)),
