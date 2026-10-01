@@ -4,6 +4,7 @@
 
 ### Features
 
+* **codecs:** AVIF decodes on `wasm32`. The decoder is `sqzer-rav1d` on every target, in place of the archived `re_rav1d`: upstream `rav1d` `main` with its safe Rust API and a stand-in for the `libc` names `wasm32` lacks (ADR-0011 D2). A `wasm32` build now reads AVIF input, takes a perceptual target for AVIF output and defaults to AVIF for photos, like every other build. `--list-codecs` and `--json` name the decoder `rav1d`
 * **cli:** errors and warnings style flags and values the way `clap` does: `'--width'` quoted, in yellow where it names the problem and in green where it names the fix. `--color never`, `NO_COLOR` and a pipe keep the quotes without the colour. The `error` and `reason` fields of `--json` carry the same text with backticks around each flag
 
 ## 0.2.0

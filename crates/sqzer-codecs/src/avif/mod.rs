@@ -1,10 +1,8 @@
 //! AVIF. Encoding via `ravif` (BSD-3-Clause) over `rav1e`, on every
-//! target. Decoding via `avif-parse`, `re_rav1d` and `yuv`, desktop only:
-//! see [`AvifDecoder`] for why.
+//! target. Decoding via `avif-parse`, `rav1d` and `yuv`, on every target
+//! too: see [`AvifDecoder`].
 
-#[cfg(not(target_arch = "wasm32"))]
 mod decode;
-#[cfg(not(target_arch = "wasm32"))]
 pub use decode::AvifDecoder;
 
 use ravif::{AlphaColorMode, BitDepth, ColorModel, Img};

@@ -89,7 +89,7 @@ jobs:
       # The vendored libjpeg-turbo inside jpegli's libjxl tree declares a
       # cmake floor that cmake 4 refuses; this lifts it.
       CMAKE_POLICY_VERSION_MINIMUM: "3.5"
-      # Not on musl. With the variable set, `re_rav1d`'s debug-build borrow
+      # Not on musl. With the variable set, `rav1d`'s debug-build borrow
       # tracking captures a backtrace on every borrow, and unwinding a
       # static musl binary is slow enough that the facade tests take 440 s
       # instead of 7 (measured 2026-09-22; the same binary runs in 0.6 s

@@ -111,7 +111,6 @@ pub fn register_portable(reg: &mut Registry) {
     }
     #[cfg(feature = "avif")]
     {
-        #[cfg(not(target_arch = "wasm32"))]
         reg.register_decoder(avif::AvifDecoder);
         reg.register_encoder(avif::RavifEncoder);
     }

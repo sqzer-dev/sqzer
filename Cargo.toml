@@ -35,6 +35,13 @@ heif-wic = { path = "crates/heif-wic", version = "0.2.0" }
 # API; published because `sqzer` depends on it.
 sqzer-native-tier = { path = "crates/sqzer-native-tier", version = "0.2.0" }
 
+# TEMPORARY: until `sqzer-rav1d` 0.1.0 is on crates.io, the `sqzer` branch of
+# the fork stands in, so CI can prove every target before the crate is
+# published. `cargo deny` refuses the git source, as it should. Remove before
+# merge.
+[patch.crates-io]
+sqzer-rav1d = { git = "https://github.com/sqzer-dev/rav1d", rev = "7b2a68b4051fbcfc3b497944a7174d176e0b9d3b" }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"
