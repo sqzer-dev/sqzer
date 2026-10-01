@@ -2181,7 +2181,8 @@ dependencies = [
 [[package]]
 name = "sqzer-rav1d"
 version = "0.1.0"
-source = "git+https://github.com/sqzer-dev/rav1d?rev=7b2a68b4051fbcfc3b497944a7174d176e0b9d3b#7b2a68b4051fbcfc3b497944a7174d176e0b9d3b"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "675eb2751acb31481c926e230087fd69ce497d5a6f8887ec5ba1c653c09b7cbb"
 dependencies = [
  "assert_matches",
  "atomig",
