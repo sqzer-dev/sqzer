@@ -153,16 +153,35 @@ jobs:
   wasm:
     name: wasm32 portable tier
     runs-on: ubuntu-latest
+    env:
+      WASM_PACK: "0.15.0"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: clippy
       - uses: Swatinem/rust-cache@v2
+      - run: |
+          curl -sSL "https://github.com/wasm-bindgen/wasm-pack/releases/download/v$WASM_PACK/wasm-pack-v$WASM_PACK-x86_64-unknown-linux-musl.tar.gz" \
+            | tar -xz --strip-components=1 -C "$HOME/.cargo/bin" "wasm-pack-v$WASM_PACK-x86_64-unknown-linux-musl/wasm-pack"
+      # Every command below runs without the workflow's `RUSTFLAGS`: the
+      # variable replaces the flags of `.cargo/config.toml` instead of
+      # adding to them, and this target would be built without `simd128`
+      # and with the default stack, which is not what ships. The clippy
+      # step denies warnings in its place.
+      #
       # Proves the portable tier builds for a target with no libc
       # (ADR-0011 D1). `oxipng`'s `libdeflate` is C in freestanding mode;
       # the runner's clang compiles it, nothing is installed.
-      - run: cargo build -p sqzer-wasm --target wasm32-unknown-unknown
+      - run: env -u RUSTFLAGS cargo build -p sqzer-wasm --target wasm32-unknown-unknown
+      # The code and the tests that only exist for this target.
+      - run: env -u RUSTFLAGS cargo clippy -p sqzer-core -p sqzer-codecs -p sqzer-metrics -p sqzer -p sqzer-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
+      # The package's API over the fixtures, in the runner's Node
+      # (ADR-0011 item 3). `wasm-pack` fetches the `wasm-bindgen` CLI that
+      # matches `Cargo.lock`.
+      - run: env -u RUSTFLAGS wasm-pack test --node
+        working-directory: crates/sqzer-wasm
 
   lint:
     runs-on: ubuntu-latest

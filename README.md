@@ -205,7 +205,7 @@ crates/sqzer-codecs    every backend behind a feature flag
 crates/sqzer-metrics   SSIMULACRA2 and the target-quality search
 crates/sqzer           library facade, the thing you depend on
 crates/sqzer-cli       the binary, `sqzer`
-crates/sqzer-wasm      browser build, portable tier only. A placeholder until 0.3
+crates/sqzer-wasm      browser build: the JavaScript API, portable tier minus SVG. On npm with 0.3
 crates/sqzer-native-tier  what `native` means per target, no code
 docs/adr               design decisions
 dist-workspace.toml    the release matrix for `cargo-dist`
@@ -239,6 +239,11 @@ dist build --artifacts=local
 # prove the portable tier builds for a target with no libc. needs clang on
 # PATH, for oxipng's libdeflate
 cargo build -p sqzer-wasm --target wasm32-unknown-unknown
+
+# the browser build's JavaScript API over the fixtures, in Node. needs
+# wasm-pack; a RUSTFLAGS variable would replace the wasm32 flags of
+# .cargo/config.toml, so run it without one
+(cd crates/sqzer-wasm && wasm-pack test --node)
 
 # licence allow-list, runs in CI
 cargo deny check

@@ -16,7 +16,7 @@ crates/sqzer-codecs    every backend behind a feature flag, tiered (see below)
 crates/sqzer-metrics   SSIMULACRA2 scoring and the target-quality search
 crates/sqzer           library facade. This is the public API.
 crates/sqzer-cli       the binary, named `sqzer`
-crates/sqzer-wasm      browser build, portable tier only
+crates/sqzer-wasm      browser build: the JavaScript API of the npm package, portable tier minus `svg`
 crates/sqzer-native-tier  what `native` means per target, features only, no code
 crates/heif-dl         HEIC through a runtime-loaded `libheif`. Holds `unsafe` (ADR-0005)
 crates/heif-imageio    HEIC through ImageIO on macOS. Holds `unsafe`
@@ -59,6 +59,7 @@ When a requested output format has no encoder in the current build, return `Erro
 cargo build --workspace                                   # portable tier
 cargo build -p sqzer-cli --features native                # needs C libs on PATH / vcpkg
 cargo build -p sqzer-wasm --target wasm32-unknown-unknown # proves portable builds without a libc; needs clang
+(cd crates/sqzer-wasm && wasm-pack test --node)          # the JavaScript API over the fixtures; needs wasm-pack, and no RUSTFLAGS set
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features     # pedantic is on, warnings are errors in CI
 cargo fmt --all
@@ -81,6 +82,7 @@ Run the full set before declaring a change done. CI runs the same commands plus 
 
 - Every backend has a round-trip test on the fixtures and a test that its `EncoderCaps` are truthful (claims alpha, encodes alpha).
 - Every encoder has a golden test: encode a fixture at a fixed quality, check SSIMULACRA2 against a committed score with a tolerance. A dependency bump that degrades output must fail CI.
+- `crates/sqzer-wasm/src/tests.rs` runs on `wasm32` only, under `wasm-pack test --node`: the package's API as JavaScript calls it, and the portable golden scores again on that target. Its golden table repeats the portable rows of `crates/sqzer/tests/golden.rs`; change both together.
 - The target search has explicit tests for the failure modes: tiny image, flat image, pure noise, target unreachable at the ceiling.
 - No coverage gate. Percentages say nothing about whether the output looks right.
 
