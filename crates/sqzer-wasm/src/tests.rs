@@ -334,7 +334,7 @@ fn max_pixels_refuses_a_25_megapixel_header() {
 fn from_pixels_round_trips_a_fixture() {
     let decoded = sqzer(None).decode(RGBA).unwrap().image;
     let rgba = decoded.samples().as_u8().unwrap();
-    let image = from_pixels(rgba, 48, 32).unwrap();
+    let image = from_pixels(rgba, 48, 32, None).unwrap();
     assert_eq!((image.width(), image.height()), (48, 32));
     assert!(image.alpha());
     assert!(!image.animated());
@@ -355,7 +355,7 @@ fn from_pixels_round_trips_a_fixture() {
         .iter()
         .flat_map(|p| [p[0], p[1], p[2], 255])
         .collect();
-    let image = from_pixels(&opaque, 48, 32).unwrap();
+    let image = from_pixels(&opaque, 48, 32, None).unwrap();
     assert!(!image.alpha());
     let out = image
         .encode(options(r#"{"format":"png","lossless":true}"#))
@@ -365,8 +365,20 @@ fn from_pixels_round_trips_a_fixture() {
     let rgb = sqzer(None).decode(RGB).unwrap().image;
     assert_eq!(back.samples(), rgb.samples());
 
-    let error = thrown(from_pixels(&opaque[1..], 48, 32), "InvalidInput");
+    let error = thrown(from_pixels(&opaque[1..], 48, 32, None), "InvalidInput");
     assert!(text(&error, "message").contains("6144 bytes, got 6143"));
+    // The pixel limit holds here as it does for `decode`, on the size
+    // claimed, before the pixels are looked at.
+    let error = thrown(from_pixels(&[], 5000, 5000, None), "TooLarge");
+    assert_eq!(
+        text(&error, "message"),
+        "image has 25000000 pixels, limit is 24000000"
+    );
+    thrown(
+        from_pixels(&opaque, 48, 32, options(r#"{"maxPixels":1535}"#)),
+        "TooLarge",
+    );
+    from_pixels(&opaque, 48, 32, options(r#"{"maxPixels":1536}"#)).unwrap();
 }
 
 #[wasm_bindgen_test]
@@ -568,7 +580,8 @@ fn encoders_hold_their_golden_scores_on_wasm32() {
 /// A canvas that returns opaque white for whatever is drawn on it, and a
 /// `createImageBitmap` that calls every blob a 100 x 50 image. Node has
 /// neither; the real ones are checked in browsers (ADR-0011 item 5). This
-/// and [`NO_CANVAS`] are the only scripts the tests evaluate, both fixed.
+/// and [`NO_CANVAS`] are the scripts the tests evaluate, with one flag reset;
+/// all are fixed strings.
 const FAKE_CANVAS: &str = r"
 globalThis.createImageBitmap = async (blob) => {
   globalThis.__sqzerBlob = { type: blob.type, size: blob.size };
@@ -627,11 +640,14 @@ async fn decode_any_asks_the_browser_only_for_what_the_package_cannot_read() {
         .await
         .unwrap();
     assert_eq!((image.width(), image.height()), (40, 20));
-    // The limit is on what would be drawn.
+    // The limit is on what would be drawn, and an image refused is
+    // released, not left for the garbage collector.
+    js_sys::eval("globalThis.__sqzerClosed = false").unwrap();
     thrown(
         decode_any(SVG.to_vec(), options(r#"{"width":400,"maxPixels":79999}"#)).await,
         "TooLarge",
     );
+    assert_eq!(get(&js_sys::global(), "__sqzerClosed"), true);
     // Pixels are decoded at their own size, whatever box is given, and
     // the result encodes like any other image.
     let image = decode_any(HEIC.to_vec(), options(r#"{"width":10}"#))

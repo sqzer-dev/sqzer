@@ -52,6 +52,7 @@ extern "C" {
     fn size(source: &JsValue) -> Vec<u32>;
     #[wasm_bindgen(catch)]
     fn rasterise(source: &JsValue, width: u32, height: u32) -> Result<Vec<u8>, JsValue>;
+    fn close(source: &JsValue);
 }
 
 // Runs when the module is instantiated. Not part of the API, so not in
@@ -181,18 +182,37 @@ pub async fn decode_any(
         )
     };
     let source = open(&bytes, format.mime()).await.map_err(failed)?;
-    let natural = size(&source);
-    let (width, height) = match natural[..] {
+    // `rasterise` releases the source, drawn or not. An image refused
+    // before it is released here: a bitmap holds decoded pixels the
+    // garbage collector is slow to return.
+    let (width, height) = match drawn_size(&source, format, &options, &sqzer) {
+        Ok(size) => size,
+        Err(e) => {
+            close(&source);
+            return Err(e.into());
+        }
+    };
+    let rgba = rasterise(&source, width, height).map_err(failed)?;
+    SqzerImage::from_rgba(&rgba, width, height, Some(format))
+}
+
+/// The size `decodeAny` draws `source` at, checked against the limit.
+/// Only a vector image is drawn at another size than its own: pixels are
+/// resized by `encode`, in linear light, not by the canvas.
+fn drawn_size(
+    source: &JsValue,
+    format: Format,
+    options: &DecodeAnyOptions,
+    sqzer: &Sqzer,
+) -> Result<(u32, u32), Error> {
+    let (width, height) = match size(source)[..] {
         [w, h] if w > 0 && h > 0 => (w, h),
         _ => {
             return Err(Error::InvalidInput(format!(
                 "the browser gives no size for this {format} image"
-            ))
-            .into());
+            )));
         }
     };
-    // Only a vector image is drawn at another size than its own: pixels
-    // are resized by `encode`, in linear light, not by the canvas.
     let (width, height) = if format == Format::Svg {
         let fit = Resize {
             size: Size::Box {
@@ -209,8 +229,7 @@ pub async fn decode_any(
         (width, height)
     };
     sqzer.decode_opts().check_pixels(width, height)?;
-    let rgba = rasterise(&source, width, height).map_err(failed)?;
-    SqzerImage::from_rgba(&rgba, width, height, Some(format))
+    Ok((width, height))
 }
 
 /// An image from pixels made elsewhere, a canvas say: `width` x `height`
@@ -219,14 +238,19 @@ pub async fn decode_any(
 /// alpha channel.
 ///
 /// # Errors
-/// Throws a `SqzerError` of kind `InvalidInput` when `rgba` is not
-/// `width * height * 4` bytes.
+/// Throws a `SqzerError`: `TooLarge` over `maxPixels`, as `decode` does,
+/// and `InvalidInput` when `rgba` is not `width * height * 4` bytes.
 #[wasm_bindgen(js_name = fromPixels)]
 pub fn from_pixels(
     #[wasm_bindgen(unchecked_param_type = "Uint8Array | Uint8ClampedArray")] rgba: &[u8],
     width: u32,
     height: u32,
+    options: Option<Ts<DecodeOptions>>,
 ) -> Result<SqzerImage, SqzerError> {
+    let options = DecodeOptions::parse(options)?;
+    sqzer(options.max_pixels)
+        .decode_opts()
+        .check_pixels(width, height)?;
     SqzerImage::from_rgba(rgba, width, height, None)
 }
 

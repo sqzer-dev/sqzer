@@ -45,7 +45,8 @@ image.free();
 // image is drawn to fit inside the box given, anything else at its own size
 const logo = await decodeAny(svgBytes, { width: 1600 });
 
-// pixels from anywhere else: RGBA, 8 bits, sRGB, as `getImageData` returns them
+// pixels from anywhere else: RGBA, 8 bits, sRGB, as `getImageData` returns them.
+// takes { maxPixels } as a fourth argument, like `decode`
 const drawn = fromPixels(imageData.data, imageData.width, imageData.height);
 ```
 

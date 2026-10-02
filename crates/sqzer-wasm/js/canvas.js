@@ -41,13 +41,24 @@ export function size(source) {
 
 /**
  * `source` drawn at `width` x `height`: RGBA, 8 bits, sRGB, alpha not
- * premultiplied.
+ * premultiplied. Releases `source`, whether or not the drawing worked.
  */
 export function rasterise(source, width, height) {
-  const context = new OffscreenCanvas(width, height).getContext("2d", {
-    willReadFrequently: true,
-  });
-  context.drawImage(source, 0, 0, width, height);
+  try {
+    const context = new OffscreenCanvas(width, height).getContext("2d", {
+      willReadFrequently: true,
+    });
+    context.drawImage(source, 0, 0, width, height);
+    return context.getImageData(0, 0, width, height).data;
+  } finally {
+    close(source);
+  }
+}
+
+/**
+ * Release the decoded pixels of `source` now. An `ImageBitmap` holds them
+ * until it is closed or collected; an `<img>` has nothing to close.
+ */
+export function close(source) {
   source.close?.();
-  return context.getImageData(0, 0, width, height).data;
 }
