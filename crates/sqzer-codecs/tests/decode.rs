@@ -39,7 +39,7 @@ fn header_dimensions_match_the_decode() {
         let Some((_, decoder)) = reg.probe(&bytes) else {
             continue;
         };
-        assert!(!decoder.caps().name.is_empty());
+        assert!(!decoder.caps().name.is_empty(), "decoder name is empty");
         let dims = decoder.dimensions(&bytes);
         let img = decoder.decode(&bytes, &DecodeOpts::default()).unwrap();
         // Stored dimensions; a rotated fixture comes out with the axes

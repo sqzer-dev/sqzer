@@ -617,7 +617,7 @@ mod tests {
         assert!(cfg.placement.width_suffix);
         assert_eq!(cfg.sqzer.resize_bounds(), Resize::inside(Some(480), None));
         let cfg = build_from(&["a.png", "--width", "480"]).unwrap();
-        assert!(cfg.widths.is_empty());
+        assert!(cfg.widths.is_empty(), "{:?}", cfg.widths);
         assert!(!cfg.placement.width_suffix);
     }
 
