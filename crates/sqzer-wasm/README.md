@@ -50,6 +50,8 @@ const logo = await decodeAny(svgBytes, { width: 1600 });
 const drawn = fromPixels(imageData.data, imageData.width, imageData.height);
 ```
 
+> **Note**: `decodeAny` reads an SVG on the page, not in a worker. Chrome, Firefox and Safari all refuse an SVG blob in `createImageBitmap` there, and `decodeAny` throws `DecoderUnavailable` with the browser's reason. Draw the SVG on the page and hand the pixels to `fromPixels` in the worker, as [sqzer.dev](https://github.com/sqzer-dev/sqzer.dev) does. HEIC on Safari works in both.
+
 ## Options
 
 The keys are the flags of the command line in camel case, and the same rules hold between them. All are optional.
