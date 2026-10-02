@@ -266,7 +266,7 @@ fn unreachable_at_the_ceiling_is_reported_not_errored() {
     assert!(!r.reached, "{r:?}");
     assert!(r.capped, "{r:?}");
     assert_eq!(r.quality, 100.0);
-    assert!(!found.output.is_empty());
+    assert!(!found.output.is_empty(), "{r:?}");
 }
 
 #[test]
