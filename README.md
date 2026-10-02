@@ -163,7 +163,9 @@ rimage avif in.jpg                   sqzer -f avif in.jpg
 
 ## In the browser
 
-The same pipeline and defaults as a WebAssembly package, `sqzer` on npm: the portable tier minus SVG, which the browser's canvas rasterises instead.
+[sqzer.dev](https://sqzer.dev) is a page you can drop an image on. It encodes in the tab and uploads nothing; its source is [`sqzer-dev/sqzer.dev`](https://github.com/sqzer-dev/sqzer.dev).
+
+It runs the same pipeline and defaults as a WebAssembly package, `sqzer` on npm: the portable tier minus SVG, which the browser's canvas rasterises instead.
 
 ```js
 // npm install sqzer

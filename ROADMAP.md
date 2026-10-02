@@ -4,14 +4,6 @@ What comes next for `sqzer`, roughly in order. `sqzer` is maintained by one pers
 
 Want to help with an item? Open an issue or a discussion first, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-## The page at `sqzer.dev`
-
-The "Squoosh replacement" is not complete without a page you can drop an image on (ADR-0001 item 10). The package it runs on shipped with 0.3.0: the portable tier as WebAssembly, `sqzer` on npm ([`docs/adr/0011-browser-build.md`](docs/adr/0011-browser-build.md)).
-
-- A small drag-and-drop page on top of that package, at `sqzer.dev`, in a repository of its own, `sqzer-dev/sqzer.dev`.
-
-> **Note**: The browser build inherits the portable tier's licence gaps: lossy WebP and JPEG XL cannot be written. Everything else the portable tier does, it does on `wasm32` too, AVIF decoding and `oxipng` included (ADR-0011).
-
 ## Coming from `rimage`
 
 Palette reduction for PNG, `rimage`'s `--quantization`, as a codec option:
@@ -24,7 +16,7 @@ Palette reduction for PNG, `rimage`'s `--quantization`, as a codec option:
 
 ## A full build in the browser
 
-After the page, a second browser build over `sqzer-codecs-agpl` that fills the portable tier's gaps with imazen's pure-Rust codecs: lossy WebP (`zenwebp`), JPEG XL encoding, AVIF decoding, HEIC input, and PNG quantisation through `imagequant`. It would power the drag-and-drop page at `sqzer.dev` and make it a full Squoosh replacement.
+The page at [sqzer.dev](https://sqzer.dev) runs the portable tier, so it inherits that tier's licence gaps: lossy WebP and JPEG XL cannot be written ([`docs/adr/0011-browser-build.md`](docs/adr/0011-browser-build.md)). Next is a second browser build over `sqzer-codecs-agpl` that fills those gaps with imazen's pure-Rust codecs: lossy WebP (`zenwebp`), JPEG XL encoding, HEIC input, and PNG quantisation through `imagequant`. It would power the page and make it a full Squoosh replacement.
 
 > **Note**: That build is AGPL-3.0, and so is anything that bundles it. It ships as its own package, never as the default `sqzer` package or in the library, which stay permissive. Whether those crates build for `wasm32` is not verified yet; that check and a new ADR come first.
 
