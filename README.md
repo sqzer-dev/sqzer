@@ -1,8 +1,8 @@
 # sqzer
 
-Multi-format image optimizer with best-in-class defaults. A library and a CLI, pure Rust by default, C codecs when you want the last few percent.
+Multi-format image optimizer with best-in-class defaults. A library, a CLI and a WebAssembly package for the browser, pure Rust by default, C codecs when you want the last few percent.
 
-> **Note**: Early days. The command line and its defaults are what this README describes; the library API will still change before `1.0`, and the browser build is not there yet. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md), the command line in [`docs/adr/0003-cli-interface.md`](docs/adr/0003-cli-interface.md), the native backends in [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md), colour in [`docs/adr/0007-colour-management.md`](docs/adr/0007-colour-management.md).
+> **Note**: Early days. The command line and its defaults are what this README describes; the library API will still change before `1.0`. The browser build is the `sqzer` package on npm, described [below](#in-the-browser); the page to drop an image on is next. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md), the command line in [`docs/adr/0003-cli-interface.md`](docs/adr/0003-cli-interface.md), the native backends in [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md), colour in [`docs/adr/0007-colour-management.md`](docs/adr/0007-colour-management.md), the browser build in [`docs/adr/0011-browser-build.md`](docs/adr/0011-browser-build.md).
 
 ## What it is for
 
@@ -161,6 +161,23 @@ rimage avif in.jpg                   sqzer -f avif in.jpg
 
 > **Note**: `rimage` scales an image up to the size asked for unless `--no-upscale` is given, which is why the lines above carry `--enlarge`. Most runs only mean to shrink, and for those `--enlarge` can go.
 
+## In the browser
+
+The same pipeline and defaults as a WebAssembly package, `sqzer` on npm: the portable tier minus SVG, which the browser's canvas rasterises instead.
+
+```js
+// npm install sqzer
+import init, { optimize } from "sqzer";
+await init();
+
+// AVIF for a photograph, lossless WebP for a graphic, searched to a score of 70
+const out = optimize(bytes);
+// the command line's flags in camel case
+const avif = optimize(bytes, { format: "avif", target: 60, width: 1600 });
+```
+
+It is synchronous and single-threaded, so a page runs it in a Web Worker. The options, `decode` once and `encode` many times, `decodeAny` for SVG and HEIC, the result record and the errors are in [`crates/sqzer-wasm/README.md`](crates/sqzer-wasm/README.md), which is the package's README on npm.
+
 ## Formats
 
 Decode: JPEG, PNG, WebP, AVIF, JPEG XL, GIF, TIFF, BMP, TGA, ICO, QOI, PNM, OpenEXR, SVG. HEIC behind a feature. OpenEXR is read as linear light in its own primaries, rotated to sRGB and encoded to 16-bit sRGB with anything above display white clipped; there is no tone mapping.
@@ -205,7 +222,7 @@ crates/sqzer-codecs    every backend behind a feature flag
 crates/sqzer-metrics   SSIMULACRA2 and the target-quality search
 crates/sqzer           library facade, the thing you depend on
 crates/sqzer-cli       the binary, `sqzer`
-crates/sqzer-wasm      browser build: the JavaScript API, portable tier minus SVG. On npm with 0.3
+crates/sqzer-wasm      browser build: the JavaScript API, portable tier minus SVG. `sqzer` on npm
 crates/sqzer-native-tier  what `native` means per target, no code
 docs/adr               design decisions
 dist-workspace.toml    the release matrix for `cargo-dist`
