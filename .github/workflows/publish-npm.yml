@@ -1,4 +1,6 @@
-# Publishes `crates/sqzer-wasm` to npm as `sqzer` (ADR-0011 D5).
+# Stages `crates/sqzer-wasm` on npm as `sqzer` (ADR-0011 D5). Staged,
+# not published: the version goes live when a maintainer approves it on
+# npmjs.com with 2FA, so a pushed tag alone puts nothing on npm.
 #
 # `release.yml` calls this after the GitHub release of a tag exists:
 # `publish-jobs` in `dist-workspace.toml` names it, and `dist generate`
@@ -10,7 +12,7 @@
 # No token is stored. npm trusts this repository through OIDC: the trusted
 # publisher of the `sqzer` package on npmjs.com names `release.yml`, the
 # workflow that calls this one, which is the name npm checks for a called
-# workflow. It must also allow `npm publish`, not only staged publishing.
+# workflow. It allows staged publishing only, the default.
 name: publish-npm
 
 on:
@@ -41,8 +43,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-      # Node 24 carries an npm new enough for trusted publishing (11.5.1).
-      # No cache in a release build.
+      # Node 24 carries an npm new enough for trusted publishing (11.5.1)
+      # and staged publishing (11.15.0). No cache in a release build.
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -61,10 +63,25 @@ jobs:
           version=$(jq -r .version crates/sqzer-wasm/pkg/package.json)
           test "$tag" = "v$version" || { echo "tag $tag, package $version"; exit 1; }
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       # First, so that a package exists even if npm is down. `--clobber`
-      # lets the job be run again after a publish that failed.
+      # lets the job be run again after a later step failed.
       - run: gh release upload --clobber "$TAG" crates/sqzer-wasm/pkg/sqzer-*.tgz
         env:
           TAG: ${{ steps.tag.outputs.tag }}
-      - run: npm publish --provenance --access public sqzer-*.tgz
-        working-directory: crates/sqzer-wasm/pkg
+      # A run repeated after the version went live has nothing left to do,
+      # and must not fail on a version npm already has.
+      - working-directory: crates/sqzer-wasm/pkg
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          if [ "$(npm view "sqzer@$VERSION" version 2> /dev/null)" = "$VERSION" ]; then
+            echo "sqzer@$VERSION is on npm already"
+            exit 0
+          fi
+          npm stage --help > /dev/null 2>&1 || {
+            echo "npm $(npm --version) has no staged publishing, which needs 11.15.0"
+            exit 1
+          }
+          npm stage publish --provenance --access public sqzer-*.tgz
+          echo "sqzer@$VERSION is staged: approve it under Staged Packages on npmjs.com" >> "$GITHUB_STEP_SUMMARY"
