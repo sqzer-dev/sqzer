@@ -13,7 +13,9 @@ export async function open(bytes, mime) {
   const blob = new Blob([bytes], { type: mime });
   // An `<img>` is rasterised at the size it is drawn at. An `ImageBitmap`
   // of a vector image is pixels already, at the image's own size, and
-  // scaling it blurs. A worker has no `<img>` and gets the bitmap.
+  // scaling it blurs. A worker has no `<img>` and gets the bitmap, which
+  // every browser refuses for an SVG as of 2026: the caller draws it on
+  // the page and uses `fromPixels` instead.
   if (mime === "image/svg+xml" && typeof Image === "function") {
     const url = URL.createObjectURL(blob);
     try {

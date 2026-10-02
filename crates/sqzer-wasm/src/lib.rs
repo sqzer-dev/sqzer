@@ -147,12 +147,17 @@ pub fn decode(bytes: &[u8], options: Option<Ts<DecodeOptions>>) -> Result<SqzerI
 }
 
 /// `decode`, with the browser's canvas for what this build cannot read:
-/// SVG everywhere, HEIC where the browser has a decoder for it.
+/// SVG on the page, HEIC where the browser has a decoder for it.
 ///
 /// The package's own decoder comes first. The browser gets only input it
 /// has no decoder for, and returns 8 bits of sRGB. A vector image is
 /// rasterised at its own size, or to fit inside `width` x `height` when
 /// those are given; any other image is decoded at its own size.
+///
+/// In a worker there is no `<img>`, and Chrome, Firefox and Safari all
+/// refuse an SVG blob in `createImageBitmap`, so an SVG fails there with
+/// `DecoderUnavailable` and the browser's reason. Draw it on the page and
+/// hand the pixels to `fromPixels`. HEIC on Safari works in both.
 ///
 /// # Errors
 /// Throws a `SqzerError`. When the browser cannot read the input either,
