@@ -245,6 +245,11 @@ cargo build -p sqzer-wasm --target wasm32-unknown-unknown
 # .cargo/config.toml, so run it without one
 (cd crates/sqzer-wasm && wasm-pack test --node)
 
+# the npm package as a tag publishes it: release build, packed, installed
+# from the tarball and run. leaves crates/sqzer-wasm/pkg/sqzer-<version>.tgz.
+# needs wasm-pack, jq and Node
+crates/sqzer-wasm/pack.sh
+
 # licence allow-list, runs in CI
 cargo deny check
 

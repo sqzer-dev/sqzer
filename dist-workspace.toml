@@ -33,8 +33,14 @@ precise-builds = true
 # `sqzer-dev/homebrew-tap` repository; the publish job writes the formula
 # there with the `HOMEBREW_TAP_TOKEN` secret of this repository.
 tap = "sqzer-dev/homebrew-tap"
-publish-jobs = ["homebrew"]
 formula = "sqzer"
+# `./publish-npm` is `.github/workflows/publish-npm.yml`: the browser
+# build, `sqzer` on npm (ADR-0011 D5). dist cannot build wasm, so the
+# workflow does, after the release is hosted. It publishes through npm's
+# trusted publishing, which wants an OIDC token, and attaches the tarball
+# to the GitHub release, which wants `contents`.
+publish-jobs = ["homebrew", "./publish-npm"]
+github-custom-job-permissions = { "publish-npm" = { id-token = "write", contents = "write" } }
 # Compiler environment for the vendored C libraries and the two nasm
 # workarounds, mirrored from the native job in `ci.yml`.
 github-build-setup = "../dist-build-setup.yml"

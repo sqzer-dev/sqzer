@@ -182,6 +182,10 @@ jobs:
       # matches `Cargo.lock`.
       - run: env -u RUSTFLAGS wasm-pack test --node
         working-directory: crates/sqzer-wasm
+      # The npm package as a tag would publish it: the release build,
+      # packed, installed from the tarball and run (ADR-0011 item 4).
+      # `publish-npm.yml` runs the same script and then publishes.
+      - run: crates/sqzer-wasm/pack.sh
 
   lint:
     runs-on: ubuntu-latest

@@ -1,0 +1,70 @@
+# Publishes `crates/sqzer-wasm` to npm as `sqzer` (ADR-0011 D5).
+#
+# `release.yml` calls this after the GitHub release of a tag exists:
+# `publish-jobs` in `dist-workspace.toml` names it, and `dist generate`
+# writes the call. Nothing else runs it. The build, the fixes to what
+# `wasm-pack` writes and the check of the tarball are
+# `crates/sqzer-wasm/pack.sh`, which the wasm job of `ci.yml` runs on every
+# pull request, so a tag does not meet them for the first time.
+#
+# No token is stored. npm trusts this repository through OIDC: the trusted
+# publisher of the `sqzer` package on npmjs.com names `release.yml`, the
+# workflow that calls this one, which is the name npm checks for a called
+# workflow. It must also allow `npm publish`, not only staged publishing.
+name: publish-npm
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        description: The dist manifest of the release, as JSON.
+        required: true
+        type: string
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    permissions:
+      # The OIDC token npm exchanges for the right to publish.
+      id-token: write
+      # The tarball is attached to the GitHub release.
+      contents: write
+    env:
+      WASM_PACK: "0.15.0"
+      PLAN: ${{ inputs.plan }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      # The tagged commit: a called workflow runs on the caller's ref.
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      # Node 24 carries an npm new enough for trusted publishing (11.5.1).
+      # No cache in a release build.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+      - run: |
+          curl -sSL "https://github.com/wasm-bindgen/wasm-pack/releases/download/v$WASM_PACK/wasm-pack-v$WASM_PACK-x86_64-unknown-linux-musl.tar.gz" \
+            | tar -xz --strip-components=1 -C "$HOME/.cargo/bin" "wasm-pack-v$WASM_PACK-x86_64-unknown-linux-musl/wasm-pack"
+      - run: crates/sqzer-wasm/pack.sh
+      # The package carries the workspace version, which dist has already
+      # matched against the tag for the binaries. Checked again here
+      # because a version, once on npm, cannot be published twice.
+      - id: tag
+        run: |
+          tag=$(jq -r .announcement_tag <<< "$PLAN")
+          version=$(jq -r .version crates/sqzer-wasm/pkg/package.json)
+          test "$tag" = "v$version" || { echo "tag $tag, package $version"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      # First, so that a package exists even if npm is down. `--clobber`
+      # lets the job be run again after a publish that failed.
+      - run: gh release upload --clobber "$TAG" crates/sqzer-wasm/pkg/sqzer-*.tgz
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+      - run: npm publish --provenance --access public sqzer-*.tgz
+        working-directory: crates/sqzer-wasm/pkg
