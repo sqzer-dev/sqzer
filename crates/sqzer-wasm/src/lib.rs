@@ -180,7 +180,7 @@ pub async fn decode_any(
             ),
         )
     };
-    let source = open(&bytes, format.mime()).await.map_err(&failed)?;
+    let source = open(&bytes, format.mime()).await.map_err(failed)?;
     let natural = size(&source);
     let (width, height) = match natural[..] {
         [w, h] if w > 0 && h > 0 => (w, h),
@@ -209,7 +209,7 @@ pub async fn decode_any(
         (width, height)
     };
     sqzer.decode_opts().check_pixels(width, height)?;
-    let rgba = rasterise(&source, width, height).map_err(&failed)?;
+    let rgba = rasterise(&source, width, height).map_err(failed)?;
     SqzerImage::from_rgba(&rgba, width, height, Some(format))
 }
 
