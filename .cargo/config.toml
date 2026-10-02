@@ -3,5 +3,13 @@
 # needs SIMD either way; with the flag `fast-ssim2` takes its `wasm128` path
 # and the target search runs about 1.7x faster. Every browser since Safari
 # 16.4 has it.
+#
+# An 8 MiB stack, what a desktop main thread has, in place of the linker's
+# 1 MiB: an unoptimised build of the decoders overflows that on a 48 x 32
+# fixture, and a wasm stack overflow is a trap with no message. It costs
+# address space, not pages.
+#
+# > **Note**: a `RUSTFLAGS` environment variable replaces these flags, it
+# > does not add to them. Unset it for a wasm32 build, as the CI job does.
 [target.wasm32-unknown-unknown]
-rustflags = ["-C", "target-feature=+simd128"]
+rustflags = ["-C", "target-feature=+simd128", "-C", "link-arg=-zstack-size=8388608"]

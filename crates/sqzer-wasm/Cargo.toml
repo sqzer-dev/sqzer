@@ -1,19 +1,64 @@
 [package]
 name = "sqzer-wasm"
-description = "Browser build of sqzer. Portable tier only."
+description = "Multi-format image optimizer with best-in-class defaults, for the browser."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
 publish = false
 
+# The Rust API of this crate is the npm package, not a library
+# (ADR-0011 D4).
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [dependencies]
-sqzer = { workspace = true, features = ["portable"] }
+# The portable tier minus `svg`: the browser's canvas rasterises SVG with
+# the user's fonts, which `resvg` on wasm32 does not have (ADR-0011 D3).
+sqzer = { workspace = true, features = [
+    "png",
+    "jpeg",
+    "webp-lossless",
+    "avif",
+    "jxl-decode",
+    "heif",
+    "gif",
+    "tiff",
+    "bmp",
+    "tga",
+    "ico",
+    "qoi",
+    "pnm",
+    "exr",
+] }
+# The JavaScript boundary. All MIT OR Apache-2.0. `wasm-bindgen-futures`
+# is what an `async` export compiles to; `decodeAny` is the one.
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4.79"
+js-sys = "0.3.106"
+# Options and results cross the boundary as plain objects.
+# `serde-wasm-bindgen` is MIT; `tsify` (MIT OR Apache-2.0) writes their
+# TypeScript types into the generated `.d.ts`, over `serde-wasm-bindgen`
+# with the `js` feature instead of its default `JSON.parse` round trip.
+serde = { version = "1.0", features = ["derive"] }
+serde-wasm-bindgen = "0.6.5"
+tsify = { version = "0.5.8", default-features = false, features = ["js"] }
+# A panic as a readable exception on the console. MIT OR Apache-2.0.
+console_error_panic_hook = "0.1.7"
+
+# The tests run on wasm32 only, under `wasm-pack test --node`.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3.79"
+
+# `wasm-opt` stays off (ADR-0011 D4). `wasm-pack` 0.15 runs `-O` on a
+# release build unless told not to, with a binaryen that rejects the
+# module as built: it does not enable SIMD or bulk memory by default.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
 
 [lints]
 workspace = true

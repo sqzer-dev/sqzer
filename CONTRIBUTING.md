@@ -40,6 +40,9 @@ cargo deny check
 
 # proves the portable tier builds for a target with no libc; needs clang
 cargo build -p sqzer-wasm --target wasm32-unknown-unknown
+
+# the browser build's JavaScript API over the fixtures, in Node; needs wasm-pack
+(cd crates/sqzer-wasm && wasm-pack test --node)
 ```
 
 > **Note**: The golden tests compare each encoder's SSIMULACRA2 score on the fixtures against a committed value. If a change moves a score, say why in the PR; do not just update the number.

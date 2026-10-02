@@ -8,6 +8,8 @@
 
 ### Features
 
+* **wasm:** the JavaScript API of the browser build (ADR-0011 D3), not yet on npm: `optimize(bytes, options)` for the whole pipeline in one call, `decode` and `SqzerImage.encode` to decode once and encode as often as a slider moves, `decodeAny` to hand what the package cannot read (SVG, HEIC where the browser has it) to the browser's canvas, `fromPixels` for pixels made elsewhere, and `codecs()` for what the build carries. Options are the command line's flags in camel case under the same rules, `onTrial` reports each trial of the target search, a result is the `--json` record in camel case with `bytes` added, and an error is a `SqzerError` whose `kind` is the `sqzer_core::Error` variant. The package is the portable tier minus `svg`, and its pixel limit defaults to 24 megapixels
+* **sqzer:** one feature per portable codec (`png`, `jpeg`, `webp-lossless`, `avif`, `jxl-decode`, `heif`, `gif`, `tiff`, `bmp`, `tga`, `ico`, `qoi`, `pnm`, `exr`, `svg`), forwarded to `sqzer-codecs`, for a build that leaves part of the tier out. `portable` is still all of them and still the default
 * **codecs:** PNG on `wasm32` is written by `oxipng`, byte for byte what a desktop build writes from the same pixels, in place of the plain `png` writer, whose files were about 14 % larger. `libdeflate` is built there in its `freestanding` mode, so a `wasm32` build of `sqzer` needs `clang` on `PATH` (ADR-0011 D1)
 * **codecs:** AVIF decodes on `wasm32`. The decoder is `sqzer-rav1d` on every target, in place of the archived `re_rav1d`: upstream `rav1d` `main` with its safe Rust API and a stand-in for the `libc` names `wasm32` lacks (ADR-0011 D2). A `wasm32` build now reads AVIF input, takes a perceptual target for AVIF output and defaults to AVIF for photos, like every other build. `--list-codecs` and `--json` name the decoder `rav1d`
 * **cli:** errors and warnings style flags and values the way `clap` does: `'--width'` quoted, in yellow where it names the problem and in green where it names the fix. `--color never`, `NO_COLOR` and a pipe keep the quotes without the colour. The `error` and `reason` fields of `--json` carry the same text with backticks around each flag
@@ -15,6 +17,10 @@
 ### Performance Improvements
 
 * **workspace:** `wasm32-unknown-unknown` builds of the workspace turn `simd128` on through `.cargo/config.toml`. The target search runs about 1.7x faster there; a build of your own crate over `sqzer` sets the flag itself
+
+### Bug Fixes
+
+* **workspace:** `wasm32-unknown-unknown` builds of the workspace link with an 8 MiB stack through `.cargo/config.toml`. The linker's 1 MiB overflows in an unoptimised build of the decoders, which on `wasm32` is a trap with no message. A build of your own crate over `sqzer` sets `-C link-arg=-zstack-size` itself
 
 ## 0.2.0
 

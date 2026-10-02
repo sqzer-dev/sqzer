@@ -12,6 +12,24 @@ readme = "../../README.md"
 [features]
 default = ["portable"]
 portable = ["sqzer-codecs/portable"]
+# The portable tier one codec at a time, for a build that leaves part of
+# it out: `sqzer-wasm` carries all of it but `svg`, which the browser
+# rasterises (ADR-0011 D3). `portable` is every one of these.
+png = ["sqzer-codecs/png"]
+jpeg = ["sqzer-codecs/jpeg"]
+webp-lossless = ["sqzer-codecs/webp-lossless"]
+avif = ["sqzer-codecs/avif"]
+jxl-decode = ["sqzer-codecs/jxl-decode"]
+heif = ["sqzer-codecs/heif"]
+gif = ["sqzer-codecs/gif"]
+tiff = ["sqzer-codecs/tiff"]
+bmp = ["sqzer-codecs/bmp"]
+tga = ["sqzer-codecs/tga"]
+ico = ["sqzer-codecs/ico"]
+qoi = ["sqzer-codecs/qoi"]
+pnm = ["sqzer-codecs/pnm"]
+exr = ["sqzer-codecs/exr"]
+svg = ["sqzer-codecs/svg"]
 # The native tier, all of it or one backend at a time. See ADR-0004 for
 # what each needs at build time. `native` is the tier as the release
 # binaries carry it: every backend the target can build and run, decided

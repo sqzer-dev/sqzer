@@ -12,6 +12,10 @@
 //!
 //! Updating a golden value is a deliberate act: state the dependency bump
 //! and the before and after scores in the PR.
+//!
+//! `crates/sqzer-wasm/src/tests.rs` checks the portable rows on `wasm32`,
+//! where this file cannot run for want of a file system. Change both
+//! together.
 
 #![cfg(feature = "portable")]
 
