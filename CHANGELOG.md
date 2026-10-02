@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0
+
 ### ⚠️ BREAKING CHANGES
 
 * **codecs:** `sqzer_codecs::png::PngEncoder`, the plain `png` writer, is removed. `sqzer_codecs::oxipng::OxipngEncoder` writes PNG on every target; effort 0 is its fastest setting

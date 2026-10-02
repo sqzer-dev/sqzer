@@ -4,7 +4,7 @@ Guidance for Claude Code working in this repository. Read `docs/adr/0001-system-
 
 ## What this is
 
-`sqzer` is a multi-format image optimizer: a Rust library, a CLI and later a WASM package. The goal is Squoosh-quality defaults as a scriptable tool. Pure Rust by default, C codecs opt-in, AGPL codecs never in the library or default builds.
+`sqzer` is a multi-format image optimizer: a Rust library, a CLI and a WASM package, `sqzer` on npm. The goal is Squoosh-quality defaults as a scriptable tool. Pure Rust by default, C codecs opt-in, AGPL codecs never in the library or default builds.
 
 Solo-maintained. Prefer fewer, well-chosen dependencies over coverage. Never write a decoder, encoder, resampler, colour transform or metric; mature crates exist for each and the job here is the container, the traits and the pipeline around them.
 
