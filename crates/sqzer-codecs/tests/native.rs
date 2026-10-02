@@ -678,7 +678,7 @@ mod jpegli {
         assert_eq!(caps.name, "jpegli");
         assert_eq!(caps.tier, Tier::Native);
         assert!(caps.lossy && !caps.lossless && !caps.alpha);
-        assert!(caps.options.is_empty());
+        assert!(caps.options.is_empty(), "{:?}", caps.options);
     }
 
     #[test]

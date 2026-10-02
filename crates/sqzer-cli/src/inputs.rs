@@ -406,7 +406,7 @@ mod tests {
             &opts(false, &[], &[]),
         );
         assert_eq!(names(&r), vec!["a[1].png"]);
-        assert!(r.failures.is_empty());
+        assert!(r.failures.is_empty(), "{:?}", r.failures);
     }
 
     #[test]
@@ -424,7 +424,7 @@ mod tests {
             &[dir.join("none*.png").to_string_lossy().into_owned()],
             &opts(false, &[], &[]),
         );
-        assert!(r.inputs.is_empty());
+        assert!(r.inputs.is_empty(), "{:?}", r.inputs);
         assert_eq!(r.failures[0].1, "no files match");
     }
 
