@@ -59,6 +59,8 @@ wasm-bindgen-test = "0.3.79"
 # `wasm-opt` stays off (ADR-0011 D4). `wasm-pack` 0.15 runs `-O` on a
 # release build unless told not to, with a binaryen that rejects the
 # module as built: it does not enable SIMD or bulk memory by default.
+# With the features passed, `-O` makes neither the search nor the AVIF
+# encode faster (ADR-0011 action item 7).
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
 
