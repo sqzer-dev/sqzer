@@ -284,7 +284,7 @@ What to revisit:
 7. [x] CLI with the six command shapes from D5, JSON output, exit codes. (The grammar is ADR-0003. `--max-width` and `--max-height` arrived with the resize stage of D3.)
 8. [x] Native tier: `libwebp`, `jpegxl-rs`, `libavif` + `libaom`, `libheif`; CI jobs for each on the six desktop targets. (The crates are ADR-0004's: `jpegxl-rs` is GPL-3.0, so JPEG XL goes through `gamut-jxl`; jpegli joined as a fifth backend. Windows lacks `native-heif` and musl lacks the C++ backends in CI, see that record's action items.)
 9. [x] `cargo-dist` release matrix, portable + native artifacts. (ADR-0006. Native artifacts only: since ADR-0005 a native binary starts on every machine and carries everything the portable build does, so a portable artifact would be a second, worse build of the same six targets. `native` now means what the target can build and run, see that record.)
-10. [ ] `sqzer-wasm` package and a minimal browser demo (the "Squoosh replacement" story is not complete without a drag-and-drop page, even if it is a 200-line HTML file).
+10. [x] `sqzer-wasm` package and a minimal browser demo (the "Squoosh replacement" story is not complete without a drag-and-drop page, even if it is a 200-line HTML file). (ADR-0011. The package is `sqzer` on npm since 0.3.0, staged from the release tag, and the page is live at `https://sqzer.dev` since 2026-10-02, from `github.com/sqzer-dev/sqzer.dev`. It is the portable tier, so it writes neither lossy WebP nor JPEG XL; a build that does is in `ROADMAP.md`.)
 11. [x] Name: `sqzer`. crates.io and npm were free on 2026-09-06.
 
 ---

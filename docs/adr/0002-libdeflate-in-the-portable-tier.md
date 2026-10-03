@@ -47,4 +47,4 @@ The plain `PngEncoder` stays public in `sqzer_codecs::png` for callers who want 
 
 1. [x] Gate `oxipng` to non-wasm32 targets and register `PngEncoder` on wasm32.
 2. [x] Document the exception in the README.
-3. [ ] Revisit when `oxipng` offers a pure-Rust DEFLATE backend or when a browser build needs optimised PNG output.
+3. [x] Revisit when `oxipng` offers a pure-Rust DEFLATE backend or when a browser build needs optimised PNG output. (Revisited in ADR-0011 D1, when the browser build needed it: `oxipng` is the PNG encoder on wasm32 too since 2026-10-01, with `libdeflate` in `freestanding` mode and `clang` on the build machine, and `PngEncoder` is removed. The other condition has not come: `libdeflater` is a required dependency of `oxipng` 10.2.1, so `libdeflate` stays vendored C on every target.)
