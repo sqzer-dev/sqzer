@@ -22,7 +22,7 @@
     },
     {
       "id": "no-banned-crates",
-      "rule": "Reject any new dependency on `zenwebp`, `zenjpeg`, `zenavif`, `zenravif`, `zenjxl`, `jxl-encoder`, `rav1d-safe`, `heic`, `jpegli-rs`, `jpegxl-rs` or `jpegxl-sys`, any AGPL crate outside `sqzer-codecs-agpl`, and any loosening of `deny.toml`. A new dependency's licence must be on the `deny.toml` allow-list and stated in the PR.",
+      "rule": "Reject any new dependency on `zenwebp`, `zenjpeg`, `zenavif`, `zenravif`, `zenjxl`, `jxl-encoder`, `rav1d-safe`, `heic`, `jpegli-rs`, `jpegxl-rs`, `jpegxl-sys`, `imagequant`, `imagequant-sys` or `zenquant`, any AGPL crate outside `sqzer-codecs-agpl`, and any loosening of `deny.toml`. A `clarify` entry that ties a crate's licence file to a hash is not a loosening (ADR-0012 D1). A new dependency's licence must be on the `deny.toml` allow-list and stated in the PR.",
       "scope": [
         "**/Cargo.toml",
         "deny.toml"

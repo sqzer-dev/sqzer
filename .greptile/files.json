@@ -57,6 +57,11 @@
       "path": "docs/adr/0011-browser-build.md",
       "description": "The browser build: portable means runs everywhere and may need a C compiler to build, oxipng on wasm32 through freestanding, AVIF decoding through the sqzer-rav1d fork on every target, the JavaScript API of sqzer-wasm with the browser's canvas as input fallback, simd128, the dist publish job for npm, the page in its own repository",
       "scope": ["crates/sqzer-wasm/**", "crates/sqzer-codecs/**", ".cargo/**", ".github/**", "dist-workspace.toml"]
+    },
+    {
+      "path": "docs/adr/0012-png-palette-reduction.md",
+      "description": "Palette reduction for PNG: png:colors and png:dither through quantizr inside the PNG encoder, an image with few enough colours left exact, CodecOption::lossy and Output::lossless for an option that gives up pixels at a lossless target, the refusal of such an option together with a lossless target",
+      "scope": ["crates/sqzer-codecs/src/oxipng.rs", "crates/sqzer-codecs/Cargo.toml", "crates/sqzer-core/src/codec.rs", "crates/sqzer/src/lib.rs", "crates/sqzer-cli/**", "crates/sqzer-wasm/src/**", "deny.toml"]
     }
   ]
 }
