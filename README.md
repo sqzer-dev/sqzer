@@ -101,6 +101,11 @@ sqzer photo.jpg --width 480,960,1600 -f avif,webp
 sqzer photo.jpg -f jpeg -x jpeg:progressive=false
 sqzer --list-codecs -v                      # every backend's keys and defaults
 
+# a PNG reduced to a palette, as pngquant writes them. lossy: --json says "lossless": false,
+# and --lossless refuses it. an image that already has that few colours is written exactly
+sqzer logo.png -f png -x png:colors=256
+sqzer logo.png -f png -x png:colors=32 -x png:dither=50   # fewer colours, half the dithering
+
 # where outputs go
 sqzer photo.jpg -o out.avif                 # a file, when there is one input and one format
 sqzer *.jpg -o dist                         # a directory otherwise
@@ -145,7 +150,7 @@ rimage avif in.jpg                   sqzer -f avif in.jpg
 -d <dir>                             -o <dir>
 -s <suffix>                          --suffix <suffix>
 -t <threads>                         -j <jobs>        (-t is now --target)
---quantization / --dithering         --codec-opt png:colors=  (once a quantiser lands)
+--quantization / --dithering         -x png:colors=<2-256> -x png:dither=<0-100>    (a colour count, not a quality)
 --resize 1600w                       --width 1600 --enlarge
 --resize 900h                        --height 900 --enlarge
 --resize 512l                        --width 512 --height 512 --enlarge

@@ -4,16 +4,6 @@ What comes next for `sqzer`, roughly in order. `sqzer` is maintained by one pers
 
 Want to help with an item? Open an issue or a discussion first, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-## Coming from `rimage`
-
-Palette reduction for PNG, `rimage`'s `--quantization`, as a codec option:
-
-```text
--x png:colors=<N>
-```
-
-> **Note**: The quantiser needs a permissively licensed crate. `libimagequant` and its `imagequant` binding are GPL-3.0 and cannot be used.
-
 ## A full build in the browser
 
 The page at [sqzer.dev](https://sqzer.dev) runs the portable tier, so it inherits that tier's licence gaps: lossy WebP and JPEG XL cannot be written ([`docs/adr/0011-browser-build.md`](docs/adr/0011-browser-build.md)). Next is a second browser build over `sqzer-codecs-agpl` that fills those gaps with imazen's pure-Rust codecs: lossy WebP (`zenwebp`), JPEG XL encoding, HEIC input, and PNG quantisation through `imagequant`. It would power the page and make it a full Squoosh replacement.

@@ -173,6 +173,12 @@ fn encoder_caps_are_truthful() {
         let codec = if codec == "jpg" { "jpeg" } else { codec };
         for opt in caps.options {
             let params = quality(60.0).with_codec_opt(codec, opt.key, opt.default);
+            // `png:dither` is refused without the palette it dithers.
+            let params = if (codec, opt.key) == ("png", "dither") {
+                params.with_codec_opt("png", "colors", "256")
+            } else {
+                params
+            };
             let params = if caps.lossy {
                 params
             } else {
@@ -506,6 +512,253 @@ fn png_codec_options_take_effect() {
         png.encode(&src, &quality(50.0).with_codec_opt("png", "brute", "yes")),
         Err(Error::InvalidParams(_))
     ));
+}
+
+/// Lossless parameters with `png:colors` set.
+fn palette(colors: &str) -> EncodeParams {
+    Target::Lossless
+        .into_params()
+        .with_codec_opt("png", "colors", colors)
+}
+
+/// How many distinct pixels an 8-bit image holds.
+fn distinct_colors(img: &Image) -> usize {
+    let samples = img.samples().as_u8().expect("8-bit");
+    samples
+        .chunks_exact(img.channels())
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+}
+
+#[test]
+fn png_colors_reduce_to_a_palette() {
+    let reg = registry();
+    let png = reg.encoder(Format::Png).unwrap();
+    for color in [
+        ColorType::Gray,
+        ColorType::GrayAlpha,
+        ColorType::Rgb,
+        ColorType::Rgba,
+    ] {
+        let src = test_image(color);
+        for (max, limit) in [(256, 4.0), (16, 24.0)] {
+            let bytes = png.encode(&src, &palette(&max.to_string())).unwrap();
+            let back = reg.decode(&bytes, &DecodeOpts::default()).unwrap().image;
+            // The gray pattern has under 256 shades: it is left alone.
+            if distinct_colors(&src) <= max {
+                assert_eq!(color, ColorType::Gray);
+                assert!(back == src, "{color:?} at {max}: few colours, not exact");
+                continue;
+            }
+            assert_eq!((back.width(), back.height()), (W, H));
+            assert!(
+                distinct_colors(&back) <= max,
+                "{color:?} at {max}: {} colours",
+                distinct_colors(&back)
+            );
+            assert_eq!(back.has_alpha(), color.has_alpha(), "{color:?} at {max}");
+            // A palette entry is RGB or RGBA, so gray comes back widened.
+            let expected = match (color, back.color()) {
+                (ColorType::Gray, ColorType::Rgb) => widen(&src, false),
+                (ColorType::GrayAlpha, ColorType::Rgba) => widen(&src, true),
+                _ => src.clone(),
+            };
+            assert!(back != expected, "{color:?} at {max}: nothing was reduced");
+            assert_close(&back, &expected, limit, &format!("{color:?} at {max}"));
+        }
+    }
+}
+
+/// Gray replicated into RGB, with the alpha channel kept when there is one.
+fn widen(img: &Image, alpha: bool) -> Image {
+    let samples = img.samples().as_u8().unwrap();
+    let (color, wide) = if alpha {
+        (
+            ColorType::Rgba,
+            samples
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .flat_map(|&[g, a]| [g, g, g, a])
+                .collect(),
+        )
+    } else {
+        (
+            ColorType::Rgb,
+            samples.iter().flat_map(|&g| [g, g, g]).collect(),
+        )
+    };
+    Image::from_u8(img.width(), img.height(), color, wide).unwrap()
+}
+
+#[test]
+fn png_colors_leave_an_image_with_few_colours_exact() {
+    let reg = registry();
+    let png = reg.encoder(Format::Png).unwrap();
+
+    // Twelve colours, under a palette of sixteen.
+    let few: Vec<u8> = (0..W * H)
+        .flat_map(|i| [(i % 4 * 80) as u8, (i % 3 * 120) as u8, 7])
+        .collect();
+    let src = Image::from_u8(W, H, ColorType::Rgb, few).unwrap();
+    assert_eq!(distinct_colors(&src), 12);
+    let bytes = png.encode(&src, &palette("16")).unwrap();
+    assert_eq!(
+        reg.decode(&bytes, &DecodeOpts::default()).unwrap().image,
+        src
+    );
+
+    // The same at 16 bits, with samples no 8-bit value stands for: the
+    // image is counted and written at its own depth, never narrowed.
+    let few: Vec<u16> = (0..W * H)
+        .flat_map(|i| [(i % 4 * 0x1234) as u16, (i % 3 * 0x4321) as u16, 0x0102])
+        .collect();
+    let src = Image::from_u16(W, H, ColorType::Rgb, few).unwrap();
+    let bytes = png.encode(&src, &palette("16")).unwrap();
+    assert_eq!(
+        reg.decode(&bytes, &DecodeOpts::default()).unwrap().image,
+        src
+    );
+}
+
+#[test]
+fn png_colors_narrow_a_16_bit_image_with_too_many_colours() {
+    let reg = registry();
+    let src = test_image_u16(ColorType::Rgba);
+    let bytes = reg
+        .encoder(Format::Png)
+        .unwrap()
+        .encode(&src, &palette("64"))
+        .unwrap();
+    let back = reg.decode(&bytes, &DecodeOpts::default()).unwrap().image;
+    assert!(back.samples().as_u8().is_some(), "a palette is 8-bit");
+    assert!(distinct_colors(&back) <= 64);
+    assert_close(&back, &test_image(ColorType::Rgba), 12.0, "16-bit at 64");
+}
+
+#[test]
+fn png_dither_takes_effect_and_needs_colors() {
+    let reg = registry();
+    let png = reg.encoder(Format::Png).unwrap();
+    let src = test_image(ColorType::Rgb);
+    let flat = png
+        .encode(&src, &palette("16").with_codec_opt("png", "dither", "0"))
+        .unwrap();
+    let full = png.encode(&src, &palette("16")).unwrap();
+    assert_ne!(
+        flat, full,
+        "dither 0 and the default 100 gave the same file"
+    );
+    assert_eq!(
+        full,
+        png.encode(&src, &palette("16").with_codec_opt("png", "dither", "100"))
+            .unwrap(),
+        "100 is the default"
+    );
+
+    let alone = Target::Lossless
+        .into_params()
+        .with_codec_opt("png", "dither", "50");
+    let err = png.encode(&src, &alone).unwrap_err();
+    assert!(
+        matches!(&err, Error::InvalidParams(m) if m.contains("png:dither needs png:colors")),
+        "{err}"
+    );
+    // `off` is the default spelled out, so there is still no palette.
+    assert!(matches!(
+        png.encode(&src, &alone.with_codec_opt("png", "colors", "off")),
+        Err(Error::InvalidParams(_))
+    ));
+}
+
+#[test]
+fn png_colors_and_dither_refuse_values_out_of_range() {
+    let reg = registry();
+    let png = reg.encoder(Format::Png).unwrap();
+    let src = test_image(ColorType::Rgb);
+    for bad in ["0", "1", "257", "-4", "many", ""] {
+        let err = png.encode(&src, &palette(bad)).unwrap_err();
+        assert!(
+            matches!(&err, Error::InvalidParams(m) if m.contains("png:colors")),
+            "`{bad}`: {err}"
+        );
+    }
+    for bad in ["101", "-1", "half"] {
+        let err = png
+            .encode(&src, &palette("16").with_codec_opt("png", "dither", bad))
+            .unwrap_err();
+        assert!(
+            matches!(&err, Error::InvalidParams(m) if m.contains("png:dither")),
+            "`{bad}`: {err}"
+        );
+    }
+    assert!(png.encode(&src, &palette("off")).is_ok());
+}
+
+/// Every option of every encoder with a lossless mode, at a value that is
+/// not its default, and whether a lossless encode stays exact under it.
+/// An option missing here fails the test below: a new one has to say which
+/// side it is on (ADR-0012 D4).
+const LOSSLESS_OPTIONS: &[(&str, &str, &str, bool)] = &[
+    ("png", "interlace", "true", true),
+    ("png", "optimize_alpha", "true", false),
+    ("png", "colors", "16", false),
+    // Tried with `png:colors=16`, which it needs.
+    ("png", "dither", "50", false),
+    ("webp", "predictor", "false", true),
+    ("webp", "alpha_quality", "50", true),
+    ("webp", "sharp_yuv", "true", true),
+    ("jxl", "container", "true", true),
+];
+
+#[test]
+fn exact_is_truthful_for_every_option_of_a_lossless_encoder() {
+    let reg = registry();
+    // Colour under fully transparent pixels is what `optimize_alpha` takes,
+    // and the pattern has none, so every fourth pixel is cleared here.
+    let pattern = test_image(ColorType::Rgba);
+    let mut samples = pattern.samples().as_u8().unwrap().to_vec();
+    for pixel in samples.as_chunks_mut::<4>().0.iter_mut().step_by(4) {
+        pixel[3] = 0;
+    }
+    let src = Image::from_u8(W, H, ColorType::Rgba, samples).unwrap();
+
+    for enc in reg.encoders().filter(|e| e.caps().lossless) {
+        let caps = enc.caps();
+        let codec = caps.format.extension();
+        let plain = Target::Lossless.into_params();
+        assert!(enc.exact(&plain), "{}: exact without options", caps.name);
+        let bytes = enc.encode(&src, &plain).unwrap();
+        assert_eq!(
+            reg.decode(&bytes, &DecodeOpts::default()).unwrap().image,
+            src,
+            "{}: lossless without options",
+            caps.name
+        );
+
+        for opt in caps.options {
+            let &(_, _, value, exact) = LOSSLESS_OPTIONS
+                .iter()
+                .find(|(c, k, ..)| (*c, *k) == (codec, opt.key))
+                .unwrap_or_else(|| panic!("{codec}:{} is not in LOSSLESS_OPTIONS", opt.key));
+            let what = format!("{} with {codec}:{}={value}", caps.name, opt.key);
+
+            // The default, spelled out, never costs exactness.
+            let at_default = plain.clone().with_codec_opt(codec, opt.key, opt.default);
+            assert!(enc.exact(&at_default), "{what}: exact at its default");
+
+            let params = plain.clone().with_codec_opt(codec, opt.key, value);
+            let params = if (codec, opt.key) == ("png", "dither") {
+                params.with_codec_opt("png", "colors", "16")
+            } else {
+                params
+            };
+            assert_eq!(enc.exact(&params), exact, "{what}: exact");
+            let bytes = enc.encode(&src, &params).unwrap();
+            let back = reg.decode(&bytes, &DecodeOpts::default()).unwrap().image;
+            assert_eq!(back == src, exact, "{what}: samples");
+        }
+    }
 }
 
 /// The pattern with gray replicated into three channels, which is what a

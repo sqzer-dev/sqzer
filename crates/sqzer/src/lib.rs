@@ -108,6 +108,13 @@ pub struct Output {
     pub height: u32,
     /// The target the encoder actually ran with.
     pub target: Resolved,
+    /// The bytes hold exactly the samples the encoder was given: the
+    /// target resolved to lossless and the encoder is
+    /// [exact](Encoder::exact) under its options. `false` under
+    /// `png:colors`, which reduces the image to a palette at a lossless
+    /// target. A promise read from the parameters, not a measurement: it
+    /// is `false` under such an option even when the image lost nothing.
+    pub lossless: bool,
     /// How the quality was found. `Some` when a perceptual target was
     /// searched, `None` for an explicit quality, lossless, or an encoder
     /// that only writes lossless and so met the target trivially.
@@ -333,7 +340,10 @@ impl Sqzer {
     /// encoder cannot reach is not an error; the best candidate is
     /// returned and [`Output::report`] says the target was missed. An
     /// encoder that only writes lossless meets any target with its one
-    /// mode and skips the search.
+    /// mode and skips the search. Whether that one encode kept every
+    /// sample is [`Output::lossless`]: an option such as `png:colors`
+    /// gives samples up there, and is refused next to an explicit
+    /// [`Target::Lossless`] (ADR-0012 D4).
     ///
     /// > **Note**: scoring needs the output format decodable in this
     /// > build. A registry with an encoder and no decoder for a format
@@ -464,6 +474,14 @@ impl Sqzer {
             None => &ready.image,
         };
 
+        let lossy_options = self.lossy_options(encoder);
+        if self.params.target == Target::Lossless && !lossy_options.is_empty() {
+            return Err(Error::InvalidParams(format!(
+                "a lossless target contradicts {}, which gives samples up; drop one of them",
+                lossy_options.join(" and ")
+            )));
+        }
+
         let (bytes, target, report) = match self.params.target {
             Target::Ssimulacra2(_) if !caps.lossy => {
                 let params = EncodeParams {
@@ -530,8 +548,36 @@ impl Sqzer {
             width: image.width(),
             height: image.height(),
             target,
+            lossless: target == Resolved::Lossless && lossy_options.is_empty(),
             report,
         })
+    }
+
+    /// The codec options set on this builder under which `encoder` gives
+    /// samples up at a lossless target, each as `` `codec:key=value` ``.
+    /// Empty when the encoder is [exact](Encoder::exact).
+    ///
+    /// [`Sqzer::encode`] refuses a lossless target when this is not empty
+    /// (ADR-0012 D4); a caller that wants to refuse earlier asks here.
+    #[must_use]
+    pub fn lossy_options(&self, encoder: &dyn Encoder) -> Vec<String> {
+        if encoder.exact(&self.params) {
+            return Vec::new();
+        }
+        // Each option on its own, to name the ones that matter.
+        self.params
+            .codec_specific
+            .iter()
+            .filter(|&(key, value)| {
+                let mut alone = EncodeParams {
+                    codec_specific: std::collections::BTreeMap::new(),
+                    ..self.params.clone()
+                };
+                alone.codec_specific.insert(key.clone(), value.clone());
+                !encoder.exact(&alone)
+            })
+            .map(|(key, value)| format!("`{key}={value}`"))
+            .collect()
     }
 }
 
@@ -1272,17 +1318,107 @@ mod tests {
     }
 
     #[test]
+    fn a_palette_is_one_lossy_encode_under_the_default_target() {
+        let input = png_bytes(ColorType::Rgba);
+        let plain = portable().format(Format::Png).run(&input).unwrap();
+        assert_eq!(plain.target, Resolved::Lossless);
+        assert!(plain.lossless);
+
+        let out = portable()
+            .format(Format::Png)
+            .codec_opt("png", "colors", "16")
+            .run(&input)
+            .unwrap();
+        // Still the encoder's one mode, with no search and no score, and
+        // no longer a promise of exact samples.
+        assert_eq!(out.target, Resolved::Lossless);
+        assert!(out.report.is_none());
+        assert!(!out.lossless);
+        // No claim on size: a dithered palette of a smooth gradient is
+        // harder on PNG's filters than the gradient was.
+        let back = Sqzer::new().decode(&out.bytes).unwrap();
+        let colors: std::collections::HashSet<_> = back
+            .image
+            .samples()
+            .as_u8()
+            .unwrap()
+            .chunks_exact(back.image.channels())
+            .collect();
+        assert!(colors.len() <= 16, "{} colours", colors.len());
+    }
+
+    #[test]
+    fn a_lossless_target_refuses_an_option_that_gives_samples_up() {
+        let input = png_bytes(ColorType::Rgba);
+        let lossless = || portable().format(Format::Png).target(Target::Lossless);
+        for (key, value) in [("colors", "16"), ("optimize_alpha", "true")] {
+            let err = lossless()
+                .codec_opt("png", key, value)
+                .run(&input)
+                .unwrap_err();
+            let named = format!("`png:{key}={value}`");
+            assert!(
+                matches!(&err, Error::InvalidParams(m) if m.contains(&named)),
+                "{err}"
+            );
+            // Without the explicit target the option is honoured and
+            // the output says what it is.
+            let out = portable()
+                .format(Format::Png)
+                .codec_opt("png", key, value)
+                .run(&input)
+                .unwrap();
+            assert!(!out.lossless, "png:{key}={value}");
+        }
+        // Only the options that matter are named.
+        let err = lossless()
+            .codec_opt("png", "interlace", "true")
+            .codec_opt("png", "dither", "50")
+            .codec_opt("png", "colors", "16")
+            .run(&input)
+            .unwrap_err();
+        let Error::InvalidParams(message) = &err else {
+            panic!("{err}");
+        };
+        assert!(message.contains("`png:colors=16`"), "{message}");
+        assert!(
+            !message.contains("interlace") && !message.contains("dither"),
+            "{message}"
+        );
+
+        // Options that keep every sample, and the defaults spelled out,
+        // pass and stay lossless.
+        let out = lossless()
+            .codec_opt("png", "interlace", "true")
+            .codec_opt("png", "optimize_alpha", "false")
+            .codec_opt("png", "colors", "off")
+            .run(&input)
+            .unwrap();
+        assert!(out.lossless);
+        // An option addressed to another encoder is not this one's.
+        let out = portable()
+            .format(Format::WebP)
+            .target(Target::Lossless)
+            .codec_opt("png", "colors", "16")
+            .run(&input)
+            .unwrap();
+        assert!(out.lossless);
+    }
+
+    #[test]
     fn explicit_quality_and_lossless_do_not_report() {
         let out = Sqzer::new()
             .target(Target::Quality(80.0))
             .run(&png_bytes(ColorType::Rgb))
             .unwrap();
         assert!(out.report.is_none());
+        assert!(!out.lossless);
         let out = Sqzer::new()
             .target(Target::Lossless)
             .run(&png_bytes(ColorType::Rgb))
             .unwrap();
         assert!(out.report.is_none());
+        assert!(out.lossless);
     }
 
     #[test]
