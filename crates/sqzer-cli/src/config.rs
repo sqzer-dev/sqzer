@@ -15,7 +15,7 @@ use crate::budget::Work;
 use crate::cli::{Args, OUTPUT_FORMATS, format_name};
 use crate::inputs::Input;
 use crate::output::{Placement, Template};
-use crate::report::{Feedback, Need, code, render_unavailable};
+use crate::report::{Feedback, Need, code, lossless_conflict, render_unavailable};
 
 /// A refusal with its exit code.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,6 +120,7 @@ pub fn build(args: Args, base: Sqzer) -> Result<Config, Failure> {
         ));
     }
     let sqzer = codec_opts(&args, sqzer)?;
+    check_lossless(&args, &sqzer)?;
 
     let template = match &args.template {
         Some(t) => Some(Template::new(t).map_err(Failure::usage)?),
@@ -346,6 +347,26 @@ fn check_formats(args: &Args, sqzer: &Sqzer) -> Result<(), Failure> {
                 )));
             }
             _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Lossless output next to an option that gives samples up is a
+/// contradiction (ADR-0012 D4): an argument error for every format `-f`
+/// names. A format picked per image is refused at the image.
+fn check_lossless(args: &Args, sqzer: &Sqzer) -> Result<(), Failure> {
+    if sqzer.params().target != Target::Lossless {
+        return Ok(());
+    }
+    for &f in &args.format {
+        // `check_formats` has vouched for the encoder.
+        let Ok(encoder) = sqzer.registry().encoder(f) else {
+            continue;
+        };
+        let lossy_options = sqzer.lossy_options(encoder);
+        if !lossy_options.is_empty() {
+            return Err(Failure::usage(lossless_conflict(&lossy_options)));
         }
     }
     Ok(())

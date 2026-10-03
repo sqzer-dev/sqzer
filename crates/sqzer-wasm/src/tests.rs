@@ -536,6 +536,8 @@ fn codecs_lists_this_build() {
 /// Backend, abstract quality, committed score: the portable rows of
 /// `crates/sqzer/tests/golden.rs`. Change both together.
 const GOLDEN: &[(&str, f32, f32)] = &[("mozjpeg-rs", 75.0, 51.8), ("ravif", 75.0, 88.1)];
+/// `png:colors` value, committed score: the `PALETTE` rows of the same file.
+const PALETTE: &[(&str, f32)] = &[("256", 68.3), ("16", -49.7)];
 const TOLERANCE: f32 = 1.5;
 
 fn round_trip_score(encoder: &dyn Encoder, target: Target) -> f32 {
@@ -575,6 +577,60 @@ fn encoders_hold_their_golden_scores_on_wasm32() {
         }
     }
     assert_eq!(lossy, GOLDEN.len());
+}
+
+#[wasm_bindgen_test]
+fn a_png_palette_is_reported_as_lossy() {
+    let plain = optimized(RGBA, r#"{"format":"png"}"#);
+    assert_eq!(get(&plain, "lossless"), true);
+
+    let out = optimized(RGBA, r#"{"format":"png","codecOpts":{"png:colors":"16"}}"#);
+    assert_eq!(get(&out, "lossless"), false);
+    assert!(!Reflect::has(&out, &"quality".into()).unwrap());
+    assert!(!Reflect::has(&out, &"score".into()).unwrap());
+    let back = sqzer(None).decode(&bytes(&out)).unwrap().image;
+    let colors: std::collections::HashSet<_> = back
+        .samples()
+        .as_u8()
+        .unwrap()
+        .chunks_exact(back.channels())
+        .collect();
+    assert!(colors.len() <= 16, "{} colours", colors.len());
+
+    // Asked for next to `lossless`, it is a contradiction (ADR-0012 D4).
+    let error = thrown(
+        optimize(
+            RGBA,
+            options(r#"{"format":"png","lossless":true,"codecOpts":{"png:colors":"16"}}"#),
+        ),
+        "InvalidParams",
+    );
+    assert!(
+        text(&error, "message").contains("png:colors=16"),
+        "{}",
+        text(&error, "message")
+    );
+}
+
+#[wasm_bindgen_test]
+fn png_palettes_hold_their_golden_scores_on_wasm32() {
+    let registry = registry();
+    let pattern = registry.decode(RGB, &DecodeOpts::default()).unwrap().image;
+    let png = registry.encoder(Format::Png).unwrap();
+    for &(colors, golden) in PALETTE {
+        let params = EncodeParams {
+            target: Target::Lossless,
+            ..Default::default()
+        }
+        .with_codec_opt("png", "colors", colors);
+        let file = png.encode(&pattern, &params).unwrap();
+        let back = registry.decode(&file, &DecodeOpts::default()).unwrap();
+        let score = Ssimulacra2.score(&pattern, &back.image).unwrap();
+        assert!(
+            (score - golden).abs() <= TOLERANCE,
+            "png:colors={colors}: scored {score}, golden is {golden} +/- {TOLERANCE}"
+        );
+    }
 }
 
 /// A canvas that returns opaque white for whatever is drawn on it, and a

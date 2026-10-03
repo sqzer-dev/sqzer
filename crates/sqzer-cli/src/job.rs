@@ -16,9 +16,10 @@ use crate::budget::{Cost, MemoryBudget, Work, output_pixels};
 use crate::cli::format_name;
 use crate::config::Config;
 use crate::inputs::Input;
-use crate::output::{Naming, stem_of};
+use crate::output::{Naming, QualityTag, stem_of};
 use crate::report::{
     Printer, Record, Stage, Status, Tally, Worker, content_name, describe_error, fmt_bytes,
+    lossless_conflict,
 };
 
 /// What every job shares.
@@ -303,14 +304,19 @@ fn plan(
     rec.output_width = Some(width);
     rec.output_height = Some(height);
     rec.resize_note = geometry.as_ref().and_then(resize_note);
-    let caps = match sqzer.registry().encoder(format) {
-        Ok(e) => e.caps(),
+    let encoder = match sqzer.registry().encoder(format) {
+        Ok(e) => e,
         Err(e) => return rec.fail(&e),
     };
+    let caps = encoder.caps();
     rec.backend = Some(caps.name);
     rec.tier = Some(caps.tier.to_string());
     // What the encoder would refuse, refused here too, so a plan is one
     // the run can carry out.
+    let lossy_options = sqzer.lossy_options(encoder);
+    if sqzer.params().target == Target::Lossless && !lossy_options.is_empty() {
+        return rec.fail(&lossless_conflict(&lossy_options));
+    }
     if ready.translucent_padding() && !caps.alpha {
         return rec.fail(&format!(
             "{} has no alpha channel for a translucent `--background`",
@@ -332,9 +338,11 @@ fn plan(
         }
     }
     let quality = match sqzer.params().target {
-        Target::Quality(q) => Some(Resolved::Quality(q)),
-        Target::Lossless => Some(Resolved::Lossless),
-        Target::Ssimulacra2(_) if !caps.lossy => Some(Resolved::Lossless),
+        Target::Quality(q) => Some(QualityTag::Quality(q)),
+        Target::Lossless => Some(QualityTag::Lossless),
+        Target::Ssimulacra2(_) if !caps.lossy => {
+            Some(QualityTag::of(Resolved::Lossless, lossy_options.is_empty()))
+        }
         Target::Ssimulacra2(t) => {
             rec.target = Some(t);
             None
@@ -411,7 +419,7 @@ fn run(
         out.input.format,
         (out.width, out.height),
         out.format,
-        Some(out.target),
+        Some(QualityTag::of(out.target, out.lossless)),
         ctx,
     ) {
         Ok(d) => d,
@@ -482,7 +490,7 @@ fn destination(
     input_format: Format,
     (width, height): (u32, u32),
     format: Format,
-    quality: Option<Resolved>,
+    quality: Option<QualityTag>,
     ctx: &Ctx<'_>,
 ) -> Result<Destination, String> {
     let placement = &ctx.cfg.placement;

@@ -870,6 +870,139 @@ fn output_file_suffix_and_template() {
     assert!(sb.path("in-48w-lossless.png").exists());
 }
 
+#[test]
+fn png_colors_write_a_palette_and_the_record_says_lossy() {
+    let sb = Sandbox::new("palette");
+    sb.fixture("pattern-rgba.webp", "in.webp");
+    let (code, out, err) = run(sb.sqzer().args([
+        "in.webp",
+        "-f",
+        "png",
+        "-x",
+        "png:colors=16",
+        "--force",
+        "--json",
+        "--template",
+        "{stem}-{quality}.{ext}",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    let r = &json_lines(&out)[0];
+    assert_eq!(r["status"], "written");
+    // One encode by a lossless-only encoder that kept fewer colours than
+    // it was given: not lossless, and no quality or score to report.
+    assert_eq!(r["lossless"], false, "{r}");
+    assert!(
+        r.get("quality").is_none() && r.get("score").is_none(),
+        "{r}"
+    );
+    assert_eq!(r["output"], "in-lossy.png");
+    let bytes = fs::read(sb.path("in-lossy.png")).unwrap();
+    assert!(is_png(&bytes));
+    // IHDR: colour type 3 is a palette.
+    assert_eq!(bytes[25], 3, "colour type");
+
+    // The same plan from a dry run, and `lossless` without the option.
+    let (code, out, err) = run(sb.sqzer().args([
+        "in.webp",
+        "-f",
+        "png",
+        "-x",
+        "png:colors=16",
+        "-n",
+        "--force",
+        "--json",
+        "--template",
+        "{stem}-{quality}.{ext}",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(json_lines(&out)[0]["output"], "in-lossy.png");
+    let (code, out, err) = run(sb.sqzer().args([
+        "in.webp",
+        "-f",
+        "png",
+        "-n",
+        "--json",
+        "--template",
+        "{stem}-{quality}.{ext}",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(json_lines(&out)[0]["output"], "in-lossless.png");
+
+    let (code, out, _) = run(sb.sqzer().args(["--list-codecs", "-v"]));
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("png:colors") && out.contains("png:dither"),
+        "{out}"
+    );
+}
+
+#[test]
+fn lossless_refuses_an_option_that_gives_samples_up() {
+    let sb = Sandbox::new("palette-refused");
+    sb.fixture("pattern-rgba.webp", "in.webp");
+    // With `-f`, before any file is touched: an argument error.
+    for (mode, option) in [
+        (&["--lossless"][..], "png:colors=16"),
+        (&["--preset", "lossless"][..], "png:optimize_alpha=true"),
+    ] {
+        let (code, _, err) = run(sb
+            .sqzer()
+            .args(["in.webp", "-f", "png", "-x", option])
+            .args(mode));
+        assert_eq!(code, 2, "{err}");
+        assert!(err.contains(option), "{err}");
+        assert!(err.contains("--lossless"), "{err}");
+        assert!(!sb.path("in.png").exists());
+    }
+    // The default spelled out is not a contradiction.
+    let (code, _, err) = run(sb.sqzer().args([
+        "in.webp",
+        "-f",
+        "png",
+        "--lossless",
+        "-x",
+        "png:optimize_alpha=false",
+        "-x",
+        "png:colors=off",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    fs::remove_file(sb.path("in.png")).unwrap();
+
+    // Without `-f` a lossless target picks PNG per image, and the image
+    // is where it is refused, in a plan as in a run.
+    for dry in [true, false] {
+        let mut cmd = sb.sqzer();
+        cmd.args(["in.webp", "--lossless", "-x", "png:colors=16", "--json"]);
+        if dry {
+            cmd.arg("-n");
+        }
+        let (code, out, err) = run(&mut cmd);
+        assert_ne!(code, 0, "dry {dry}: {err}");
+        let r = &json_lines(&out)[0];
+        assert_eq!(r["status"], "failed", "dry {dry}: {r}");
+        assert!(
+            r["error"].as_str().unwrap().contains("png:colors=16"),
+            "dry {dry}: {r}"
+        );
+        assert!(!sb.path("in.png").exists());
+    }
+
+    // `png:dither` has nothing to dither without a palette.
+    let (code, out, _) =
+        run(sb
+            .sqzer()
+            .args(["in.webp", "-f", "png", "-x", "png:dither=50", "--json"]));
+    assert_ne!(code, 0);
+    let r = &json_lines(&out)[0];
+    assert!(
+        r["error"]
+            .as_str()
+            .unwrap()
+            .contains("png:dither needs png:colors"),
+        "{r}"
+    );
+}
+
 // ---- Paths
 
 #[test]

@@ -48,7 +48,31 @@ pub struct Naming<'a> {
     pub height: u32,
     /// The quality the encoder ran with, once known. `None` in a dry run
     /// with a pending search.
-    pub quality: Option<Resolved>,
+    pub quality: Option<QualityTag>,
+}
+
+/// What `{quality}` stands for in an output name.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum QualityTag {
+    /// An abstract quality: its rounded number.
+    Quality(f32),
+    /// Every sample kept: `lossless`.
+    Lossless,
+    /// A lossless encoder under an option that gives samples up, such as
+    /// `png:colors`: `lossy` (ADR-0012 D4).
+    Lossy,
+}
+
+impl QualityTag {
+    /// The tag for what an encoder ran with, and whether it kept every
+    /// sample.
+    pub fn of(target: Resolved, lossless: bool) -> Self {
+        match target {
+            Resolved::Quality(q) => Self::Quality(q),
+            Resolved::Lossless if lossless => Self::Lossless,
+            Resolved::Lossless => Self::Lossy,
+        }
+    }
 }
 
 /// Why an output cannot go where the flags say.
@@ -217,8 +241,9 @@ impl Template {
 
     fn render(&self, n: &Naming<'_>, input: &Path, stem: &str) -> String {
         let quality = match n.quality {
-            Some(Resolved::Quality(q)) => format!("{}", q.round()),
-            Some(Resolved::Lossless) => "lossless".to_string(),
+            Some(QualityTag::Quality(q)) => format!("{}", q.round()),
+            Some(QualityTag::Lossless) => "lossless".to_string(),
+            Some(QualityTag::Lossy) => "lossy".to_string(),
             None => "auto".to_string(),
         };
         let dir = input
@@ -252,7 +277,7 @@ mod tests {
             format,
             width: 1600,
             height: 900,
-            quality: Some(Resolved::Quality(72.0)),
+            quality: Some(QualityTag::Quality(72.0)),
         }
     }
 
@@ -297,6 +322,21 @@ mod tests {
         let mut n = naming(&input, Format::Avif);
         n.quality = None;
         assert_eq!(p.resolve(&n).unwrap(), PathBuf::from("in/in/a.jpg.avif"));
+
+        // A lossless encoder says which of its two outcomes it wrote.
+        let p = Placement {
+            template: Some(Template::new("{stem}-{quality}.{ext}").unwrap()),
+            ..Default::default()
+        };
+        let mut n = naming(&input, Format::Png);
+        for (lossless, name) in [(true, "in/a-lossless.png"), (false, "in/a-lossy.png")] {
+            n.quality = Some(QualityTag::of(Resolved::Lossless, lossless));
+            assert_eq!(p.resolve(&n).unwrap(), PathBuf::from(name));
+        }
+        assert_eq!(
+            QualityTag::of(Resolved::Quality(72.0), false),
+            QualityTag::Quality(72.0)
+        );
     }
 
     #[test]
