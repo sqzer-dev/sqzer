@@ -555,7 +555,8 @@ impl Sqzer {
 
     /// The codec options set on this builder under which `encoder` gives
     /// samples up at a lossless target, each as `` `codec:key=value` ``.
-    /// Empty when the encoder is [exact](Encoder::exact).
+    /// Empty when, and only when, the encoder is [exact](Encoder::exact)
+    /// under all of them together.
     ///
     /// [`Sqzer::encode`] refuses a lossless target when this is not empty
     /// (ADR-0012 D4); a caller that wants to refuse earlier asks here.
@@ -565,8 +566,9 @@ impl Sqzer {
             return Vec::new();
         }
         // Each option on its own, to name the ones that matter.
-        self.params
-            .codec_specific
+        let name = |(key, value): (&String, &String)| format!("`{key}={value}`");
+        let options = &self.params.codec_specific;
+        let named: Vec<String> = options
             .iter()
             .filter(|&(key, value)| {
                 let mut alone = EncodeParams {
@@ -576,8 +578,14 @@ impl Sqzer {
                 alone.codec_specific.insert(key.clone(), value.clone());
                 !encoder.exact(&alone)
             })
-            .map(|(key, value)| format!("`{key}={value}`"))
-            .collect()
+            .map(name)
+            .collect();
+        if named.is_empty() {
+            // Lossy only in combination: no single option is to blame,
+            // and the answer must still not be "none".
+            return options.iter().map(name).collect();
+        }
+        named
     }
 }
 
@@ -1403,6 +1411,61 @@ mod tests {
             .run(&input)
             .unwrap();
         assert!(out.lossless);
+    }
+
+    #[test]
+    fn options_that_are_lossy_only_together_are_still_lossy() {
+        // Exact under either option alone, not under both.
+        struct Pair;
+        static CAPS: sqzer_core::codec::EncoderCaps = sqzer_core::codec::EncoderCaps {
+            format: Format::Gif,
+            name: "pair",
+            lossy: false,
+            lossless: true,
+            alpha: false,
+            animation: false,
+            bit_depth: &[8],
+            hdr: false,
+            exif: false,
+            xmp: false,
+            quality_range: 100.0..=100.0,
+            effort_range: 0..=0,
+            tier: Tier::Portable,
+            options: &[],
+        };
+        impl Encoder for Pair {
+            fn caps(&self) -> &sqzer_core::codec::EncoderCaps {
+                &CAPS
+            }
+            fn encode(&self, _: &Image, _: &EncodeParams) -> Result<Vec<u8>> {
+                Ok(vec![])
+            }
+            fn exact(&self, params: &EncodeParams) -> bool {
+                params.codec_opts("gif").count() < 2
+            }
+        }
+        let sqzer = || {
+            let mut reg = Registry::new();
+            reg.register_decoder(sqzer_codecs::png::PngDecoder);
+            reg.register_encoder(Pair);
+            Sqzer::with_registry(reg).format(Format::Gif)
+        };
+        let input = png_bytes(ColorType::Rgb);
+
+        let one = sqzer().codec_opt("gif", "a", "1");
+        assert_eq!(one.lossy_options(&Pair), [] as [String; 0]);
+        assert!(one.target(Target::Lossless).run(&input).unwrap().lossless);
+
+        let both = sqzer()
+            .codec_opt("gif", "a", "1")
+            .codec_opt("gif", "b", "2");
+        assert_eq!(both.lossy_options(&Pair), ["`gif:a=1`", "`gif:b=2`"]);
+        assert!(!both.run(&input).unwrap().lossless);
+        let err = both.target(Target::Lossless).run(&input).unwrap_err();
+        assert!(
+            matches!(&err, Error::InvalidParams(m) if m.contains("`gif:a=1` and `gif:b=2`")),
+            "{err}"
+        );
     }
 
     #[test]
