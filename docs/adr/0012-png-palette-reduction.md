@@ -138,45 +138,51 @@ Full dithering scores highest in every column but one, where it is 0.03 behind. 
 
 - It is the first thing `OxipngEncoder::encode` does when `png:colors` is set. Colour conversion, resize and padding have happened by then, so the palette is chosen for the pixels that are written.
 - The image goes to `quantizr` as 8-bit RGBA and comes back as a palette and one index per pixel, which `oxipng` receives as an indexed image. Its bit-depth reduction and filter search run as for any input.
-- An image that already has at most `N` colours is not quantised. It is written as it is, which `oxipng` already turns into a palette.
-- 16-bit samples are narrowed to 8 first, since a palette entry is 8-bit. Gray and gray with alpha go through RGBA.
+- An image that already has at most `N` distinct colours is not quantised. The colours are counted on the samples as they arrive, 16-bit ones at 16 bits, and the image is written as it is, at its own depth. `oxipng` turns it into a palette where one fits.
+- Any other image is quantised from 8-bit RGBA: 16-bit samples are narrowed first, since a palette entry is 8-bit, and gray and gray with alpha are expanded. The narrowing is part of the lossy step, never of the exact path above.
 - ICC and metadata are handled as before. The palette entries are in the image's colour space.
 - `quantizr` runs on the calling thread and spawns nothing.
 - A value outside the range, or `png:dither` without `png:colors`, is `Error::InvalidParams` naming the option as the user wrote it.
 
-### D4. An option can be lossy, and says so
+### D4. An encoder says when its options make it lossy
 
-Until now an encoder with `caps.lossy` false wrote lossless output whatever its options said, and the facade, the CLI record and the npm package all reported `lossless: true` on that basis. `png:colors` breaks the assumption. The description of an option carries the fact, and the output carries the result:
+Until now an encoder with `caps.lossy` false wrote lossless output whatever its options said, and the facade, the CLI record and the npm package all reported `lossless: true` on that basis. `png:colors` breaks the assumption. `png:optimize_alpha` has been breaking it quietly: it changes the colour under fully transparent pixels, and 0.3 reports such a run as lossless. The encoder is the one that can tell, so it is asked, and the output carries the answer:
 
 ```rust
-pub struct CodecOption {
-    pub key: &'static str,
-    pub default: &'static str,
-    pub help: &'static str,
-    /// Setting this option lets the encoder change pixels at a lossless target.
-    pub lossy: bool,
+pub trait Encoder {
+    // ...
+    /// Whether an encode at a lossless target keeps every sample it is given
+    /// under `params`. `false` when an option that gives samples up is set.
+    fn exact(&self, params: &EncodeParams) -> bool {
+        true
+    }
 }
 
 pub struct Output {
     // ...
-    /// The bytes hold exactly the pixels the encoder was given: the target resolved to
-    /// lossless and no option marked `lossy` was set.
+    /// The bytes hold exactly the samples the encoder was given: the target
+    /// resolved to lossless and the encoder is exact under its options.
     pub lossless: bool,
 }
 ```
 
+`OxipngEncoder` answers `false` when `png:colors` is set or `png:optimize_alpha` is true. Every other encoder keeps the default. The remaining options of the encoders with a lossless mode are `png:interlace`, `webp:predictor` and `jxl:container`, which change how samples are stored and not the samples, and `webp:alpha_quality` and `webp:sharp_yuv` of the native backend, which `libwebp` reads for lossy output only. The last two are taken from its documentation, not measured; the test of item 2 holds all five to it.
+
 ```text
-default target, `png:colors` set        one encode, no search. `lossless` is false,
+default target, a lossy option set      one encode, no search. `lossless` is false,
                                         there is no quality and no score
 `--lossless` or `--preset lossless`     refused, `Error::InvalidParams`: the two contradict.
-  with `png:colors`                     the CLI refuses before any file is touched
+  with a lossy option                   the CLI refuses before any file is touched when
+                                        `-f` names the format, and at the image otherwise
 `-q` with `-f png`                      refused as today. PNG has no quality scale,
                                         and `caps.lossy` stays false
 ```
 
-The `lossless` field of the CLI's JSON record and of the npm package's result reads `Output::lossless`. `--list-codecs -v` and the package's `codecs()` say which options are lossy. `{quality}` in an output template renders `lossy` for such a run, where it renders `lossless` for the same encoder without the option.
+The `lossless` field of the CLI's JSON record and of the npm package's result reads `Output::lossless`. The help line of a lossy option says so, which is what `--list-codecs -v` and the package's `codecs()` print. `{quality}` in an output template renders `lossy` for such a run, where it renders `lossless` for the same encoder without the option.
 
-`png:colors` is the only option marked so far. The next one needs its flag set and nothing in the CLI, the records or the facade.
+> **Note**: this changes two things for `png:optimize_alpha=true`, which 0.3 accepts: with `--lossless` it is now refused, and without it the record says `lossless: false`. The bytes written are the same as before.
+
+A later option that gives samples up needs its encoder's `exact` to say so, and nothing in the CLI, the records or the facade.
 
 ### D5. Not decided here
 
@@ -193,7 +199,7 @@ The `lossless` field of the CLI's JSON record and of the npm package's result re
 
 **A top-level `--colors` flag.** Rejected: a knob one backend has goes through `--codec-opt` (ADR-0003), and `EncodeParams` takes no field for it.
 
-**An `Encoder::lossless(&self, params)` method in place of the flag on `CodecOption`.** It would not break `CodecOption`. Rejected: caps are how a backend describes itself, and a static flag is what lets the CLI refuse a contradiction before it opens a file and lets the listings show it.
+**A `lossy` flag on `CodecOption` in place of the method.** Static, so the listings could show it as a column. Rejected: a flag on the key cannot see the value, so `png:optimize_alpha=false` would count as lossy, and it adds a field to a struct every backend builds. The backend already parses its own values; `exact` reuses that.
 
 **`caps.lossy` set for `oxipng`.** Rejected: `lossy` means the encoder has a quality scale the search can move along. `-q 80 -f png` would be accepted and mean nothing.
 
@@ -202,22 +208,23 @@ The `lossless` field of the CLI's JSON record and of the npm package's result re
 - `quantizr` is behind `imagequant` on small palettes: 28.3 against 35.0 at 16 colours on `CID22`, 62.2 against 69.1 on screenshots. At 256 colours it is within about a point either way.
 - One maintainer, and the last release is from April 2025. It is about 1500 lines with no dependencies, so there is little in it to rot, and the golden test catches a release that changes the output.
 - No SPDX expression in its manifest. The `clarify` entry covers it, and has to be touched on a release that edits the licence file.
-- `CodecOption` and `Output` each gain a public field. A caller that builds either by hand breaks.
-- `lossless: false` on an image that had at most `N` colours to begin with, where the output is in fact exact. `lossless` promises, it does not measure.
+- `Output` gains a public field. A caller that builds one by hand breaks. `Encoder::exact` has a default, so a backend outside the workspace keeps compiling.
+- `--lossless -x png:optimize_alpha=true` stops working. The same output is one flag away: PNG is lossless-only, so dropping `--lossless` writes it.
+- `lossless: false` on an image that had at most `N` colours to begin with, or no transparent pixel for `png:optimize_alpha` to touch, where the output is in fact exact. `lossless` promises, it does not measure.
 - The npm package grows by the quantiser. Not measured yet; item 4.
 
 ## 5. Consequences
 
 - The README's `rimage` mapping loses "once a quantiser lands" and gains `png:dither`. `ROADMAP.md` loses its first section.
-- `CHANGELOG.md` gets the feature, and the two new fields under breaking changes.
+- `CHANGELOG.md` gets the feature, and under breaking changes the new field of `Output` and what changes for `png:optimize_alpha`.
 - ADR-0008 item 3 applies: the encode holds an RGBA copy, the indices and the quantiser's histogram on top of what the PNG encoder held.
 - The `no-banned-crates` rule of `.greptile/config.json` names `imagequant`, `imagequant-sys` and `zenquant`. `cargo deny` refuses all three by licence already.
 - The golden tables of `crates/sqzer/tests/golden.rs` and `crates/sqzer-wasm/src/tests.rs` each gain the palette rows.
 
 ## 6. Action items
 
-1. [ ] `quantizr` in `sqzer-codecs` under `png`, the `clarify` entry in `deny.toml`, `png:colors` and `png:dither` in `OxipngEncoder`. Tests: the colour count is respected at 256 and 16 on an RGB and an RGBA fixture, alpha survives, an image with fewer colours comes back exact, 16-bit input, the refused values.
-2. [ ] `CodecOption::lossy` and `Output::lossless`, the refusal under a lossless target in the facade and before any file in the CLI, the two records, `--list-codecs -v`, the `{quality}` word. The caps test: an option marked `lossy` changes pixels, and no other option of any encoder does at a lossless target.
+1. [ ] `quantizr` in `sqzer-codecs` under `png`, the `clarify` entry in `deny.toml`, `png:colors` and `png:dither` in `OxipngEncoder`. Tests: the colour count is respected at 256 and 16 on an RGB and an RGBA fixture, alpha survives, an image with fewer colours comes back exact at 8 and at 16 bits, a 16-bit image with more colours is quantised, the refused values.
+2. [ ] `Encoder::exact` and `Output::lossless`, the refusal under a lossless target in the facade and in the CLI, the two records, the help lines, the `{quality}` word. The test that `exact` is truthful: with `png:colors` or `png:optimize_alpha` the samples change and it says `false`; with every other option of every encoder that has a lossless mode they round-trip and it says `true`.
 3. [ ] Golden scores for `png:colors=256` and `png:colors=16` in both tables. The same bytes from the native build and the wasm32 one, checked by hand once.
 4. [ ] The peak memory of a 24 megapixel encode with `png:colors`, by ADR-0008's method, and the estimate adjusted if it is exceeded. The size of the npm package before and after.
 5. [ ] README, `ROADMAP.md`, `CHANGELOG.md`.
