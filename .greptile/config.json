@@ -22,7 +22,7 @@
     },
     {
       "id": "no-banned-crates",
-      "rule": "Reject any new dependency on `zenwebp`, `zenjpeg`, `zenavif`, `zenravif`, `zenjxl`, `jxl-encoder`, `rav1d-safe`, `heic`, `jpegli-rs`, `jpegxl-rs` or `jpegxl-sys`, any AGPL crate outside `sqzer-codecs-agpl`, and any loosening of `deny.toml`. A new dependency's licence must be on the `deny.toml` allow-list and stated in the PR.",
+      "rule": "Reject any new dependency on `zenwebp`, `zenjpeg`, `zenavif`, `zenravif`, `zenjxl`, `jxl-encoder`, `rav1d-safe`, `heic`, `jpegli-rs`, `jpegxl-rs`, `jpegxl-sys`, `imagequant`, `imagequant-sys` or `zenquant`, any AGPL crate outside `sqzer-codecs-agpl`, and any loosening of `deny.toml`. A `clarify` entry that ties a crate's licence file to a hash is not a loosening (ADR-0012 D1). A new dependency's licence must be on the `deny.toml` allow-list and stated in the PR.",
       "scope": [
         "**/Cargo.toml",
         "deny.toml"
@@ -78,7 +78,7 @@
     },
     {
       "id": "accepted-adrs",
-      "rule": "An accepted ADR is never rewritten; ticking or annotating its own action items and adding a `Superseded by` line at the top are fine. An architecture change gets a new numbered file, a row in `docs/adr/README.md`, an entry in `.greptile/files.json` scoped to the code it governs, and an update to any rule in `.greptile/config.json` it changes, all in the same PR.",
+      "rule": "An accepted ADR is never rewritten; ticking or annotating its own action items and adding a `Superseded by` line at the top are fine. A record is accepted once it is on `main`: the pull request that adds it revises it in place, whatever its `Status` line says. An architecture change gets a new numbered file, a row in `docs/adr/README.md`, an entry in `.greptile/files.json` scoped to the code it governs, and an update to any rule in `.greptile/config.json` it changes, all in the same PR.",
       "scope": [
         "docs/adr/**",
         ".greptile/**"
