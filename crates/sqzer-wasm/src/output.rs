@@ -76,11 +76,14 @@ pub struct Output {
     pub backend: &'static str,
     /// Its tier.
     pub tier: String,
-    /// Abstract quality the encoder ran with. Left out for lossless.
+    /// Abstract quality the encoder ran with. Left out when the encoder
+    /// ran in its lossless mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[tsify(optional)]
     pub quality: Option<f64>,
-    /// The output is lossless.
+    /// The output holds exactly the samples the encoder was given. `false`
+    /// at a quality, and under an option that gives samples up, such as
+    /// `png:colors`.
     pub lossless: bool,
     /// SSIMULACRA2 target that was asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -134,10 +137,11 @@ impl Output {
     /// The record of `out`, encoded from `source` under `target`.
     #[must_use]
     pub fn new(source: &Source, out: sqzer::Output, target: &Target) -> Self {
-        let (quality, lossless) = match out.target {
-            Resolved::Quality(q) => (Some(tidy(q)), false),
-            Resolved::Lossless => (None, true),
+        let quality = match out.target {
+            Resolved::Quality(q) => Some(tidy(q)),
+            Resolved::Lossless => None,
         };
+        let lossless = out.lossless;
         let report = out.report.as_ref();
         Self {
             input_format: source.format.map(format_name),

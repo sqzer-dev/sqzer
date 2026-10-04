@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### ⚠️ BREAKING CHANGES
+
+* **sqzer:** `Output` has a new public field, `lossless`: the bytes hold exactly the samples the encoder was given. Code that builds an `Output` by hand sets it, and code that read `Output::target` to learn whether an encode was lossless reads the field instead (ADR-0012 D4)
+* **cli:** `--lossless` and `--preset lossless` refuse `-x png:optimize_alpha=true`, which changes the colour under fully transparent pixels. Drop `--lossless`: PNG comes from a lossless-only encoder either way, so the file is the same. `--json` now reports such a run as `"lossless": false`
+
+### Features
+
+* **codecs:** `-x png:colors=<2..=256>` reduces a PNG to a palette, what `rimage` had as `--quantization`, through `quantizr`. `-x png:dither=<0..=100>` sets how much of the error is diffused, 100 by default. An image that already has that few colours is written exactly, at its own bit depth. The output is lossy: `--json` and the npm package say `"lossless": false`, `{quality}` in a `--template` renders `lossy`, and `--lossless` refuses the option (ADR-0012)
+* **core:** `Encoder::exact` says whether an encode at a lossless target keeps every sample under the given options. It defaults to `true`; a backend with an option that gives samples up overrides it, as `oxipng` does for `png:colors` and `png:optimize_alpha`
+* **sqzer:** `Sqzer::lossy_options` names the options set on the builder under which an encoder gives samples up, for a caller that wants to refuse a lossless target before encoding
+
 ## 0.3.0
 
 ### ⚠️ BREAKING CHANGES

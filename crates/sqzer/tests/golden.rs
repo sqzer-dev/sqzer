@@ -45,6 +45,16 @@ const GOLDEN: &[(&str, f32, f32)] = &[
     ("jpegli", 75.0, 54.2),
 ];
 
+/// `png:colors` value, committed score: `oxipng` over `quantizr`, at the
+/// default `png:dither` (ADR-0012). The pattern has 1536 colours, so both
+/// rows quantise.
+///
+/// The score at 16 is below zero and is not broken: sixteen colours
+/// dithered over a 48 x 32 gradient are mostly noise to the metric. On a
+/// screenshot the same setting scores in the sixties (ADR-0012 section 1).
+/// As with `webpx` above, a regression check and not a quality claim.
+const PALETTE: &[(&str, f32)] = &[("256", 68.3), ("16", -49.7)];
+
 /// Scores from the SIMD paths of `fast-ssim2` on different targets, and
 /// from the encoders' own SIMD or assembly paths on different targets,
 /// agree to well under this. A regression worth catching is larger.
@@ -92,6 +102,31 @@ fn lossy_encoders_hold_their_golden_scores() {
         if (got - expected).abs() > TOLERANCE {
             failures.push(format!(
                 "{name} at q{quality}: scored {got:.3}, golden is {expected} +/- {TOLERANCE}"
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn png_palettes_hold_their_golden_scores() {
+    let reg = sqzer::codecs::registry();
+    let src = reference();
+    let png = reg.encoder(sqzer::core::codec::Format::Png).unwrap();
+    let mut failures = Vec::new();
+    for &(colors, expected) in PALETTE {
+        let params = EncodeParams {
+            target: Target::Lossless,
+            ..Default::default()
+        }
+        .with_codec_opt("png", "colors", colors);
+        let bytes = png.encode(&src, &params).unwrap();
+        let back = reg.decode(&bytes, &DecodeOpts::default()).unwrap().image;
+        let got = Ssimulacra2.score(&src, &back).unwrap();
+        eprintln!("png:colors={colors}: {got:.3} (golden {expected})");
+        if (got - expected).abs() > TOLERANCE {
+            failures.push(format!(
+                "png:colors={colors}: scored {got:.3}, golden is {expected} +/- {TOLERANCE}"
             ));
         }
     }

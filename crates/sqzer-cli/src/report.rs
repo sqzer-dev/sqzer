@@ -105,7 +105,9 @@ pub struct Record {
     /// Abstract quality the encoder ran with.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality: Option<f32>,
-    /// The output is lossless.
+    /// The output holds exactly the samples the encoder was given.
+    /// `false` at a quality, and under an option that gives samples up,
+    /// such as `png:colors`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lossless: Option<bool>,
     /// SSIMULACRA2 target that was searched for.
@@ -164,13 +166,10 @@ impl Record {
         if let Some(input) = self.input_bytes.filter(|&n| n > 0) {
             self.ratio = Some(len as f32 / input as f32);
         }
-        match out.target {
-            Resolved::Quality(q) => {
-                self.quality = Some(q);
-                self.lossless = Some(false);
-            }
-            Resolved::Lossless => self.lossless = Some(true),
+        if let Resolved::Quality(q) = out.target {
+            self.quality = Some(q);
         }
+        self.lossless = Some(out.lossless);
         if let Some(r) = &out.report {
             self.with_report(r);
         }
@@ -841,6 +840,16 @@ pub enum Need {
     Lossy,
     /// A lossless one.
     Lossless,
+}
+
+/// Lossless output asked for next to options that give samples up
+/// (ADR-0012 D4). `options` is what [`sqzer::Sqzer::lossy_options`] named.
+pub fn lossless_conflict(options: &[String]) -> String {
+    format!(
+        "lossless output contradicts {}, which gives samples up\n  drop `--lossless` (or \
+         `--preset lossless`), or the option",
+        options.join(" and ")
+    )
 }
 
 /// The ADR-0003 rendering of an unavailable encoder: what was wanted,

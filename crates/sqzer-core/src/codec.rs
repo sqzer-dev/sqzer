@@ -345,6 +345,16 @@ pub trait Encoder: Send + Sync {
     /// perceptual target, [`crate::Error::Unsupported`] for a colour type,
     /// bit depth or mode this backend cannot do, or a backend failure.
     fn encode(&self, img: &Image, params: &EncodeParams) -> Result<Vec<u8>>;
+    /// Whether an encode at a lossless target keeps every sample it is
+    /// given under `params`. `false` when an option that gives samples up
+    /// is set, `png:colors` for one (ADR-0012 D4).
+    ///
+    /// The default is `true`: most options steer how samples are stored,
+    /// not what they are. Says nothing about an encoder without a lossless
+    /// mode, and nothing about a value `encode` would refuse.
+    fn exact(&self, _params: &EncodeParams) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
