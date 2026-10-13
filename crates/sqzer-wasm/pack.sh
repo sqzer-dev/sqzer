@@ -20,22 +20,11 @@ env -u RUSTFLAGS wasm-pack build --release --target web --out-name sqzer
 # root.
 cp ../../LICENSE-MIT ../../LICENSE-APACHE pkg/
 
-# The notices of every crate compiled into the module, from `about.toml`
-# at the repository root and `about.hbs` here. Most of their licences ask
-# that the copyright notice travels with a binary; this is where it
-# travels. `--fail` refuses a crate whose licence cannot be read. A stale
-# clarification in `about.toml`, a crate whose licence file moved with a
-# bump, is only a warning to `cargo about`, which then drops that notice
-# and goes on; here a warning fails the build, so nothing is left out
-# without anyone knowing.
-about_log=$(cargo about generate --fail --locked --target wasm32-unknown-unknown \
-  -o pkg/THIRD-PARTY-LICENSES.txt about.hbs 2>&1) || { echo "$about_log" >&2; exit 1; }
-if grep -q WARN <<< "$about_log"; then
-  echo "$about_log" >&2
-  echo "cargo about warned: a notice is missing, or a clarification in about.toml is stale" >&2
-  exit 1
-fi
-test -s pkg/THIRD-PARTY-LICENSES.txt
+# The notices of every crate compiled into the module and the patent
+# grants that travel with them, as `tools/notices.sh` writes them for the
+# wasm32 tree. Most of those licences ask that the notice travels with a
+# binary; this is where it travels.
+../../tools/notices.sh Cargo.toml wasm32-unknown-unknown "" pkg/THIRD-PARTY-LICENSES.txt
 
 jq '.name = "sqzer" | .files += ["snippets", "LICENSE-MIT", "LICENSE-APACHE", "THIRD-PARTY-LICENSES.txt"]' \
   pkg/package.json > pkg/package.json.new

@@ -299,4 +299,4 @@ Issues and pull requests are welcome, in English preferably. [`ROADMAP.md`](ROAD
 
 ## Licence
 
-MIT or Apache-2.0, at your option.
+MIT or Apache-2.0, at your option. The release archives and the npm package carry `THIRD-PARTY-LICENSES.txt`, the notice of every crate compiled into the binary or the module, the C libraries of the native tier included, and the patent grants that travel with some of those licences.

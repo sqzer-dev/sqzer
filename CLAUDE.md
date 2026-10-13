@@ -61,6 +61,7 @@ cargo build -p sqzer-cli --features native                # needs C libs on PATH
 cargo build -p sqzer-wasm --target wasm32-unknown-unknown # proves portable builds without a libc; needs clang
 (cd crates/sqzer-wasm && wasm-pack test --node)          # the JavaScript API over the fixtures; needs wasm-pack, and no RUSTFLAGS set
 crates/sqzer-wasm/pack.sh                                 # the npm package as a tag publishes it, packed and run from its tarball; needs cargo-about and jq
+tools/notices.sh crates/sqzer-cli/Cargo.toml <target> native THIRD-PARTY-LICENSES.txt  # the notices a release archive carries; about.toml clarifies what cargo about misses
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features     # pedantic is on, warnings are errors in CI
 cargo fmt --all

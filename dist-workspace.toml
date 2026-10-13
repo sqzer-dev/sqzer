@@ -29,6 +29,11 @@ install-updater = false
 # five.
 features = ["native"]
 precise-builds = true
+# The licence notices of the crates in the binary, next to its own two
+# licence texts. The build job writes the file for its target before
+# `dist build` runs (`tools/notices.sh`, called from the build-setup steps
+# below); `dist plan` does not need it to exist.
+include = ["THIRD-PARTY-LICENSES.txt"]
 # `brew install sqzer-dev/tap/sqzer`. The tap is the
 # `sqzer-dev/homebrew-tap` repository; the publish job writes the formula
 # there with the `HOMEBREW_TAP_TOKEN` secret of this repository.

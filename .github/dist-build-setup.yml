@@ -26,3 +26,11 @@
 - name: nasm for libaom on Windows
   if: runner.os == 'Windows'
   uses: ilammy/setup-nasm@v1
+# The licence notices of the crates in this target's binary, for the
+# archive: `include` in `dist-workspace.toml` names the file, and the
+# script writes it for the job's target before `dist build` runs.
+- name: cargo-about
+  uses: ./.github/actions/cargo-about
+- name: Third-party notices for the archive
+  shell: bash
+  run: tools/notices.sh crates/sqzer-cli/Cargo.toml "${{ join(matrix.targets, ' ') }}" native THIRD-PARTY-LICENSES.txt
