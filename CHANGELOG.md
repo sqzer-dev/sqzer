@@ -18,6 +18,10 @@
 * **wasm:** each `Trial` in `trials`, and what `onTrial` receives, carries `size`, the bytes that trial encoded to, so a page can plot quality against score and size as the search runs ([#55](https://github.com/sqzer-dev/sqzer/issues/55))
 * **wasm:** `options()` lists the keys `optimize` and `encode` take, each with its default as the package spells it and its help, as `codecs()` lists the backend options: `[{ key: "target", default: "70", help: "..." }, ...]`. A key whose default depends on the image or the format says `auto`; one that does nothing when left out has none. The defaults are read from the library's builder, so a page can show every control at the package's default and drop its own copy ([#57](https://github.com/sqzer-dev/sqzer/issues/57))
 
+### Bug Fixes
+
+* **sqzer:** an explicit quality with no format, on a graphic the portable tier sends to lossless WebP, is reported as what it was: `Output::target` is `Resolved::Lossless` and `Output::lossless` is `true`, where the record said the quality asked for and `lossless: false` over the same lossless bytes. `--json`, `{quality}` in a `--template` and the npm package follow. Named with `Sqzer::format`, or `format` in the package, WebP at a quality is `EncoderUnavailable` with `native-webp` in `available_in`, as the README has said and the command line has done, and PNG at a quality is `Unsupported`, since no build writes it lossy; a caller that did that passes `Target::Lossless`, which is what the bytes were ([#56](https://github.com/sqzer-dev/sqzer/issues/56))
+
 ## 0.3.0
 
 ### ⚠️ BREAKING CHANGES

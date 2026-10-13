@@ -23,7 +23,7 @@ decode   JPEG, PNG, WebP, AVIF, JPEG XL, GIF, TIFF, BMP, TGA, ICO, QOI, PNM, Ope
 encode   JPEG (mozjpeg-rs), PNG (oxipng), AVIF (ravif), lossless WebP (image-webp)
 ```
 
-> **Note**: Lossy WebP and JPEG XL cannot be written: no permissively licensed pure-Rust encoder exists for either. Asking for one throws an `EncoderUnavailable` error, it never falls back to another format. `codecs()` lists what the build carries.
+> **Note**: Lossy WebP and JPEG XL cannot be written: no permissively licensed pure-Rust encoder exists for either. Asking for one throws an `EncoderUnavailable` error, it never falls back to another format. With no `format`, a graphic goes to lossless WebP whatever `quality` says, and the result says `lossless: true`. `codecs()` lists what the build carries.
 
 ## Decode once, encode many times
 

@@ -156,6 +156,20 @@ impl Format {
         }
     }
 
+    /// The subset of [`Format::encoder_features`] whose encoder has a lossy
+    /// mode. This is the `available_in` list in
+    /// [`crate::Error::EncoderUnavailable`] for an explicit quality on a
+    /// format whose encoder in this build only writes lossless, WebP in the
+    /// portable tier. Empty for PNG, which no build writes lossy.
+    #[must_use]
+    pub const fn lossy_encoder_features(self) -> &'static [&'static str] {
+        match self {
+            Self::WebP => &["native-webp"],
+            Self::Png => &[],
+            _ => self.encoder_features(),
+        }
+    }
+
     /// Cargo features of `sqzer-codecs` that provide a decoder for this
     /// format, the mirror of [`Format::encoder_features`]. This is the
     /// `available_in` list in [`crate::Error::DecoderUnavailable`].
@@ -360,6 +374,23 @@ pub trait Encoder: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lossy_encoder_features_are_a_subset_of_encoder_features() {
+        for &f in Format::ALL {
+            for feature in f.lossy_encoder_features() {
+                assert!(f.encoder_features().contains(feature), "{f}: {feature}");
+            }
+        }
+        // The one format whose portable encoder is lossless only names the
+        // native feature alone; no build writes lossy PNG.
+        assert_eq!(Format::WebP.lossy_encoder_features(), ["native-webp"]);
+        assert_eq!(Format::Png.lossy_encoder_features(), [] as [&str; 0]);
+        assert_eq!(
+            Format::Jpeg.lossy_encoder_features(),
+            Format::Jpeg.encoder_features()
+        );
+    }
 
     #[test]
     fn extension_round_trips() {

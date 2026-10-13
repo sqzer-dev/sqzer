@@ -266,6 +266,36 @@ fn a_missing_backend_names_the_builds_that_have_it() {
 }
 
 #[wasm_bindgen_test]
+fn a_quality_on_a_graphic_picked_for_lossless_webp_is_reported_lossless() {
+    // A flat image: a graphic by the content heuristic, WebP by default.
+    let flat = vec![200u8; 16 * 16 * 4];
+    let image = from_pixels(&flat, 16, 16, None).unwrap();
+    let out = image
+        .encode(options(r#"{"quality":80}"#))
+        .unwrap()
+        .js_value();
+    assert_eq!(text(&out, "content"), "graphic");
+    assert_eq!(text(&out, "format"), "webp");
+    // The one WebP encoder writes lossless whatever the quality: the
+    // record says so and carries no `quality` (issue 56).
+    assert_eq!(get(&out, "lossless"), true);
+    assert!(!Reflect::has(&out, &"quality".into()).unwrap());
+    assert_eq!(bytes(&out), bytes(&image.encode(None).unwrap().js_value()));
+    // Named, WebP at a quality asks for the lossy mode this build lacks.
+    let error = thrown(
+        image.encode(options(r#"{"format":"webp","quality":80}"#)),
+        "EncoderUnavailable",
+    );
+    assert_eq!(strings(&error, "availableIn"), ["native-webp"]);
+    // PNG has no lossy mode in any build: nothing to name.
+    let error = thrown(
+        image.encode(options(r#"{"format":"png","quality":80}"#)),
+        "Unsupported",
+    );
+    assert!(text(&error, "message").contains("no build writes lossy PNG"));
+}
+
+#[wasm_bindgen_test]
 fn on_trial_is_called_once_per_trial() {
     let seen = Rc::new(RefCell::new(Vec::new()));
     let sink = Rc::clone(&seen);
