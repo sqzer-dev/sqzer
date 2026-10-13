@@ -7,6 +7,7 @@
 * **sqzer:** `Output` has a new public field, `lossless`: the bytes hold exactly the samples the encoder was given. Code that builds an `Output` by hand sets it, and code that read `Output::target` to learn whether an encode was lossless reads the field instead (ADR-0012 D4)
 * **metrics:** `Trial` has a new public field, `size`: the bytes the trial encoded to. `Search::run` takes a closure that returns `Scored`, the output with its score and its size, in place of the pair of output and score. Code that builds a `Trial` or calls `run` adds the size
 * **sqzer:** `Progress::Trial` has a new field, `size`, the bytes the trial encoded to. A match that names every field adds it, or `..`
+* **sqzer:** `Target::Quality` on a format set with `Sqzer::format`, or `format` in the npm package, whose encoder in this build only writes lossless is an error, where it encoded lossless and reported the quality: `EncoderUnavailable` with `native-webp` in `available_in` for WebP in the portable tier, as the README has said and the command line has done, and `Unsupported` for PNG, which no build writes lossy. Pass `Target::Lossless` instead, which is what the bytes were; a build with `native-webp` takes the quality ([#56](https://github.com/sqzer-dev/sqzer/issues/56))
 * **cli:** `--lossless` and `--preset lossless` refuse `-x png:optimize_alpha=true`, which changes the colour under fully transparent pixels. Drop `--lossless`: PNG comes from a lossless-only encoder either way, so the file is the same. `--json` now reports such a run as `"lossless": false`
 
 ### Features
@@ -17,6 +18,10 @@
 * **cli:** each entry of `trials` in a `--json` record carries `size`, the bytes that trial encoded to. `-v` prints it after the score, and the progress line shows it per trial
 * **wasm:** each `Trial` in `trials`, and what `onTrial` receives, carries `size`, the bytes that trial encoded to, so a page can plot quality against score and size as the search runs ([#55](https://github.com/sqzer-dev/sqzer/issues/55))
 * **wasm:** `options()` lists the keys `optimize` and `encode` take, each with its default as the package spells it and its help, as `codecs()` lists the backend options: `[{ key: "target", default: "70", help: "..." }, ...]`. A key whose default depends on the image or the format says `auto`; one that does nothing when left out has none. The defaults are read from the library's builder, so a page can show every control at the package's default and drop its own copy ([#57](https://github.com/sqzer-dev/sqzer/issues/57))
+
+### Bug Fixes
+
+* **sqzer:** an explicit quality with no format, on a graphic the portable tier sends to lossless WebP, is reported as what it was: `Output::target` is `Resolved::Lossless` and `Output::lossless` is `true`, where the record said the quality asked for and `lossless: false` over the same lossless bytes. `--json`, `{quality}` in a `--template` and the npm package follow ([#56](https://github.com/sqzer-dev/sqzer/issues/56))
 
 ## 0.3.0
 

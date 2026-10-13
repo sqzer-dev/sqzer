@@ -341,11 +341,13 @@ impl Sqzer {
     /// [`sqzer_metrics::seeds`] when the backend has one. A target the
     /// encoder cannot reach is not an error; the best candidate is
     /// returned and [`Output::report`] says the target was missed. An
-    /// encoder that only writes lossless meets any target with its one
-    /// mode and skips the search. Whether that one encode kept every
-    /// sample is [`Output::lossless`]: an option such as `png:colors`
-    /// gives samples up there, and is refused next to an explicit
-    /// [`Target::Lossless`] (ADR-0012 D4).
+    /// encoder that only writes lossless meets a perceptual target with
+    /// its one mode and skips the search, and does the same for an
+    /// explicit quality when the format was picked per image: a graphic
+    /// going to WebP in the portable tier. Whether that one encode kept
+    /// every sample is [`Output::lossless`]: an option such as
+    /// `png:colors` gives samples up there, and is refused next to an
+    /// explicit [`Target::Lossless`] (ADR-0012 D4).
     ///
     /// > **Note**: scoring needs the output format decodable in this
     /// > build. A registry with an encoder and no decoder for a format
@@ -358,8 +360,12 @@ impl Sqzer {
     /// the missing library), an image over the pixel limit, a decoder
     /// failure, a resize [`Resize::check`] refuses or whose output is over
     /// the pixel limit, [`sqzer_core::Error::EncoderUnavailable`]
-    /// for the chosen format, or [`sqzer_core::Error::Unsupported`] for a perceptual
-    /// target whose output this build cannot decode.
+    /// for the chosen format, or for an explicit quality on a format set
+    /// with [`Sqzer::format`] whose encoder in this build only writes
+    /// lossless, naming the build that writes it lossy, or
+    /// [`sqzer_core::Error::Unsupported`] for the same when no build does
+    /// (PNG), and for a perceptual target whose output this build cannot
+    /// decode.
     pub fn run(&self, input: &[u8]) -> Result<Output> {
         self.encode(&self.transform(self.decode(input)?)?)
     }
@@ -461,6 +467,7 @@ impl Sqzer {
         let (format, content) = self.pick(ready);
         let encoder = self.registry.encoder(format)?;
         let caps = encoder.caps();
+        self.check_lossy_mode(format, caps.lossy)?;
         if ready.translucent_padding() && !caps.alpha {
             return Err(Error::Unsupported {
                 format,
@@ -485,7 +492,7 @@ impl Sqzer {
         }
 
         let (bytes, target, report) = match self.params.target {
-            Target::Ssimulacra2(_) if !caps.lossy => {
+            Target::Ssimulacra2(_) | Target::Quality(_) if !caps.lossy => {
                 let params = EncodeParams {
                     target: Target::Lossless,
                     ..self.params.clone()
@@ -553,6 +560,29 @@ impl Sqzer {
             target,
             lossless: target == Resolved::Lossless && lossy_options.is_empty(),
             report,
+        })
+    }
+
+    /// A quality asked for by name is a lossy mode asked for by name: an
+    /// error when the encoder for a format set with [`Sqzer::format`] has
+    /// none. Picked per image, the format is "whatever fits", and a
+    /// lossless encoder fits a graphic.
+    fn check_lossy_mode(&self, format: Format, lossy: bool) -> Result<()> {
+        if lossy || self.format.is_none() || !matches!(self.params.target, Target::Quality(_)) {
+            return Ok(());
+        }
+        let available_in = format.lossy_encoder_features();
+        Err(if available_in.is_empty() {
+            // The mirror of what a lossy-only encoder says for lossless.
+            Error::Unsupported {
+                format,
+                what: format!("a quality: no build writes lossy {format}"),
+            }
+        } else {
+            Error::EncoderUnavailable {
+                format,
+                available_in,
+            }
         })
     }
 
@@ -726,6 +756,17 @@ mod tests {
         assert_eq!(out.backend, "image-webp");
         assert_eq!(out.tier, Tier::Portable);
         assert!(out.report.is_none());
+        assert!(out.lossless);
+        // An explicit quality changes nothing about that: the encoder has
+        // one mode and the record says which (issue 56).
+        let out = portable()
+            .target(Target::Quality(80.0))
+            .run(&encode_png(&flat(ColorType::Rgb)))
+            .unwrap();
+        assert_eq!(out.format, Format::WebP);
+        assert_eq!(out.target, Resolved::Lossless);
+        assert!(out.lossless);
+        assert!(out.report.is_none());
         // Without a WebP encoder the graphic goes to PNG.
         let mut narrow = Registry::new();
         narrow.register_decoder(sqzer_codecs::png::PngDecoder);
@@ -736,6 +777,61 @@ mod tests {
             .run(&encode_png(&flat(ColorType::Rgb)))
             .unwrap();
         assert_eq!(out.format, Format::Png);
+        assert_eq!(out.target, Resolved::Lossless);
+        assert!(out.lossless);
+    }
+
+    #[test]
+    fn an_explicit_quality_on_a_named_lossless_only_format_is_unavailable() {
+        // Named with `format`, WebP at a quality asks for the lossy mode
+        // the portable tier lacks, as the README documents.
+        for input in [png_bytes(ColorType::Rgb), encode_png(&flat(ColorType::Rgb))] {
+            let err = portable()
+                .format(Format::WebP)
+                .target(Target::Quality(80.0))
+                .run(&input)
+                .unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    Error::EncoderUnavailable {
+                        format: Format::WebP,
+                        available_in: ["native-webp"],
+                    }
+                ),
+                "{err:?}"
+            );
+        }
+        // PNG has no lossy mode in any build: nothing to name.
+        let err = portable()
+            .format(Format::Png)
+            .target(Target::Quality(80.0))
+            .run(&png_bytes(ColorType::Rgb))
+            .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                Error::Unsupported {
+                    format: Format::Png,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "PNG encoder does not support a quality: no build writes lossy PNG"
+        );
+        // A perceptual target and lossless still take its one mode.
+        for target in [Target::Ssimulacra2(70.0), Target::Lossless] {
+            let out = portable()
+                .format(Format::WebP)
+                .target(target)
+                .run(&png_bytes(ColorType::Rgb))
+                .unwrap();
+            assert_eq!(out.target, Resolved::Lossless);
+            assert!(out.lossless);
+        }
     }
 
     #[test]
@@ -1312,7 +1408,11 @@ mod tests {
             .unwrap();
         assert_eq!(s.pick_format(&decoded), Format::Avif);
         let a = s.clone().format(Format::Jpeg).encode(&decoded).unwrap();
-        let b = s.format(Format::Png).encode(&decoded).unwrap();
+        let b = s
+            .format(Format::Png)
+            .target(Target::Lossless)
+            .encode(&decoded)
+            .unwrap();
         assert_eq!(a.format, Format::Jpeg);
         assert_eq!(b.format, Format::Png);
         assert_eq!(a.input.format, Format::Png);

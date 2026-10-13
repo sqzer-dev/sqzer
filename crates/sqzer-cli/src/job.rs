@@ -338,11 +338,13 @@ fn plan(
         }
     }
     let quality = match sqzer.params().target {
-        Target::Quality(q) => Some(QualityTag::Quality(q)),
-        Target::Lossless => Some(QualityTag::Lossless),
-        Target::Ssimulacra2(_) if !caps.lossy => {
+        // A lossless-only encoder picked per image writes its one mode,
+        // as the facade does; `-f` with `-q` was refused with the flags.
+        Target::Ssimulacra2(_) | Target::Quality(_) if !caps.lossy => {
             Some(QualityTag::of(Resolved::Lossless, lossy_options.is_empty()))
         }
+        Target::Quality(q) => Some(QualityTag::Quality(q)),
+        Target::Lossless => Some(QualityTag::Lossless),
         Target::Ssimulacra2(t) => {
             rec.target = Some(t);
             None

@@ -951,6 +951,47 @@ fn png_colors_write_a_palette_and_the_record_says_lossy() {
 }
 
 #[test]
+fn a_quality_on_a_graphic_picked_for_lossless_webp_is_reported_lossless() {
+    // Lossy WebP needs the native tier; this is about the portable pick.
+    if cfg!(feature = "native") {
+        return;
+    }
+    let sb = Sandbox::new("graphic-quality");
+    // A flat 4 x 4 image: a graphic by the content heuristic.
+    let mut ppm = b"P6\n4 4\n255\n".to_vec();
+    ppm.extend(std::iter::repeat_n([200u8, 200, 200], 16).flatten());
+    fs::write(sb.path("in.ppm"), ppm).unwrap();
+    let args = [
+        "in.ppm",
+        "-q",
+        "80",
+        "--force",
+        "--json",
+        "--template",
+        "{stem}-{quality}.{ext}",
+    ];
+    let (code, out, err) = run(sb.sqzer().args(args));
+    assert_eq!(code, 0, "{err}");
+    let r = &json_lines(&out)[0];
+    assert_eq!(r["status"], "written", "{r}");
+    assert_eq!(r["content"], "graphic", "{r}");
+    assert_eq!(r["format"], "webp", "{r}");
+    // The one WebP encoder writes lossless whatever the quality: the
+    // record says so and names no quality (issue 56).
+    assert_eq!(r["lossless"], true, "{r}");
+    assert!(r.get("quality").is_none(), "{r}");
+    assert_eq!(r["output"], "in-lossless.webp", "{r}");
+    assert_eq!(
+        &fs::read(sb.path("in-lossless.webp")).unwrap()[8..12],
+        b"WEBP"
+    );
+    // The dry run plans the same name.
+    let (code, out, err) = run(sb.sqzer().args(args).arg("-n"));
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(json_lines(&out)[0]["output"], "in-lossless.webp");
+}
+
+#[test]
 fn lossless_refuses_an_option_that_gives_samples_up() {
     let sb = Sandbox::new("palette-refused");
     sb.fixture("pattern-rgba.webp", "in.webp");
