@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.0
+
 ### ⚠️ BREAKING CHANGES
 
 * **sqzer:** `Output` has a new public field, `lossless`: the bytes hold exactly the samples the encoder was given. Code that builds an `Output` by hand sets it, and code that read `Output::target` to learn whether an encode was lossless reads the field instead (ADR-0012 D4)
