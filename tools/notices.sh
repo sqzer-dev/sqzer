@@ -43,23 +43,36 @@ if grep -q WARN <<< "$log"; then
 fi
 
 # Every PATENTS file shipped by a crate of the tree, by name, four levels
-# deep so the third-party code inside a vendored C tree is covered.
-# Workspace crates are ours and path crates are not shipped. One such
-# file, `rav1e`'s, is Windows-1252; the output stays UTF-8.
+# deep so the third-party code inside a vendored C tree is covered. The
+# tree is the one `cargo about` saw: `cargo tree` for the target, over
+# normal and build dependencies, never dev ones. `cargo metadata` only
+# maps a crate to its directory: its own resolve enables the features of
+# every platform at once, so on musl it would add the JPEG XL crates the
+# musl binary does not carry. A path crate, printed with its directory,
+# is ours and is not shipped. One such file, `rav1e`'s, is Windows-1252;
+# the output stays UTF-8.
 {
   echo "================================================================================"
   echo "Patent grants"
   echo
   echo "Additional rights granted with a licence above, as the crate ships them."
 } >> "$out"
-cargo metadata --format-version 1 --manifest-path "$manifest" --filter-platform "$target" "${feature_args[@]}" |
-  jq -r '.workspace_members as $ws
-    | [.resolve.nodes[].id] as $ids
-    | .packages[]
-    | select(.source != null and (.id | IN($ids[])) and ((.id | IN($ws[])) | not))
-    | "\(.name) \(.version)\t\(.manifest_path | sub("[/\\\\]Cargo\\.toml$"; ""))"' |
+declare -A dir_of
+while IFS=$'\t' read -r crate dir; do
+  dir_of[$crate]=$dir
+done < <(cargo metadata --format-version 1 --locked --manifest-path "$manifest" "${feature_args[@]}" |
+  jq -r '.packages[] | select(.source != null)
+    | "\(.name) \(.version)\t\(.manifest_path | sub("[/\\\\]Cargo\\.toml$"; ""))"')
+cargo tree --locked --manifest-path "$manifest" --target "$target" "${feature_args[@]}" \
+  -e normal,build --prefix none --format '{p}' |
+  awk '$3 == "" || $3 == "(*)" || $3 == "(proc-macro)" { sub(/^v/, "", $2); print $1 " " $2 }' |
   sort -u |
-  while IFS=$'\t' read -r crate dir; do
+  while read -r crate; do
+    dir=${dir_of[$crate]:-}
+    if [ -z "$dir" ]; then
+      echo "no directory known for $crate" >&2
+      exit 1
+    fi
     # A Windows path from `cargo metadata`, for the Git Bash `find`.
     if command -v cygpath > /dev/null; then
       dir=$(cygpath -u "$dir")

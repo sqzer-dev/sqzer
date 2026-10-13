@@ -26,7 +26,11 @@ runs:
           cargo install cargo-about --version "$VERSION" --locked --features cli
           exit 0
         fi
+        # Paths as this bash sees them: `$RUNNER_TEMP` is a Windows path on
+        # the Windows runner, which its `tar` cannot open, and the bin
+        # directory is wherever `cargo` is.
+        tmp=$(mktemp -d)
         curl -sSL "https://github.com/EmbarkStudios/cargo-about/releases/download/$VERSION/cargo-about-$VERSION-$triple.tar.gz" \
-          | tar -xz -C "$RUNNER_TEMP"
-        cp "$RUNNER_TEMP/cargo-about-$VERSION-$triple"/cargo-about* "$HOME/.cargo/bin/"
+          | tar -xz -C "$tmp"
+        cp "$tmp/cargo-about-$VERSION-$triple"/cargo-about* "$(dirname "$(command -v cargo)")/"
         cargo about --version
