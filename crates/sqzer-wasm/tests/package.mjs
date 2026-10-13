@@ -17,6 +17,12 @@ assert.equal(manifest.license, "MIT OR Apache-2.0");
 for (const file of ["LICENSE-MIT", "LICENSE-APACHE", "README.md", "sqzer.d.ts"]) {
   await readFile(installed(file));
 }
+// The notices of the crates in the module, one `Used by` block per
+// licence text, with the C library inside `libdeflate-sys` among them.
+const notices = await readFile(installed("THIRD-PARTY-LICENSES.txt"), "utf8");
+for (const needle of ["Used by:", "ravif", "mozjpeg-rs", "libdeflate-sys", "Eric Biggers", "avif-parse"]) {
+  assert.ok(notices.includes(needle), `THIRD-PARTY-LICENSES.txt lacks ${needle}`);
+}
 
 await init({ module_or_path: await readFile(installed("sqzer_bg.wasm")) });
 

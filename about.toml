@@ -1,0 +1,116 @@
+# `cargo about` writes the licence notices of everything compiled into a
+# build: `crates/sqzer-wasm/pack.sh` runs it over the npm package into
+# `THIRD-PARTY-LICENSES.txt` with `crates/sqzer-wasm/about.hbs`. The
+# accepted list is the allow-list of `deny.toml`, in the order a crate
+# that offers a choice is taken: a crate that is `MIT OR Apache-2.0`
+# ships its MIT notice.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+]
+# The package is the wasm32 build; what only a desktop target compiles
+# is not in it. Build scripts and their dependencies (`cc`) do not ship,
+# and neither does `sqzer-wasm` itself, `publish = false`: the package's
+# own licence is next to the file. The four published workspace crates
+# are left out by the template, on their repository.
+targets = ["wasm32-unknown-unknown"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+private = { ignore = true }
+# A notice lives at the root of a crate. Scanned deeper, the tree gave a
+# C fuzzing harness in `qoi` and Rust source headers in `kamadak-exif`
+# as licence texts, each with a notice inside it.
+max-depth = 1
+
+# What the scan cannot read on its own, clarified per crate. Every
+# checksum pins a file's text, not a crate version: a bump keeps working
+# until the notice itself changes, and then `pack.sh` fails until the
+# entry is checked again. `files` are read from the crate as published,
+# `git` from its repository at the commit it was published from, for a
+# crate that ships no notice and keeps one at the root of its repository.
+# Two crates stay on the bare licence text: `simd_helpers` has no notice
+# in its repository either, and `zune-inflate` names no repository.
+
+# Vendors and compiles `libdeflate`, a C library under its own MIT
+# notice, which the crate's Apache-2.0 field does not carry.
+[libdeflate-sys]
+clarify = { license = "Apache-2.0 AND MIT", files = [
+    { path = "LICENSE", license = "Apache-2.0", checksum = "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2" },
+    { path = "libdeflate/COPYING", license = "MIT", checksum = "4ad69099cb4374836fd27583d9991e2838cd86b6e4666ab26b2d32582c91e73a" },
+] }
+
+# Names its licence by file alone, `license-file = "LICENSE"`.
+[quantizr]
+clarify = { license = "MIT", files = [
+    { path = "LICENSE", checksum = "407b2d167f73ef78da1fcbfb6c2f1051f195b1984b9bfeeac0a39b34c198a7fe" },
+] }
+
+# Notices under a name or in a form the scan does not take.
+[libm]
+clarify = { license = "MIT", files = [
+    { path = "LICENSE.txt", checksum = "3823dda7cf046602f4b4e77ec8e227863dc4736037cc85bb33d9f19febe16bb7" },
+] }
+[brotli-decompressor]
+clarify = { license = "BSD-3-Clause", files = [
+    { path = "LICENSE", checksum = "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae" },
+] }
+[exr]
+clarify = { license = "BSD-3-Clause", files = [
+    { path = "LICENSE.md", checksum = "97e4d3aa7a9e8ac31979c16ca8bb2b628a9cb72c3362185ad2bf4ad77f43551f" },
+] }
+[tsify]
+clarify = { license = "MIT OR Apache-2.0", files = [
+    { path = "LICENSE_MIT", license = "MIT", checksum = "23b988ff99c59aba4e37e7709d3d2102096203bb83a077cbc1aad04dd7a77244" },
+    { path = "LICENSE_APACHE", license = "Apache-2.0", checksum = "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a" },
+] }
+
+# Crates published without their notice, read from the repository.
+[tsify-macros]
+clarify = { license = "MIT", git = [
+    { path = "LICENSE_MIT", checksum = "23b988ff99c59aba4e37e7709d3d2102096203bb83a077cbc1aad04dd7a77244" },
+] }
+[archmage-macros]
+clarify = { license = "MIT", git = [
+    { path = "LICENSE-MIT", checksum = "ea17bff5189bc1a38dcad7bd93abeb5a348da5ebeee5891a012b5db27a2a084b" },
+] }
+[magetypes]
+clarify = { license = "MIT", git = [
+    { path = "LICENSE-MIT", checksum = "ea17bff5189bc1a38dcad7bd93abeb5a348da5ebeee5891a012b5db27a2a084b" },
+] }
+[enough]
+clarify = { license = "MIT", git = [
+    { path = "LICENSE-MIT", checksum = "ffa509f359743823fe3cdba2c4dc8feee00be8f07ab299fbbe2b5a50d6ed1ecf" },
+] }
+[atomig-macro]
+clarify = { license = "MIT", git = [
+    { path = "LICENSE-MIT", checksum = "6f54826bbf67526f2d41937c1904ae2de63ef5707b80c68deadbf073b5669c40" },
+] }
+[profiling]
+clarify = { license = "MIT", git = [
+    { path = "LICENSE-MIT", checksum = "c8167fdeeed46d3f244d3f85c5bf998ce889343691c32be2c61a8bc4b5c08333" },
+] }
+[profiling-procmacros]
+clarify = { license = "MIT", git = [
+    { path = "LICENSE-MIT", checksum = "c8167fdeeed46d3f244d3f85c5bf998ce889343691c32be2c61a8bc4b5c08333" },
+] }
+[pulp-wasm-simd-flag]
+clarify = { license = "MIT", git = [
+    { path = "LICENSE", checksum = "d64f878c89bd5f1e5ada7e4aad57690b122727cf5229b7b87ea1980c188da1d9" },
+] }
+[alloc-stdlib]
+clarify = { license = "BSD-3-Clause", git = [
+    { path = "LICENSE", checksum = "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae" },
+] }
+[fast-ssim2]
+clarify = { license = "BSD-2-Clause", git = [
+    { path = "LICENSE", checksum = "acc9e236b0011c638714a16f5634fa5bcd3be111182e237c3049db700c3521e2" },
+] }
