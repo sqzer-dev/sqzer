@@ -129,6 +129,20 @@ fn shape_1_one_photo_becomes_a_sibling_avif() {
     assert!(r["quality"].is_number(), "{r}");
     assert!(r["iterations"].as_u64().unwrap() <= 6, "{r}");
     assert!(r["trials"].is_array(), "{r}");
+    // Every trial carries the size of its encode, and the chosen one is
+    // the file written.
+    let trials = r["trials"].as_array().unwrap();
+    assert!(
+        trials
+            .iter()
+            .all(|t| t["size"].as_u64().is_some_and(|s| s > 0)),
+        "{r}"
+    );
+    let chosen = trials
+        .iter()
+        .find(|t| t["quality"] == r["quality"])
+        .unwrap();
+    assert_eq!(chosen["size"], r["output_bytes"], "{r}");
     assert!(is_avif(&fs::read(sb.path("photo.avif")).unwrap()));
 }
 

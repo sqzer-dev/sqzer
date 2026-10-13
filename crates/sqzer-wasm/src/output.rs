@@ -118,6 +118,8 @@ pub struct Trial {
     pub quality: f64,
     /// SSIMULACRA2 score.
     pub score: f64,
+    /// Size of the encoded trial in bytes.
+    pub size: u64,
 }
 
 /// What `onTrial` receives: a trial as it is scored.
@@ -131,6 +133,8 @@ pub struct TrialProgress {
     pub quality: f64,
     /// SSIMULACRA2 score it reached.
     pub score: f64,
+    /// Size of the encoded trial in bytes.
+    pub size: u64,
 }
 
 impl Output {
@@ -174,6 +178,7 @@ impl Output {
                     .map(|t| Trial {
                         quality: tidy(t.quality),
                         score: tidy(t.score),
+                        size: t.size,
                     })
                     .collect()
             }),

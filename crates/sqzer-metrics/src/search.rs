@@ -36,6 +36,8 @@ pub struct Trial {
     pub quality: f32,
     /// Metric score at that quality.
     pub score: f32,
+    /// Size of the encoded output in bytes.
+    pub size: u64,
 }
 
 /// Result of one target search.
@@ -63,6 +65,17 @@ pub struct Found<T> {
     pub output: T,
     /// The search report.
     pub report: SearchReport,
+}
+
+/// What one trial of [`Search::run`] produced.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Scored<T> {
+    /// The encoded output.
+    pub output: T,
+    /// Its metric score.
+    pub score: f32,
+    /// Its size in bytes, carried into [`Trial::size`].
+    pub size: u64,
 }
 
 /// Search settings.
@@ -159,12 +172,12 @@ impl Search {
     }
 
     /// Run the search over `trial`, which encodes at the given quality and
-    /// returns the encoded output together with its score.
+    /// returns the encoded output with its score and its size in bytes.
     ///
     /// # Errors
     /// [`Error::InvalidParams`] from [`Search::validate`], or the first
     /// error `trial` returns.
-    pub fn run<T>(&self, mut trial: impl FnMut(f32) -> Result<(T, f32)>) -> Result<Found<T>> {
+    pub fn run<T>(&self, mut trial: impl FnMut(f32) -> Result<Scored<T>>) -> Result<Found<T>> {
         self.validate()?;
         let floor = self.floor.round();
         let ceiling = self.ceiling.round();
@@ -202,10 +215,15 @@ impl Search {
                     midpoint(lo, hi)
                 };
             }
-            let (output, score) = trial(next)?;
+            let Scored {
+                output,
+                score,
+                size,
+            } = trial(next)?;
             trials.push(Trial {
                 quality: next,
                 score,
+                size,
             });
             let reaches = score >= self.target - self.tolerance;
             let better = match &best {
@@ -325,8 +343,18 @@ impl Search {
                 Err(e) => return Err(e),
             };
             let s = score(&decoded)?;
-            observe(Trial { quality, score: s });
-            Ok((bytes, s))
+            // The output is a byte vector, so the size fits.
+            let size = bytes.len() as u64;
+            observe(Trial {
+                quality,
+                score: s,
+                size,
+            });
+            Ok(Scored {
+                output: bytes,
+                score: s,
+                size,
+            })
         })
     }
 }
@@ -342,10 +370,29 @@ fn midpoint(lo: f32, hi: f32) -> f32 {
 mod tests {
     use super::*;
 
-    /// Run the search over a pure score curve, returning the quality as
-    /// the output so the two can be checked against each other.
+    /// A trial over a pure curve: the quality as the output, so the two
+    /// can be checked against each other, and a size that follows it.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn scored(q: f32, score: f32) -> Scored<f32> {
+        Scored {
+            output: q,
+            score,
+            size: (q * 100.0) as u64,
+        }
+    }
+
+    /// Run the search over a pure score curve.
     fn over(search: &Search, curve: impl Fn(f32) -> f32) -> Found<f32> {
-        search.run(|q| Ok((q, curve(q)))).unwrap()
+        search.run(|q| Ok(scored(q, curve(q)))).unwrap()
+    }
+
+    #[test]
+    fn trials_carry_the_size_of_their_output() {
+        let found = over(&Search::new(70.0), |q| q * 0.9);
+        assert!(found.report.iterations > 1);
+        for t in &found.report.trials {
+            assert_eq!(t.size, scored(t.quality, 0.0).size, "{t:?}");
+        }
     }
 
     /// Lowest whole quality whose score reaches the target under the
@@ -393,7 +440,7 @@ mod tests {
         let found = search
             .run(|q| {
                 seen.push(q);
-                Ok((q, q * 0.9))
+                Ok(scored(q, q * 0.9))
             })
             .unwrap();
         assert_eq!(
@@ -645,7 +692,7 @@ mod tests {
     fn settings_are_validated() {
         let bad = |s: Search| {
             assert!(matches!(
-                s.run(|q| Ok((q, q))),
+                s.run(|q| Ok(scored(q, q))),
                 Err(Error::InvalidParams(_))
             ));
         };
@@ -687,7 +734,7 @@ mod tests {
     fn trial_errors_propagate() {
         let mut calls = 0;
         let err = Search::new(70.0)
-            .run(|_: f32| -> Result<((), f32)> {
+            .run(|_: f32| -> Result<Scored<()>> {
                 calls += 1;
                 Err(Error::Codec("boom".into()))
             })

@@ -39,6 +39,8 @@ pub struct Trial {
     pub quality: f32,
     /// SSIMULACRA2 score.
     pub score: f32,
+    /// Size of the encoded trial in bytes.
+    pub size: u64,
 }
 
 /// One line of `--json`: one input, one output. Fields are omitted when
@@ -187,6 +189,7 @@ impl Record {
                 .map(|t| Trial {
                     quality: t.quality,
                     score: t.score,
+                    size: t.size,
                 })
                 .collect(),
         );
@@ -425,6 +428,8 @@ pub enum Stage {
         quality: f32,
         /// Score it reached.
         score: f32,
+        /// Size of the encoded trial in bytes.
+        size: u64,
     },
     /// Writing the output.
     Write,
@@ -438,11 +443,13 @@ impl From<sqzer::Progress> for Stage {
                 max,
                 quality,
                 score,
+                size,
             } => Self::Trial {
                 n,
                 max,
                 quality,
                 score,
+                size,
             },
             // Stages the facade may add later show as plain encoding.
             _ => Self::Encode,
@@ -493,9 +500,13 @@ impl Worker<'_> {
                 max,
                 quality,
                 score,
+                size,
             } => (
                 "magenta",
-                format!("search {n}/{max}  q{quality} -> {score:.1}"),
+                format!(
+                    "search {n}/{max}  q{quality} -> {score:.1}  {}",
+                    fmt_bytes(size)
+                ),
             ),
             Stage::Write => ("green", "write".to_string()),
         };
@@ -638,7 +649,7 @@ impl Printer {
         {
             let list: Vec<String> = trials
                 .iter()
-                .map(|t| format!("q{} {:.2}", t.quality, t.score))
+                .map(|t| format!("q{} {:.2} {}", t.quality, t.score, fmt_bytes(t.size)))
                 .collect();
             let _ = writeln!(
                 err,

@@ -77,7 +77,7 @@ enlarge       allow scaling up. nothing scales up without it
 filter        "lanczos3" | "mitchell" | "catmull-rom" | "bilinear" | "box" | "nearest"
 maxPixels     refuse a larger image. default 24 million
 codecOpts     backend options, { "jpeg:progressive": "false" }. codecs() lists the keys
-onTrial       called per trial of the search with { n, max, quality, score }
+onTrial       called per trial of the search with { n, max, quality, score, size }
 ```
 
 > **Note**: `maxPixels` defaults to 24 million, not the 268 million of the command line. The target search needs about 160 bytes per pixel, and a WebAssembly module addresses 4 GiB.
@@ -94,7 +94,7 @@ onTrial       called per trial of the search with { n, max, quality, score }
   content: "photo", outputWidth: 1600, outputHeight: 1200,
   quality: 62.5, lossless: false,
   target: 70, score: 70.3, reached: true, capped: false, iterations: 3,
-  trials: [{ quality: 62, score: 69.1 }, ...]
+  trials: [{ quality: 62, score: 69.1, size: 48213 }, ...]
 }
 ```
 
