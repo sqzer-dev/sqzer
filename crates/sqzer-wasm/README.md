@@ -82,6 +82,16 @@ onTrial       called per trial of the search with { n, max, quality, score, size
 
 > **Note**: `maxPixels` defaults to 24 million, not the 268 million of the command line. The target search needs about 160 bytes per pixel, and a WebAssembly module addresses 4 GiB.
 
+`options()` lists these keys with their defaults, as `codecs()` lists the backend options, so a page can show every control at the package's default without a copy of this table.
+
+```js
+options();
+// [{ key: "format", default: "auto", help: "output format: jpeg, png, webp, avif or jxl. ..." },
+//  { key: "target", default: "70", help: "SSIMULACRA2 score to reach by searching encoder quality, up to 100. ..." },
+//  { key: "width", help: "target width in pixels. ..." },   // no default: left out, nothing is resized
+//  ...]
+```
+
 ## Results and errors
 
 `optimize` and `encode` return the record `sqzer --json` prints, in camel case, with the encoded file added. Keys that do not apply are left out.

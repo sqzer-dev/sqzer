@@ -5,8 +5,8 @@
 use std::collections::BTreeMap;
 
 use js_sys::{Function, Object};
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use sqzer::Sqzer;
 use sqzer::core::params::Target;
 use sqzer::core::resize::{Resize, Size};
@@ -287,32 +287,125 @@ impl From<Filter> for resize::Filter {
     }
 }
 
-/// The keys of [`Options`], [`DecodeOptions`] and [`DecodeAnyOptions`] as
-/// JavaScript spells them. `serde-wasm-bindgen` reads the fields it knows
-/// and never sees the rest, so a misspelt key is refused against these.
+/// One key of [`Options`], as `options()` lists it: the shape of
+/// [`crate::output::CodecOption`].
+#[derive(Debug, Clone, Serialize, Tsify)]
+pub struct OptionInfo {
+    /// The key, as `optimize` and `encode` take it.
+    pub key: &'static str,
+    /// The value used when the key is not set, as the package spells it.
+    /// `auto` where it depends on the image or the format. Left out for a
+    /// key that has none: leaving `width` out resizes nothing, and
+    /// `quality` left out means the `target` is searched for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[tsify(optional)]
+    pub default: Option<String>,
+    /// What it does and which values it takes.
+    pub help: &'static str,
+}
+
+/// A key of [`Options`] and what `options()` says about it.
+struct Key {
+    name: &'static str,
+    help: &'static str,
+}
+
+/// The keys of [`Options`] as JavaScript spells them, with their help.
+/// `serde-wasm-bindgen` reads the fields it knows and never sees the rest,
+/// so a misspelt key is refused against these, and `options()` lists them.
 /// Add a field's key here with the field.
-const OPTIONS: &[&str] = &[
-    "format",
-    "target",
-    "quality",
-    "lossless",
-    "preset",
-    "effort",
-    "subsampling",
-    "keepIcc",
-    "keepMetadata",
-    "fast",
-    "width",
-    "height",
-    "fit",
-    "position",
-    "background",
-    "scale",
-    "enlarge",
-    "filter",
-    "maxPixels",
-    "codecOpts",
-    "onTrial",
+const OPTIONS: &[Key] = &[
+    Key {
+        name: "format",
+        help: "output format: jpeg, png, webp, avif or jxl. Left out, it is chosen per image: \
+                avif for a photograph, lossless webp for a graphic",
+    },
+    Key {
+        name: "target",
+        help: "SSIMULACRA2 score to reach by searching encoder quality, up to 100. 100 is \
+                identical, 50 shows artefacts on close inspection",
+    },
+    Key {
+        name: "quality",
+        help: "encode at this quality, 0 to 100, with no search. Excludes target and lossless",
+    },
+    Key {
+        name: "lossless",
+        help: "lossless output. Excludes target and quality",
+    },
+    Key {
+        name: "preset",
+        help: "named settings: web, thumbnail, archive or lossless. The other keys override it",
+    },
+    Key {
+        name: "effort",
+        help: "0 to 10. Higher is slower and smaller",
+    },
+    Key {
+        name: "subsampling",
+        help: "chroma subsampling, for codecs that have it: auto, 444, 422 or 420",
+    },
+    Key {
+        name: "keepIcc",
+        help: "keep the ICC profile instead of converting to sRGB",
+    },
+    Key {
+        name: "keepMetadata",
+        help: "keep EXIF and XMP instead of stripping them",
+    },
+    Key {
+        name: "fast",
+        help: "one encode at the calibrated seed quality for the target, no search",
+    },
+    Key {
+        name: "width",
+        help: "target width in pixels. With the default fit, scales down to fit inside width x \
+                height; one side may be given alone",
+    },
+    Key {
+        name: "height",
+        help: "target height in pixels",
+    },
+    Key {
+        name: "fit",
+        help: "how the image meets the width x height box, as CSS object-fit: inside, cover, \
+                contain, fill or outside",
+    },
+    Key {
+        name: "position",
+        help: "where cover crops and contain places the image: center, top, bottom, left, \
+                right, top-left, top-right, bottom-left or bottom-right",
+    },
+    Key {
+        name: "background",
+        help: "padding of contain: #rrggbb, #rrggbbaa, white, black or transparent. auto is \
+                transparent for a format with alpha, white for one without",
+    },
+    Key {
+        name: "scale",
+        help: "a factor instead of a box: 0.5 halves both sides. Above 1 needs enlarge",
+    },
+    Key {
+        name: "enlarge",
+        help: "allow scaling up. Nothing scales up without it",
+    },
+    Key {
+        name: "filter",
+        help: "resampling filter: lanczos3, mitchell, catmull-rom, bilinear, box or nearest",
+    },
+    Key {
+        name: "maxPixels",
+        help: "refuse an image above this many pixels, decoded or resized",
+    },
+    Key {
+        name: "codecOpts",
+        help: "backend options, { \"jpeg:progressive\": \"false\" }. codecs() lists every key \
+                with its default",
+    },
+    Key {
+        name: "onTrial",
+        help: "called once per trial of the target search with { n, max, quality, score, size }",
+    },
 ];
 const DECODE_OPTIONS: &[&str] = &["maxPixels"];
 const DECODE_ANY_OPTIONS: &[&str] = &["maxPixels", "width", "height"];
@@ -347,7 +440,8 @@ impl Options {
     /// [`Error::InvalidParams`] for a key this package does not have or a
     /// value of the wrong type.
     pub fn parse(options: Option<Ts<Self>>) -> Result<Self> {
-        let options: Self = parse(options.map(Into::into), OPTIONS)?;
+        let keys: Vec<&str> = OPTIONS.iter().map(|k| k.name).collect();
+        let options: Self = parse(options.map(Into::into), &keys)?;
         let on_trial = &options.on_trial;
         if !(on_trial.is_undefined() || on_trial.is_null() || on_trial.is_function()) {
             return Err(invalid("`onTrial` is not a function"));
@@ -520,6 +614,94 @@ impl Options {
     #[must_use]
     pub fn on_trial(&self) -> Option<&Function> {
         self.on_trial.dyn_ref()
+    }
+
+    /// Every key with its default and its help, for `options()`. The
+    /// defaults are read from the builder the package starts from, so
+    /// they cannot drift from what an encode without options does.
+    #[must_use]
+    pub fn listing() -> Vec<OptionInfo> {
+        let sqzer = crate::sqzer(None);
+        let params = sqzer.params();
+        let resize = sqzer.resize_bounds();
+        let default = |key: &str| -> Option<String> {
+            Some(match key {
+                // Decided per image or per format.
+                "format" | "background" => "auto".to_string(),
+                "target" => match params.target {
+                    Target::Ssimulacra2(t) => crate::output::tidy(t).to_string(),
+                    Target::Quality(_) | Target::Lossless => return None,
+                },
+                "lossless" | "fast" => false.to_string(),
+                "effort" => params.effort.to_string(),
+                "subsampling" => subsampling_name(params.subsampling).to_string(),
+                "keepIcc" => params.keep_icc.to_string(),
+                "keepMetadata" => params.keep_metadata.to_string(),
+                "fit" => fit_name(resize.fit).to_string(),
+                "position" => position_name(resize.position).to_string(),
+                "enlarge" => resize.enlarge.to_string(),
+                "filter" => filter_name(resize.filter).to_string(),
+                "maxPixels" => MAX_PIXELS.to_string(),
+                // Nothing happens when these are left out.
+                _ => return None,
+            })
+        };
+        OPTIONS
+            .iter()
+            .map(|k| OptionInfo {
+                key: k.name,
+                default: default(k.name),
+                help: k.help,
+            })
+            .collect()
+    }
+}
+
+/// The spelling of [`Subsampling`] for a library value.
+fn subsampling_name(s: params::Subsampling) -> &'static str {
+    match s {
+        params::Subsampling::Auto => "auto",
+        params::Subsampling::S444 => "444",
+        params::Subsampling::S422 => "422",
+        params::Subsampling::S420 => "420",
+    }
+}
+
+/// The spelling of [`Fit`] for a library value.
+fn fit_name(f: resize::Fit) -> &'static str {
+    match f {
+        resize::Fit::Inside => "inside",
+        resize::Fit::Cover => "cover",
+        resize::Fit::Contain => "contain",
+        resize::Fit::Fill => "fill",
+        resize::Fit::Outside => "outside",
+    }
+}
+
+/// The spelling of [`Position`] for a library value.
+fn position_name(p: resize::Position) -> &'static str {
+    match p {
+        resize::Position::Center => "center",
+        resize::Position::Top => "top",
+        resize::Position::Bottom => "bottom",
+        resize::Position::Left => "left",
+        resize::Position::Right => "right",
+        resize::Position::TopLeft => "top-left",
+        resize::Position::TopRight => "top-right",
+        resize::Position::BottomLeft => "bottom-left",
+        resize::Position::BottomRight => "bottom-right",
+    }
+}
+
+/// The spelling of [`Filter`] for a library value.
+fn filter_name(f: resize::Filter) -> &'static str {
+    match f {
+        resize::Filter::Lanczos3 => "lanczos3",
+        resize::Filter::Mitchell => "mitchell",
+        resize::Filter::CatmullRom => "catmull-rom",
+        resize::Filter::Bilinear => "bilinear",
+        resize::Filter::Box => "box",
+        resize::Filter::Nearest => "nearest",
     }
 }
 
