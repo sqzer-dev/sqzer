@@ -19,6 +19,8 @@ target=$2
 features=$3
 out=$4
 root=$(cd "$(dirname "$0")/.." && pwd)
+# Expanded with the guard below: an empty array under `set -u` is an
+# error in the bash 3.2 of macOS.
 feature_args=()
 if [ -n "$features" ]; then
   feature_args=(--features "$features")
@@ -32,7 +34,7 @@ fi
 # the graph" is lowercase and expected: `about.toml` covers the npm
 # package and the binaries, and no one tree holds every crate it names.
 log=$(cargo about generate --fail --locked -c "$root/about.toml" -m "$manifest" \
-  --target "$target" "${feature_args[@]}" -o "$out" "$root/about.hbs" 2>&1) || {
+  --target "$target" ${feature_args[@]+"${feature_args[@]}"} -o "$out" "$root/about.hbs" 2>&1) || {
   echo "$log" >&2
   exit 1
 }
@@ -60,10 +62,10 @@ fi
 # A file, not an associative array: the macOS runners have bash 3.2.
 dirs=$(mktemp)
 trap 'rm -f "$dirs"' EXIT
-cargo metadata --format-version 1 --locked --manifest-path "$manifest" "${feature_args[@]}" |
+cargo metadata --format-version 1 --locked --manifest-path "$manifest" ${feature_args[@]+"${feature_args[@]}"} |
   jq -r '.packages[] | select(.source != null)
     | "\(.name) \(.version)\t\(.manifest_path | sub("[/\\\\]Cargo\\.toml$"; ""))"' > "$dirs"
-cargo tree --locked --manifest-path "$manifest" --target "$target" "${feature_args[@]}" \
+cargo tree --locked --manifest-path "$manifest" --target "$target" ${feature_args[@]+"${feature_args[@]}"} \
   -e normal,build --prefix none --format '{p}' |
   awk '$3 == "" || $3 == "(*)" || $3 == "(proc-macro)" { sub(/^v/, "", $2); print $1 " " $2 }' |
   sort -u |
