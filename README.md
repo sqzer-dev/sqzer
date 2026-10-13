@@ -2,7 +2,7 @@
 
 Multi-format image optimizer with best-in-class defaults. A library, a CLI and a WebAssembly package for the browser, pure Rust by default, C codecs when you want the last few percent.
 
-> **Note**: Early days. The command line and its defaults are what this README describes; the library API will still change before `1.0`. The browser build is the `sqzer` package on npm, described [below](#in-the-browser); the page to drop an image on is next. The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md), the command line in [`docs/adr/0003-cli-interface.md`](docs/adr/0003-cli-interface.md), the native backends in [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md), colour in [`docs/adr/0007-colour-management.md`](docs/adr/0007-colour-management.md), the browser build in [`docs/adr/0011-browser-build.md`](docs/adr/0011-browser-build.md).
+> **Note**: Early days. The command line and its defaults are what this README describes; the library API will still change before `1.0`. The browser build is the `sqzer` package on npm, described [below](#in-the-browser), and the page to drop an image on is [sqzer.dev](https://sqzer.dev). The design is in [`docs/adr/0001-system-design.md`](docs/adr/0001-system-design.md), the command line in [`docs/adr/0003-cli-interface.md`](docs/adr/0003-cli-interface.md), the native backends in [`docs/adr/0004-native-tier.md`](docs/adr/0004-native-tier.md), colour in [`docs/adr/0007-colour-management.md`](docs/adr/0007-colour-management.md), the browser build in [`docs/adr/0011-browser-build.md`](docs/adr/0011-browser-build.md).
 
 ## What it is for
 

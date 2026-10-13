@@ -950,14 +950,14 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "heif-dl"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "libloading",
 ]
 
 [[package]]
 name = "heif-imageio"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "objc2-core-foundation",
  "objc2-core-graphics",
@@ -966,7 +966,7 @@ dependencies = [
 
 [[package]]
 name = "heif-wic"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "windows",
 ]
@@ -1874,6 +1874,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantizr"
+version = "1.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b28ab4659f6754222a9e96c7a48f68dba03a620f23803c67ccd4ca7c35d55f5f"
+
+[[package]]
 name = "quick-error"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2250,7 +2256,7 @@ checksum = "b9be42f50aa861c555654aa3a37f52f4b1074bacf4e48fe0ef7fa584e80f1f0f"
 
 [[package]]
 name = "sqzer"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bytemuck",
  "fast_image_resize",
@@ -2274,7 +2280,7 @@ dependencies = [
 
 [[package]]
 name = "sqzer-codecs"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "avif-parse",
  "exr",
@@ -2294,6 +2300,7 @@ dependencies = [
  "mozjpeg-rs",
  "oxipng",
  "png",
+ "quantizr",
  "ravif",
  "resvg",
  "rgb",
@@ -2307,11 +2314,11 @@ dependencies = [
 
 [[package]]
 name = "sqzer-core"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "sqzer-metrics"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "fast-ssim2",
  "sqzer-core",
@@ -2319,7 +2326,7 @@ dependencies = [
 
 [[package]]
 name = "sqzer-native-tier"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "sqzer-codecs",
 ]
