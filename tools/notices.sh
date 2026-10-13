@@ -57,18 +57,18 @@ fi
   echo
   echo "Additional rights granted with a licence above, as the crate ships them."
 } >> "$out"
-declare -A dir_of
-while IFS=$'\t' read -r crate dir; do
-  dir_of[$crate]=$dir
-done < <(cargo metadata --format-version 1 --locked --manifest-path "$manifest" "${feature_args[@]}" |
+# A file, not an associative array: the macOS runners have bash 3.2.
+dirs=$(mktemp)
+trap 'rm -f "$dirs"' EXIT
+cargo metadata --format-version 1 --locked --manifest-path "$manifest" "${feature_args[@]}" |
   jq -r '.packages[] | select(.source != null)
-    | "\(.name) \(.version)\t\(.manifest_path | sub("[/\\\\]Cargo\\.toml$"; ""))"')
+    | "\(.name) \(.version)\t\(.manifest_path | sub("[/\\\\]Cargo\\.toml$"; ""))"' > "$dirs"
 cargo tree --locked --manifest-path "$manifest" --target "$target" "${feature_args[@]}" \
   -e normal,build --prefix none --format '{p}' |
   awk '$3 == "" || $3 == "(*)" || $3 == "(proc-macro)" { sub(/^v/, "", $2); print $1 " " $2 }' |
   sort -u |
   while read -r crate; do
-    dir=${dir_of[$crate]:-}
+    dir=$(awk -F '\t' -v crate="$crate" '$1 == crate { print $2; exit }' "$dirs")
     if [ -z "$dir" ]; then
       echo "no directory known for $crate" >&2
       exit 1
