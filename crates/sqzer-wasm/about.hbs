@@ -1,0 +1,19 @@
+Third-party notices for the npm package sqzer
+
+The package itself is MIT OR Apache-2.0, in LICENSE-MIT and LICENSE-APACHE
+next to this file. sqzer_bg.wasm is compiled from the crates below, each
+under the licence named, with the notice the crate ships. A crate under
+MPL-2.0 has its source at the repository given with it.
+
+{{#each licenses}}
+================================================================================
+{{name}}
+
+Used by:
+{{#each used_by}}
+  {{crate.name}} {{crate.version}}{{#if crate.repository}}  {{{crate.repository}}}{{/if}}
+{{/each}}
+
+{{{text}}}
+
+{{/each}}

@@ -146,4 +146,4 @@ await init({ module_or_path: await readFile(new URL(import.meta.resolve("sqzer/s
 
 ## Licence
 
-MIT or Apache-2.0, at your option.
+MIT or Apache-2.0, at your option. `THIRD-PARTY-LICENSES.txt` in the package carries the notice of every crate compiled into `sqzer_bg.wasm`, the C library inside `libdeflate-sys` included; a page that bundles the package ships it alongside, as most of those licences ask.

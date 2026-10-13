@@ -43,6 +43,10 @@ cargo build -p sqzer-wasm --target wasm32-unknown-unknown
 
 # the browser build's JavaScript API over the fixtures, in Node; needs wasm-pack
 (cd crates/sqzer-wasm && wasm-pack test --node)
+
+# the npm package as a tag publishes it, with the licence notices of every crate in
+# the module; needs wasm-pack, cargo-about (`cargo install cargo-about --features cli`), jq and Node
+crates/sqzer-wasm/pack.sh
 ```
 
 > **Note**: The golden tests compare each encoder's SSIMULACRA2 score on the fixtures against a committed value. If a change moves a score, say why in the PR; do not just update the number.

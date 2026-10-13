@@ -1,0 +1,43 @@
+# `cargo about` writes the licence notices of everything compiled into a
+# build: `crates/sqzer-wasm/pack.sh` runs it over the npm package into
+# `THIRD-PARTY-LICENSES.txt` with `crates/sqzer-wasm/about.hbs`. The
+# accepted list is the allow-list of `deny.toml`, in the order a crate
+# that offers a choice is taken: a crate that is `MIT OR Apache-2.0`
+# ships its MIT notice.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+]
+# The package is the wasm32 build; what only a desktop target compiles
+# is not in it. Build scripts and their dependencies (`cc`) do not ship.
+targets = ["wasm32-unknown-unknown"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+# `libdeflate-sys` vendors and compiles `libdeflate`, a C library under its
+# own MIT notice, which the crate's Apache-2.0 field does not carry. The
+# notice travels with the binary, so the crate is read as both. The
+# checksums pin the texts to this version of the crate: a bump that
+# changes either file fails `pack.sh` until the clarification is checked
+# again.
+[libdeflate-sys]
+clarify = { license = "Apache-2.0 AND MIT", files = [
+    { path = "LICENSE", license = "Apache-2.0", checksum = "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2" },
+    { path = "libdeflate/COPYING", license = "MIT", checksum = "4ad69099cb4374836fd27583d9991e2838cd86b6e4666ab26b2d32582c91e73a" },
+] }
+
+# `quantizr` names its licence by file alone, `license-file = "LICENSE"`,
+# with no SPDX field for `cargo about` to read.
+[quantizr]
+clarify = { license = "MIT", files = [
+    { path = "LICENSE", checksum = "407b2d167f73ef78da1fcbfb6c2f1051f195b1984b9bfeeac0a39b34c198a7fe" },
+] }
