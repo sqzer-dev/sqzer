@@ -84,6 +84,8 @@ pub enum Progress {
         quality: f32,
         /// Score it reached.
         score: f32,
+        /// Size of the encoded trial in bytes.
+        size: u64,
     },
 }
 
@@ -526,6 +528,7 @@ impl Sqzer {
                             max,
                             quality: trial.quality,
                             score: trial.score,
+                            size: trial.size,
                         });
                     },
                 )?;
@@ -1285,6 +1288,13 @@ mod tests {
             .map(|(i, t)| (u8::try_from(i + 1).unwrap(), t.quality))
             .collect();
         assert_eq!(seen, expected);
+        // The chosen trial's size is the output's.
+        let chosen = report
+            .trials
+            .iter()
+            .find(|t| t.quality.to_bits() == report.quality.to_bits())
+            .unwrap();
+        assert_eq!(chosen.size, u64::try_from(out.bytes.len()).unwrap());
         // No search, no progress.
         let mut count = 0;
         Sqzer::new()

@@ -25,6 +25,6 @@ pub mod search;
 pub mod seeds;
 pub mod ssimulacra2;
 
-pub use search::{Found, Search, SearchReport, Trial};
+pub use search::{Found, Scored, Search, SearchReport, Trial};
 pub use seeds::{Seed, SeedPoint, SeedTable};
 pub use ssimulacra2::{Reference, Ssimulacra2};

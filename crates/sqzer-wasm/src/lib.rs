@@ -425,6 +425,7 @@ fn encode(
                 max,
                 quality,
                 score,
+                size,
             },
         ) = (on_trial, progress)
         else {
@@ -435,6 +436,7 @@ fn encode(
             max,
             quality: tidy(quality),
             score: tidy(score),
+            size,
         };
         let called = serde_wasm_bindgen::to_value(&trial)
             .map_err(JsValue::from)

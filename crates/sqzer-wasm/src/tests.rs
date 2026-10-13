@@ -283,7 +283,17 @@ fn on_trial_is_called_once_per_trial() {
         assert_eq!(number(called, "max"), 6.0);
         assert_eq!(number(called, "quality"), number(&listed, "quality"));
         assert_eq!(number(called, "score"), number(&listed, "score"));
+        assert_eq!(number(called, "size"), number(&listed, "size"));
+        assert!(number(called, "size") > 0.0);
     }
+    // The chosen trial's size is the file's.
+    let quality = number(&out, "quality");
+    let chosen = trials
+        .iter()
+        .find(|t| number(t, "quality") == quality)
+        .unwrap();
+    let size = f64::from(u32::try_from(bytes(&out).len()).unwrap());
+    assert_eq!(number(&chosen, "size"), size);
     // No search, no call.
     let before = seen.borrow().len();
     let png = JSON::parse(r#"{"format":"png"}"#).unwrap();
