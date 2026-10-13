@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Writes the third-party notices of one build of sqzer: the notice of
+# every crate in its dependency tree, through `cargo about` with
+# `about.toml` and `about.hbs` at the repository root, then every PATENTS
+# file a crate ships, a grant that travels with the licence and that
+# `cargo about` has no slot for. `crates/sqzer-wasm/pack.sh` runs it for
+# the npm package; the release build of `release.yml` runs it for each
+# archive, through `.github/dist-build-setup.yml`; the native job of
+# `ci.yml` runs it for its target and checks the result.
+#
+#   tools/notices.sh <manifest> <target> <features> <output>
+#   tools/notices.sh crates/sqzer-cli/Cargo.toml x86_64-unknown-linux-gnu native THIRD-PARTY-LICENSES.txt
+#
+# `features` is the feature list to resolve the tree with, "" for the
+# defaults. Needs `cargo-about` and `jq`.
+set -euo pipefail
+manifest=$1
+target=$2
+features=$3
+out=$4
+root=$(cd "$(dirname "$0")/.." && pwd)
+feature_args=()
+if [ -n "$features" ]; then
+  feature_args=(--features "$features")
+fi
+
+# `--fail` refuses a crate whose licence cannot be read. A stale
+# clarification in `about.toml`, a crate whose notice moved with a bump,
+# is only a warning to `cargo about`, which then drops that notice and
+# goes on; here a warning fails the run, so nothing is left out without
+# anyone knowing. Its "warning: config found for a crate not present in
+# the graph" is lowercase and expected: `about.toml` covers the npm
+# package and the binaries, and no one tree holds every crate it names.
+log=$(cargo about generate --fail --locked -c "$root/about.toml" -m "$manifest" \
+  --target "$target" "${feature_args[@]}" -o "$out" "$root/about.hbs" 2>&1) || {
+  echo "$log" >&2
+  exit 1
+}
+if grep -q WARN <<< "$log"; then
+  echo "$log" >&2
+  echo "cargo about warned: a notice is missing, or a clarification in about.toml is stale" >&2
+  exit 1
+fi
+
+# Every PATENTS file shipped by a crate of the tree, by name, four levels
+# deep so the third-party code inside a vendored C tree is covered.
+# Workspace crates are ours and path crates are not shipped. One such
+# file, `rav1e`'s, is Windows-1252; the output stays UTF-8.
+{
+  echo "================================================================================"
+  echo "Patent grants"
+  echo
+  echo "Additional rights granted with a licence above, as the crate ships them."
+} >> "$out"
+cargo metadata --format-version 1 --manifest-path "$manifest" --filter-platform "$target" "${feature_args[@]}" |
+  jq -r '.workspace_members as $ws
+    | [.resolve.nodes[].id] as $ids
+    | .packages[]
+    | select(.source != null and (.id | IN($ids[])) and ((.id | IN($ws[])) | not))
+    | "\(.name) \(.version)\t\(.manifest_path | sub("[/\\\\]Cargo\\.toml$"; ""))"' |
+  sort -u |
+  while IFS=$'\t' read -r crate dir; do
+    # A Windows path from `cargo metadata`, for the Git Bash `find`.
+    if command -v cygpath > /dev/null; then
+      dir=$(cygpath -u "$dir")
+    fi
+    find "$dir" -maxdepth 4 -type f -iname 'PATENTS*' | sort | while read -r file; do
+      printf '\n--------------------------------------------------------------------------------\n%s  %s\n\n' "$crate" "${file#"$dir"/}"
+      if iconv -f utf-8 -t utf-8 "$file" > /dev/null 2>&1; then
+        cat "$file"
+      else
+        iconv -f windows-1252 -t utf-8 "$file"
+      fi
+      echo
+    done
+  done >> "$out"
+test -s "$out"

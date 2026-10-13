@@ -1,0 +1,32 @@
+# `cargo-about` on the runner, for `tools/notices.sh`: from the release
+# archive where there is one, built from source on the Intel Mac, which
+# has none. Used by the wasm and native jobs of `ci.yml` and by the
+# release build through `.github/dist-build-setup.yml`.
+name: cargo-about
+description: Installs cargo-about into ~/.cargo/bin
+inputs:
+  version:
+    description: The cargo-about release
+    default: "0.9.2"
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        case "$RUNNER_OS-$RUNNER_ARCH" in
+          Linux-X64) triple=x86_64-unknown-linux-musl ;;
+          Linux-ARM64) triple=aarch64-unknown-linux-musl ;;
+          macOS-ARM64) triple=aarch64-apple-darwin ;;
+          Windows-X64) triple=x86_64-pc-windows-msvc ;;
+          *) triple= ;;
+        esac
+        if [ -z "$triple" ]; then
+          cargo install cargo-about --version "$VERSION" --locked --features cli
+          exit 0
+        fi
+        curl -sSL "https://github.com/EmbarkStudios/cargo-about/releases/download/$VERSION/cargo-about-$VERSION-$triple.tar.gz" \
+          | tar -xz -C "$RUNNER_TEMP"
+        cp "$RUNNER_TEMP/cargo-about-$VERSION-$triple"/cargo-about* "$HOME/.cargo/bin/"
+        cargo about --version

@@ -47,6 +47,10 @@ cargo build -p sqzer-wasm --target wasm32-unknown-unknown
 # the npm package as a tag publishes it, with the licence notices of every crate in
 # the module; needs wasm-pack, cargo-about (`cargo install cargo-about --features cli`), jq and Node
 crates/sqzer-wasm/pack.sh
+
+# the licence notices a release archive carries, for one target; the native CI job runs
+# it for each. `about.toml` at the root clarifies what `cargo about` cannot read on its own
+tools/notices.sh crates/sqzer-cli/Cargo.toml x86_64-unknown-linux-gnu native THIRD-PARTY-LICENSES.txt
 ```
 
 > **Note**: The golden tests compare each encoder's SSIMULACRA2 score on the fixtures against a committed value. If a change moves a score, say why in the PR; do not just update the number.

@@ -1,0 +1,25 @@
+Third-party notices for sqzer
+
+sqzer itself is MIT OR Apache-2.0, in LICENSE-MIT and LICENSE-APACHE next
+to this file. The binary or module this file ships with is built from the
+crates below, each under the licence named, with the notice the crate
+ships, or the one its repository holds where the crate ships none. A C or
+C++ library compiled from the source its crate vendors is listed under
+that crate, with the notices of the third-party code inside it. A crate
+under MPL-2.0 has its source at the repository given with it. The patent
+grants that travel with some of these licences are at the end.
+
+{{#each licenses}}
+{{#unless (eq used_by.0.crate.repository "https://github.com/sqzer-dev/sqzer")}}
+================================================================================
+{{{name}}}
+
+Used by:
+{{#each used_by}}
+  {{{crate.name}}} {{{crate.version}}}{{#if crate.repository}}  {{{crate.repository}}}{{/if}}
+{{/each}}
+
+{{{text}}}
+
+{{/unless}}
+{{/each}}

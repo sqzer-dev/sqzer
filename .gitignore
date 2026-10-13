@@ -1,4 +1,6 @@
 /target
 /dist
+# Written by `tools/notices.sh` for the release archives.
+/THIRD-PARTY-LICENSES.txt
 *.profraw
 .DS_Store

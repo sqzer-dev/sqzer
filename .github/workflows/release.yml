@@ -148,6 +148,11 @@ jobs:
       - name: "nasm for libaom on Windows"
         uses: "ilammy/setup-nasm@v1"
         if: "runner.os == 'Windows'"
+      - name: "cargo-about"
+        uses: "./.github/actions/cargo-about"
+      - name: "Third-party notices for the archive"
+        run: "tools/notices.sh crates/sqzer-cli/Cargo.toml \"${{ join(matrix.targets, ' ') }}\" native THIRD-PARTY-LICENSES.txt"
+        shell: "bash"
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
       # Get the dist-manifest

@@ -20,7 +20,7 @@ for (const file of ["LICENSE-MIT", "LICENSE-APACHE", "README.md", "sqzer.d.ts"])
 // The notices of the crates in the module, one `Used by` block per
 // licence text, with the C library inside `libdeflate-sys` among them.
 const notices = await readFile(installed("THIRD-PARTY-LICENSES.txt"), "utf8");
-for (const needle of ["Used by:", "ravif", "mozjpeg-rs", "libdeflate-sys", "Eric Biggers", "avif-parse"]) {
+for (const needle of ["Used by:", "ravif", "mozjpeg-rs", "libdeflate-sys", "Eric Biggers", "avif-parse", "Patent grants", "Alliance for Open Media"]) {
   assert.ok(notices.includes(needle), `THIRD-PARTY-LICENSES.txt lacks ${needle}`);
 }
 

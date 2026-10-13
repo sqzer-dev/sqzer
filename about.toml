@@ -1,9 +1,11 @@
 # `cargo about` writes the licence notices of everything compiled into a
-# build: `crates/sqzer-wasm/pack.sh` runs it over the npm package into
-# `THIRD-PARTY-LICENSES.txt` with `crates/sqzer-wasm/about.hbs`. The
-# accepted list is the allow-list of `deny.toml`, in the order a crate
-# that offers a choice is taken: a crate that is `MIT OR Apache-2.0`
-# ships its MIT notice.
+# build, `THIRD-PARTY-LICENSES.txt`: `tools/notices.sh` runs it with
+# `about.hbs` next to this file, for the npm package and for each
+# release archive. The accepted list is the allow-list of `deny.toml`, in
+# the order a crate that offers a choice is taken: a crate that is
+# `MIT OR Apache-2.0` ships its MIT notice. The last two are not crate
+# licences, `deny.toml` never sees them: they are the terms of C code
+# inside a vendored tree, named by the clarifications below.
 accepted = [
     "MIT",
     "Apache-2.0",
@@ -16,14 +18,17 @@ accepted = [
     "Unicode-3.0",
     "Unicode-DFS-2016",
     "CC0-1.0",
+    "IJG",
+    "BSD-3-Clause-Clear",
 ]
-# The package is the wasm32 build; what only a desktop target compiles
-# is not in it. Build scripts and their dependencies (`cc`) do not ship,
-# and neither does `sqzer-wasm` itself, `publish = false`: the package's
-# own licence is next to the file. The four published workspace crates
-# are left out by the template, on their repository.
-targets = ["wasm32-unknown-unknown"]
-ignore-build-dependencies = true
+# The target comes from `tools/notices.sh`, so what only another target
+# compiles is not in the file. Dev dependencies do not ship. Build
+# dependencies are kept, for one of them: `jpegxl-src`, a build
+# dependency of `gamut-jxl-sys`, is where the libjxl source compiled into
+# the binary lives. `sqzer-wasm` itself, `publish = false`, is out, and
+# the four published workspace crates are left out by the template, on
+# their repository: sqzer's own licence is next to the file.
+ignore-build-dependencies = false
 ignore-dev-dependencies = true
 private = { ignore = true }
 # A notice lives at the root of a crate. Scanned deeper, the tree gave a
@@ -37,8 +42,9 @@ max-depth = 1
 # entry is checked again. `files` are read from the crate as published,
 # `git` from its repository at the commit it was published from, for a
 # crate that ships no notice and keeps one at the root of its repository.
-# Two crates stay on the bare licence text: `simd_helpers` has no notice
-# in its repository either, and `zune-inflate` names no repository.
+# Three crates stay on the bare licence text: `simd_helpers` has no
+# notice in its repository either, `zune-inflate` names no repository,
+# and the MIT bindings of `libwebp-sys` have none anywhere.
 
 # Vendors and compiles `libdeflate`, a C library under its own MIT
 # notice, which the crate's Apache-2.0 field does not carry.
@@ -113,4 +119,69 @@ clarify = { license = "BSD-3-Clause", git = [
 [fast-ssim2]
 clarify = { license = "BSD-2-Clause", git = [
     { path = "LICENSE", checksum = "acc9e236b0011c638714a16f5634fa5bcd3be111182e237c3049db700c3521e2" },
+] }
+
+# The C and C++ libraries of the native tier, compiled from the source
+# their crate vendors and listed under it: the notice of the library and
+# of the third-party code inside it that the build compiles. The patent
+# grants next to these notices are appended by `tools/notices.sh`.
+[libwebp-sys]
+clarify = { license = "MIT AND BSD-3-Clause", files = [
+    { path = "vendor/COPYING", license = "BSD-3-Clause", checksum = "5aec868f669e384a22372a4e8a1a6cd7d44c64cd451f960ca69cc170d1e13acf" },
+] }
+[libavif-sys]
+clarify = { license = "BSD-2-Clause", files = [
+    { path = "libavif/LICENSE", checksum = "10952217a6d404de8bf8a997fbea9b88f682df1fe98cb9b9f467ade641525639" },
+] }
+[libaom-sys]
+clarify = { license = "BSD-2-Clause AND BSD-3-Clause AND BSD-3-Clause-Clear AND MIT AND ISC", files = [
+    { path = "vendor/LICENSE", license = "BSD-2-Clause", checksum = "4764a286d8b2faeaf42f4418e7d7a28d58fc8fd4d00a3d0a7f44b0a4099de7f2" },
+    { path = "vendor/third_party/libyuv/LICENSE", license = "BSD-3-Clause", checksum = "2b2cc1180c7e6988328ad2033b04b80117419db9c4c584918bbb3cfec7e9364f" },
+    { path = "vendor/third_party/fastfeat/LICENSE", license = "BSD-3-Clause", checksum = "043dcfd059386f9facd376351b2bd79325778744aa442177390cdfcca54babed" },
+    { path = "vendor/third_party/SVT-AV1/LICENSE.md", license = "BSD-3-Clause-Clear", checksum = "0acc2fcb27472bdc9aaf8b71f37055bbdac4f54671b7d922f241bd7fcd0dd3e6" },
+    { path = "vendor/third_party/vector/LICENSE", license = "MIT", checksum = "ff6c857ce2708e87701323078aef115c1872a1f80a9649f86dc899b48083bc60" },
+    { path = "vendor/third_party/x86inc/LICENSE", license = "ISC", checksum = "719d8fa235f2068e0ae6d6a7dceb0a7720d7840f0f0ebed29957989e6ded3cd8" },
+] }
+# libjxl, vendored twice: `jpegxl-src` builds it for `gamut-jxl-sys`,
+# `jpegli-sys` builds its jpegli with the libjpeg-turbo inside the tree.
+[jpegxl-src]
+clarify = { license = "BSD-3-Clause AND Apache-2.0 AND MIT", files = [
+    { path = "LICENSE", license = "BSD-3-Clause", checksum = "240df475ce8999f8200aa705a1a119ac5caaaaba7c7f87b2bab18af8c663b7ff" },
+    { path = "libjxl/LICENSE", license = "BSD-3-Clause", checksum = "8405932022a556380c2d8c272eff154a923feb197233f348ce5f7334fb0a5ede" },
+    { path = "libjxl/third_party/skcms/LICENSE", license = "BSD-3-Clause", checksum = "e59bb5c5c6ba426a9ac4ba9fe667ad14c5166b12aa25be8af1d122b14fbe2e36" },
+    { path = "libjxl/third_party/highway/LICENSE", license = "Apache-2.0", checksum = "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1" },
+    { path = "libjxl/third_party/brotli/LICENSE", license = "MIT", checksum = "3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94" },
+] }
+[jpegli-sys]
+clarify = { license = "BSD-3-Clause AND Apache-2.0 AND MIT AND IJG", files = [
+    { path = "LICENSE", license = "BSD-3-Clause", checksum = "2fbf612cf8db413c570f11b875cf96d89266c275b4712902e76d7375a1902624" },
+    { path = "libjxl/LICENSE", license = "BSD-3-Clause", checksum = "8405932022a556380c2d8c272eff154a923feb197233f348ce5f7334fb0a5ede" },
+    { path = "libjxl/third_party/skcms/LICENSE", license = "BSD-3-Clause", checksum = "e59bb5c5c6ba426a9ac4ba9fe667ad14c5166b12aa25be8af1d122b14fbe2e36" },
+    { path = "libjxl/third_party/highway/LICENSE", license = "Apache-2.0", checksum = "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1" },
+    { path = "libjxl/third_party/brotli/LICENSE", license = "MIT", checksum = "3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94" },
+    { path = "libjxl/third_party/libjpeg-turbo/LICENSE.md", license = "IJG", checksum = "60c756742db3ad1913304e8b13f0e86e22e51adb50cc0b3333c163f7e45ceec1" },
+    { path = "libjxl/third_party/libjpeg-turbo/README.ijg", license = "IJG", checksum = "4b7b9f8c03bb8d60270dfd12684e70ab21e4abfd27e73905cd1a7c4cae6f5cdb" },
+] }
+
+# Crates of the native tier published without their notice, read from
+# the repository, and one that keeps it in a form the scan does not take.
+[gamut-codec-abi]
+clarify = { license = "MIT", git = [
+    { path = "LICENSE-MIT", checksum = "91704430e98ce519c0e316079b12529b37c0b5dccb50e29b44f2cfe0e0887b05" },
+] }
+[gamut-core]
+clarify = { license = "MIT", git = [
+    { path = "LICENSE-MIT", checksum = "91704430e98ce519c0e316079b12529b37c0b5dccb50e29b44f2cfe0e0887b05" },
+] }
+[gamut-jxl]
+clarify = { license = "MIT", git = [
+    { path = "LICENSE-MIT", checksum = "91704430e98ce519c0e316079b12529b37c0b5dccb50e29b44f2cfe0e0887b05" },
+] }
+[gamut-jxl-sys]
+clarify = { license = "MIT", git = [
+    { path = "LICENSE-MIT", checksum = "91704430e98ce519c0e316079b12529b37c0b5dccb50e29b44f2cfe0e0887b05" },
+] }
+[siphasher]
+clarify = { license = "MIT", files = [
+    { path = "COPYING", checksum = "c962ee4d1d05ddc138b202b2540219ebc57893fcf97b364852094a9a94ce1365" },
 ] }
