@@ -16,6 +16,7 @@
 * **sqzer:** `Sqzer::lossy_options` names the options set on the builder under which an encoder gives samples up, for a caller that wants to refuse a lossless target before encoding
 * **cli:** each entry of `trials` in a `--json` record carries `size`, the bytes that trial encoded to. `-v` prints it after the score, and the progress line shows it per trial
 * **wasm:** each `Trial` in `trials`, and what `onTrial` receives, carries `size`, the bytes that trial encoded to, so a page can plot quality against score and size as the search runs ([#55](https://github.com/sqzer-dev/sqzer/issues/55))
+* **wasm:** `options()` lists the keys `optimize` and `encode` take, each with its default as the package spells it and its help, as `codecs()` lists the backend options: `[{ key: "target", default: "70", help: "..." }, ...]`. A key whose default depends on the image or the format says `auto`; one that does nothing when left out has none. The defaults are read from the library's builder, so a page can show every control at the package's default and drop its own copy ([#57](https://github.com/sqzer-dev/sqzer/issues/57))
 
 ## 0.3.0
 

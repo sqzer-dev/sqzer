@@ -502,6 +502,68 @@ fn options_are_checked_before_any_work() {
 }
 
 #[wasm_bindgen_test]
+fn options_lists_every_key_with_its_default() {
+    // `options` here is the test helper; the export is the crate's.
+    let entries: Vec<JsValue> = crate::options().unwrap().iter().map(Ts::js_value).collect();
+    let keys: Vec<String> = entries.iter().map(|e| text(e, "key")).collect();
+    assert_eq!(keys.len(), 21, "{keys:?}");
+    // The keys are the ones `optimize` takes: a misspelt key is refused
+    // against the same list, and the refusal names every one of them.
+    let error = thrown(optimize(&[], options(r#"{"nope":1}"#)), "InvalidParams");
+    let message = text(&error, "message");
+    for key in &keys {
+        assert!(message.contains(key.as_str()), "{key}: {message}");
+    }
+    let entry = |key: &str| {
+        entries
+            .iter()
+            .find(|e| text(e, "key") == key)
+            .unwrap_or_else(|| panic!("no entry for {key}"))
+            .clone()
+    };
+    for (key, default) in [
+        ("format", "auto"),
+        ("target", "70"),
+        ("lossless", "false"),
+        ("effort", "6"),
+        ("subsampling", "auto"),
+        ("keepIcc", "false"),
+        ("keepMetadata", "false"),
+        ("fast", "false"),
+        ("fit", "inside"),
+        ("position", "center"),
+        ("background", "auto"),
+        ("enlarge", "false"),
+        ("filter", "lanczos3"),
+        ("maxPixels", "24000000"),
+    ] {
+        assert_eq!(text(&entry(key), "default"), default, "{key}");
+    }
+    // Keys that do nothing when left out have no default, not null.
+    for key in [
+        "quality",
+        "preset",
+        "width",
+        "height",
+        "scale",
+        "codecOpts",
+        "onTrial",
+    ] {
+        assert!(
+            !Reflect::has(&entry(key), &"default".into()).unwrap(),
+            "{key}"
+        );
+    }
+    for e in &entries {
+        assert!(!text(e, "help").is_empty(), "{}", text(e, "key"));
+    }
+    // The listed defaults are what an encode without options does.
+    let out = optimize(RGB, None).unwrap().js_value();
+    assert_eq!(number(&out, "target"), 70.0);
+    assert_eq!(text(&out, "format"), "avif");
+}
+
+#[wasm_bindgen_test]
 fn codecs_lists_this_build() {
     let listing = codecs().unwrap();
     assert_eq!(listing.len(), Format::ALL.len());

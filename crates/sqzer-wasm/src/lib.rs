@@ -2,7 +2,7 @@
 //! The API is the library's builder spelled the way JavaScript spells it.
 //!
 //! ```js
-//! import init, { optimize, decode, decodeAny, fromPixels, codecs } from "sqzer";
+//! import init, { optimize, decode, decodeAny, fromPixels, codecs, options } from "sqzer";
 //! await init();
 //!
 //! // everything in one call: probe, decode, prepare, resize, encode
@@ -41,7 +41,7 @@ use sqzer::{Progress, Ready, Sqzer};
 use wasm_bindgen::prelude::*;
 
 pub use error::SqzerError;
-use options::{DecodeAnyOptions, DecodeOptions, MAX_PIXELS, Options};
+use options::{DecodeAnyOptions, DecodeOptions, MAX_PIXELS, OptionInfo, Options};
 use output::{Codec, Output, Source, TrialProgress, tidy};
 use tsify::{Ts, Tsify};
 
@@ -269,6 +269,22 @@ pub fn codecs() -> Result<Vec<Ts<Codec>>, SqzerError> {
     output::codecs(&registry())
         .iter()
         .map(|codec| Ok(codec.into_ts()?))
+        .collect()
+}
+
+/// The keys `optimize` and `SqzerImage.encode` take, each with its default
+/// as the package spells it and what it does, as `codecs()` lists the
+/// backend options. A key whose default depends on the image or the format
+/// says `auto`; one that has no default has none. The defaults are the
+/// library's own, read from the builder an encode without options uses.
+///
+/// # Errors
+/// None in practice: the listing always serialises.
+#[wasm_bindgen]
+pub fn options() -> Result<Vec<Ts<OptionInfo>>, SqzerError> {
+    Options::listing()
+        .iter()
+        .map(|option| Ok(option.into_ts()?))
         .collect()
 }
 
