@@ -37,7 +37,11 @@ use crate::opts::{parse_bool, parse_percent, unknown};
 /// - `colors`: reduce the image to a palette of at most this many colours,
 ///   `2..=256` (default `off`). An image that already has that few is
 ///   written exactly, at its own depth; any other is quantised from 8-bit
-///   RGBA, so 16-bit samples are narrowed.
+///   RGBA, so 16-bit samples are narrowed. `auto` leaves the number to the
+///   perceptual target: [`Encoder::palette_search`] names this option, and
+///   the search writes a number to it on every trial (ADR-0013). An encode
+///   that reaches this encoder with `auto` still set has no target to
+///   search for and is refused.
 /// - `dither`: how much of the quantisation error is diffused to
 ///   neighbouring pixels, `0..=100` (default `100`). Needs `colors`.
 ///
@@ -74,7 +78,7 @@ static CAPS: EncoderCaps = EncoderCaps {
         CodecOption {
             key: "colors",
             default: "off",
-            help: "reduce to a palette of at most `2..=256` colours; lossy",
+            help: "reduce to a palette of at most `2..=256` colours, or `auto` for the fewest that reach the target; lossy",
         },
         CodecOption {
             key: "dither",
@@ -94,7 +98,7 @@ impl Encoder for OxipngEncoder {
         // resolved, it is not used.
         params.resolved()?;
         let mut opts = map_effort(params.effort);
-        let mut colors = None;
+        let mut colors = Colors::Off;
         let mut dither = None;
         for (key, value) in params.codec_opts("png") {
             match key {
@@ -105,6 +109,17 @@ impl Encoder for OxipngEncoder {
                 _ => return Err(unknown("png", key)),
             }
         }
+        let colors = match colors {
+            Colors::Off => None,
+            Colors::At(n) => Some(n),
+            Colors::Auto => {
+                return Err(Error::InvalidParams(
+                    "png:colors=auto is searched against a perceptual target, and this encode \
+                     has none; give a palette size `2..=256` to encode at, or a target to search"
+                        .into(),
+                ));
+            }
+        };
         if dither.is_some() && colors.is_none() {
             return Err(Error::InvalidParams(
                 "png:dither needs png:colors: there is nothing to dither without a palette".into(),
@@ -136,21 +151,40 @@ impl Encoder for OxipngEncoder {
             _ => true,
         })
     }
+
+    fn palette_search(&self, params: &EncodeParams) -> Option<&'static str> {
+        params
+            .codec_opts("png")
+            .any(|(key, value)| key == "colors" && value == "auto")
+            .then_some("png:colors")
+    }
 }
 
-/// `off`, or a palette size `2..=256`.
-fn parse_colors(value: &str) -> Result<Option<usize>> {
-    if value == "off" {
-        return Ok(None);
+/// What `png:colors` says.
+enum Colors {
+    /// `off`: no palette.
+    Off,
+    /// `auto`: a palette of a size the target search picks (ADR-0013).
+    Auto,
+    /// A palette of at most this many colours, `2..=256`.
+    At(usize),
+}
+
+/// `off`, `auto`, or a palette size `2..=256`.
+fn parse_colors(value: &str) -> Result<Colors> {
+    match value {
+        "off" => return Ok(Colors::Off),
+        "auto" => return Ok(Colors::Auto),
+        _ => {}
     }
     value
         .parse::<usize>()
         .ok()
         .filter(|n| (2..=256).contains(n))
-        .map(Some)
+        .map(Colors::At)
         .ok_or_else(|| {
             Error::InvalidParams(format!(
-                "png:colors expects `off` or an integer 2..=256, got `{value}`"
+                "png:colors expects `off`, `auto` or an integer 2..=256, got `{value}`"
             ))
         })
 }

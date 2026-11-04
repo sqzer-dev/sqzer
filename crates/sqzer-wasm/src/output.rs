@@ -7,6 +7,7 @@ use sqzer::core::codec::Format;
 use sqzer::core::content::Content;
 use sqzer::core::params::{Resolved, Target};
 use sqzer::core::{Decoded, Registry};
+use sqzer::metrics::Axis;
 use tsify::Tsify;
 
 use crate::format_name;
@@ -81,11 +82,17 @@ pub struct Output {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[tsify(optional)]
     pub quality: Option<f64>,
+    /// Palette size the search settled on, for `png:colors` at `auto`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[tsify(optional)]
+    pub colors: Option<u16>,
     /// The output holds exactly the samples the encoder was given. `false`
     /// at a quality, and under an option that gives samples up, such as
     /// `png:colors`.
     pub lossless: bool,
-    /// SSIMULACRA2 target that was asked for.
+    /// SSIMULACRA2 target that was searched for, or that lossless output
+    /// meets by its one mode. Left out for a fixed `png:colors`, which
+    /// searched for none.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[tsify(optional)]
     pub target: Option<f64>,
@@ -111,11 +118,17 @@ pub struct Output {
     pub trials: Option<Vec<Trial>>,
 }
 
-/// One quality the search tried.
+/// One value the search tried: a quality, or a palette size.
 #[derive(Debug, Clone, Copy, Serialize, Tsify)]
 pub struct Trial {
-    /// Abstract quality.
-    pub quality: f64,
+    /// Abstract quality, on a quality search.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[tsify(optional)]
+    pub quality: Option<f64>,
+    /// Palette size, on a search of `png:colors` at `auto`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[tsify(optional)]
+    pub colors: Option<u16>,
     /// SSIMULACRA2 score.
     pub score: f64,
     /// Size of the encoded trial in bytes.
@@ -129,8 +142,14 @@ pub struct TrialProgress {
     pub n: u8,
     /// The budget: the most encodes the search makes.
     pub max: u8,
-    /// Abstract quality tried.
-    pub quality: f64,
+    /// Abstract quality tried, on a quality search.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[tsify(optional)]
+    pub quality: Option<f64>,
+    /// Palette size tried, on a search of `png:colors` at `auto`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[tsify(optional)]
+    pub colors: Option<u16>,
     /// SSIMULACRA2 score it reached.
     pub score: f64,
     /// Size of the encoded trial in bytes.
@@ -147,6 +166,7 @@ impl Output {
         };
         let lossless = out.lossless;
         let report = out.report.as_ref();
+        let palette = report.is_some_and(|r| matches!(r.axis, Axis::Colors(_)));
         Self {
             input_format: source.format.map(format_name),
             animated: source.animated,
@@ -163,10 +183,11 @@ impl Output {
             backend: out.backend,
             tier: out.tier.to_string(),
             quality,
+            colors: report.filter(|_| palette).map(|r| palette_size(r.value)),
             lossless,
             target: match target {
-                Target::Ssimulacra2(t) => Some(tidy(*t)),
-                Target::Quality(_) | Target::Lossless => None,
+                Target::Ssimulacra2(t) if report.is_some() || lossless => Some(tidy(*t)),
+                _ => None,
             },
             score: report.map(|r| tidy(r.score)),
             reached: report.map(|r| r.reached),
@@ -175,16 +196,37 @@ impl Output {
             trials: report.map(|r| {
                 r.trials
                     .iter()
-                    .map(|t| Trial {
-                        quality: tidy(t.quality),
-                        score: tidy(t.score),
-                        size: t.size,
+                    .map(|t| {
+                        let (quality, colors) = along(palette, t.value);
+                        Trial {
+                            quality,
+                            colors,
+                            score: tidy(t.score),
+                            size: t.size,
+                        }
                     })
                     .collect()
             }),
             bytes: out.bytes,
         }
     }
+}
+
+/// A value off the search as the key it goes under: `quality` on a
+/// quality search, `colors` on a palette search.
+#[must_use]
+pub fn along(palette: bool, value: f32) -> (Option<f64>, Option<u16>) {
+    if palette {
+        (None, Some(palette_size(value)))
+    } else {
+        (Some(tidy(value)), None)
+    }
+}
+
+/// A palette size off the search, which tries whole numbers in `2..=256`.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn palette_size(value: f32) -> u16 {
+    value.round().clamp(0.0, f32::from(u16::MAX)) as u16
 }
 
 /// An `f32` as the JavaScript number that prints the same digits: 51.8,

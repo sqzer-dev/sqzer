@@ -120,7 +120,7 @@ pub fn build(args: Args, base: Sqzer) -> Result<Config, Failure> {
         ));
     }
     let sqzer = codec_opts(&args, sqzer)?;
-    check_lossless(&args, &sqzer)?;
+    check_lossless(&args, &sqzer).and_then(|()| check_palette(&args, &sqzer))?;
 
     let template = match &args.template {
         Some(t) => Some(Template::new(t).map_err(Failure::usage)?),
@@ -367,6 +367,22 @@ fn check_lossless(args: &Args, sqzer: &Sqzer) -> Result<(), Failure> {
         let lossy_options = sqzer.lossy_options(encoder);
         if !lossy_options.is_empty() {
             return Err(Failure::usage(lossless_conflict(&lossy_options)));
+        }
+    }
+    Ok(())
+}
+
+/// `-x png:colors=auto` with nothing to search it against, `--fast` or
+/// `-q`, is an argument error for every format `-f` names, as the facade
+/// refuses it (ADR-0013). A format picked per image is refused at the
+/// image.
+fn check_palette(args: &Args, sqzer: &Sqzer) -> Result<(), Failure> {
+    for &f in &args.format {
+        let Ok(encoder) = sqzer.registry().encoder(f) else {
+            continue;
+        };
+        if let Err(e) = sqzer.palette_search(encoder) {
+            return Err(Failure::usage(e.to_string()));
         }
     }
     Ok(())

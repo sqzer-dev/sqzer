@@ -369,6 +369,17 @@ pub trait Encoder: Send + Sync {
     fn exact(&self, _params: &EncodeParams) -> bool {
         true
     }
+    /// The codec option a perceptual target searches under `params` in
+    /// place of a quality: a palette size, `2..=256`, which each trial of
+    /// the search writes to this key at a lossless target. `png:colors`
+    /// under `png:colors=auto` (ADR-0013).
+    ///
+    /// The default is `None`: no such option is set, and the target
+    /// searches the quality of a lossy encoder or meets the target in the
+    /// one mode of a lossless-only one.
+    fn palette_search(&self, _params: &EncodeParams) -> Option<&'static str> {
+        None
+    }
 }
 
 #[cfg(test)]

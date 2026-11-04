@@ -693,7 +693,7 @@ impl Tally {
         self.encodes += usize::from(report.iterations);
         self.first_hit += usize::from(report.iterations == 1 && report.reached);
         self.reached += usize::from(report.reached);
-        self.quality += f64::from(report.quality);
+        self.quality += f64::from(report.value);
         self.bytes += bytes as f64;
     }
 

@@ -688,8 +688,12 @@ fn a_png_palette_is_reported_as_lossy() {
 
     let out = optimized(RGBA, r#"{"format":"png","codecOpts":{"png:colors":"16"}}"#);
     assert_eq!(get(&out, "lossless"), false);
-    assert!(!Reflect::has(&out, &"quality".into()).unwrap());
-    assert!(!Reflect::has(&out, &"score".into()).unwrap());
+    // Nothing was searched, so there is no quality, no score and no
+    // target, which only a search or lossless output answers to.
+    for key in ["quality", "score", "target", "colors", "trials"] {
+        assert!(!Reflect::has(&out, &key.into()).unwrap(), "{key}");
+    }
+    assert_eq!(number(&plain, "target"), 70.0);
     let back = sqzer(None).decode(&bytes(&out)).unwrap().image;
     let colors: std::collections::HashSet<_> = back
         .samples()
@@ -712,6 +716,47 @@ fn a_png_palette_is_reported_as_lossy() {
         "{}",
         text(&error, "message")
     );
+}
+
+#[wasm_bindgen_test]
+fn png_colors_auto_searches_the_palette_size() {
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = Rc::clone(&seen);
+    let on_trial = Closure::<dyn FnMut(JsValue)>::new(move |trial| sink.borrow_mut().push(trial));
+    let object =
+        JSON::parse(r#"{"format":"png","target":60,"codecOpts":{"png:colors":"auto"}}"#).unwrap();
+    Reflect::set(&object, &"onTrial".into(), on_trial.as_ref()).unwrap();
+    let out = optimize(RGBA, Some(Ts::<Options>::new_unchecked(object)))
+        .unwrap()
+        .js_value();
+    assert_eq!(get(&out, "lossless"), false);
+    assert_eq!(number(&out, "target"), 60.0);
+    assert!(!Reflect::has(&out, &"quality".into()).unwrap());
+    let colors = number(&out, "colors");
+    assert!((2.0..=256.0).contains(&colors), "{colors}");
+    assert!(get(&out, "reached").is_truthy() || get(&out, "capped").is_truthy());
+    let trials = Array::from(&get(&out, "trials"));
+    assert_eq!(seen.borrow().len(), trials.length() as usize);
+    for (called, listed) in seen.borrow().iter().zip(trials.iter()) {
+        assert!(!Reflect::has(&listed, &"quality".into()).unwrap());
+        assert!(!Reflect::has(called, &"quality".into()).unwrap());
+        assert_eq!(number(called, "colors"), number(&listed, "colors"));
+        assert_eq!(number(called, "size"), number(&listed, "size"));
+    }
+    assert!(trials.iter().any(|t| number(&t, "colors") == colors));
+
+    // Without a target to search for, `auto` is refused.
+    for json in [
+        r#"{"format":"png","lossless":true,"codecOpts":{"png:colors":"auto"}}"#,
+        r#"{"format":"png","fast":true,"codecOpts":{"png:colors":"auto"}}"#,
+    ] {
+        let error = thrown(optimize(RGBA, options(json)), "InvalidParams");
+        assert!(
+            text(&error, "message").contains("png:colors=auto"),
+            "{json}: {}",
+            text(&error, "message")
+        );
+    }
 }
 
 #[wasm_bindgen_test]

@@ -317,6 +317,10 @@ fn plan(
     if sqzer.params().target == Target::Lossless && !lossy_options.is_empty() {
         return rec.fail(&lossless_conflict(&lossy_options));
     }
+    let palette = match sqzer.palette_search(encoder) {
+        Ok(p) => p,
+        Err(e) => return rec.fail(&e),
+    };
     if ready.translucent_padding() && !caps.alpha {
         return rec.fail(&format!(
             "{} has no alpha channel for a translucent `--background`",
@@ -338,6 +342,12 @@ fn plan(
         }
     }
     let quality = match sqzer.params().target {
+        // A palette searched for the target: PNG's one mode, given up to
+        // a palette (ADR-0013).
+        Target::Ssimulacra2(t) if palette.is_some() => {
+            rec.target = Some(t);
+            Some(QualityTag::Lossy)
+        }
         // A lossless-only encoder picked per image writes its one mode,
         // as the facade does; `-f` with `-q` was refused with the flags.
         Target::Ssimulacra2(_) | Target::Quality(_) if !caps.lossy => {
@@ -392,7 +402,11 @@ fn run(
         Err(e) => return (rec.fail(&e), Vec::new()),
     };
     let mut rec = rec.with_output(&out);
-    if let Target::Ssimulacra2(t) = sqzer.params().target {
+    // Searched for, or met by lossless output. A fixed palette did
+    // neither, and says no target.
+    if let Target::Ssimulacra2(t) = sqzer.params().target
+        && (out.report.is_some() || out.lossless)
+    {
         rec.target = Some(t);
     }
     let details = vec![format!(

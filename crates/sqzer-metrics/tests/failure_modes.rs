@@ -177,7 +177,7 @@ fn assert_consistent(img: &Image, found: &Found<Vec<u8>>) {
     let r = &found.report;
     assert!(r.iterations >= 1 && r.iterations <= 6, "{r:?}");
     assert_eq!(r.trials.len(), usize::from(r.iterations));
-    assert!(r.trials.iter().all(|t| (1.0..=100.0).contains(&t.quality)));
+    assert!(r.trials.iter().all(|t| (1.0..=100.0).contains(&t.value)));
     let decoded = registry()
         .decode(&found.output, &DecodeOpts::default())
         .unwrap()
@@ -191,7 +191,7 @@ fn assert_consistent(img: &Image, found: &Found<Vec<u8>>) {
     assert_eq!(r.reached, r.score >= 69.0, "{r:?}");
     if r.capped {
         assert!(!r.reached);
-        assert!(r.trials.iter().any(|t| t.quality == 100.0));
+        assert!(r.trials.iter().any(|t| t.value == 100.0));
     }
 }
 
@@ -216,7 +216,7 @@ fn flat_image_walks_down_to_the_floor() {
     let r = &found.report;
     assert_consistent(&img, &found);
     assert!(r.reached);
-    assert!(r.quality <= 3.0, "{r:?}");
+    assert!(r.value <= 3.0, "{r:?}");
     assert!(r.trials.iter().all(|t| t.score > 99.99), "{r:?}");
 }
 
@@ -250,7 +250,7 @@ fn pure_noise_reaches_and_lands_elsewhere_than_a_gradient() {
     assert!(b.report.reached, "{:?}", b.report);
     assert!(!b.report.capped);
     assert!(
-        (b.report.quality - a.report.quality).abs() >= 5.0,
+        (b.report.value - a.report.value).abs() >= 5.0,
         "noise {:?} vs gradient {:?}",
         b.report,
         a.report
@@ -265,7 +265,7 @@ fn unreachable_at_the_ceiling_is_reported_not_errored() {
     assert_consistent(&img, &found);
     assert!(!r.reached, "{r:?}");
     assert!(r.capped, "{r:?}");
-    assert_eq!(r.quality, 100.0);
+    assert_eq!(r.value, 100.0);
     assert!(!found.output.is_empty(), "{r:?}");
 }
 
@@ -274,7 +274,7 @@ fn a_target_above_the_scale_is_capped_too() {
     let img = gradient(48, 32);
     let found = search(&img, 1, &Search::new(150.0));
     assert!(found.report.capped, "{:?}", found.report);
-    assert_eq!(found.report.quality, 100.0);
+    assert_eq!(found.report.value, 100.0);
 }
 
 #[test]
@@ -290,7 +290,7 @@ fn one_shot_metric_and_reference_agree_on_the_pick() {
             |candidate| Ssimulacra2.score(&img, candidate),
         )
         .unwrap();
-    assert_eq!(with_reference.report.quality, one_shot.report.quality);
+    assert_eq!(with_reference.report.value, one_shot.report.value);
     assert_eq!(with_reference.output, one_shot.output);
 }
 
