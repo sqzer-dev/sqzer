@@ -37,12 +37,13 @@ use sqzer::core::image::{ColorType, Image};
 use sqzer::core::params::Resize;
 use sqzer::core::resize::Size;
 use sqzer::core::{Decoded, Error, Registry};
+use sqzer::metrics::Axis;
 use sqzer::{Progress, Ready, Sqzer};
 use wasm_bindgen::prelude::*;
 
 pub use error::SqzerError;
 use options::{DecodeAnyOptions, DecodeOptions, MAX_PIXELS, OptionInfo, Options};
-use output::{Codec, Output, Source, TrialProgress, tidy};
+use output::{Codec, Output, Source, TrialProgress, along, tidy};
 use tsify::{Ts, Tsify};
 
 #[wasm_bindgen(module = "/js/canvas.js")]
@@ -439,7 +440,8 @@ fn encode(
             Progress::Trial {
                 n,
                 max,
-                quality,
+                axis,
+                value,
                 score,
                 size,
             },
@@ -447,10 +449,12 @@ fn encode(
         else {
             return;
         };
+        let (quality, colors) = along(matches!(axis, Axis::Colors(_)), value);
         let trial = TrialProgress {
             n,
             max,
-            quality: tidy(quality),
+            quality,
+            colors,
             score: tidy(score),
             size,
         };

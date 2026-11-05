@@ -13,7 +13,7 @@
 //!     .unwrap();
 //! std::fs::write("photo.jpg", &out.bytes).unwrap();
 //! let report = out.report.expect("a perceptual target always reports");
-//! println!("quality {} scored {}", report.quality, report.score);
+//! println!("quality {} scored {}", report.value, report.score);
 //! ```
 //!
 //! The pipeline is ADR-0001 D3: [`Sqzer::decode`], [`Sqzer::transform`],
@@ -54,7 +54,7 @@ use sqzer_core::image::SampleFormat;
 use sqzer_core::params::{DecodeOpts, EncodeParams, Preset, Resize, Resolved, Subsampling, Target};
 use sqzer_core::resize::{Fit, Size};
 use sqzer_core::{Decoded, Error, Registry, Result};
-use sqzer_metrics::{Reference, Search, SearchReport, seeds};
+use sqzer_metrics::{Axis, Found, Reference, Search, SearchReport, seeds};
 
 /// One-shot builder. Cheap to create; holds no image data.
 #[derive(Clone)]
@@ -80,8 +80,10 @@ pub enum Progress {
         n: u8,
         /// The budget.
         max: u8,
-        /// Quality tried.
-        quality: f32,
+        /// What the search moves along: the quality, or a palette size.
+        axis: Axis,
+        /// The value tried on that axis.
+        value: f32,
         /// Score it reached.
         score: f32,
         /// Size of the encoded trial in bytes.
@@ -117,9 +119,10 @@ pub struct Output {
     /// target. A promise read from the parameters, not a measurement: it
     /// is `false` under such an option even when the image lost nothing.
     pub lossless: bool,
-    /// How the quality was found. `Some` when a perceptual target was
-    /// searched, `None` for an explicit quality, lossless, or an encoder
-    /// that only writes lossless and so met the target trivially.
+    /// How the quality, or the palette size, was found. `Some` when a
+    /// perceptual target was searched, `None` for an explicit quality,
+    /// lossless, an encoder that only writes lossless and so met the
+    /// target trivially, or a fixed `png:colors`, which searched nothing.
     pub report: Option<SearchReport>,
 }
 
@@ -349,6 +352,14 @@ impl Sqzer {
     /// `png:colors` gives samples up there, and is refused next to an
     /// explicit [`Target::Lossless`] (ADR-0012 D4).
     ///
+    /// An encoder that names an option in
+    /// [`Encoder::palette_search`], PNG under `png:colors=auto`, has the
+    /// perceptual target search that option's palette size in place of a
+    /// quality, `2..=256`, with no seed (ADR-0013). [`Output::report`]
+    /// carries [`Axis::Colors`]. Such an option is refused next to an
+    /// explicit quality, a lossless target or [`Sqzer::fast`], none of
+    /// which leaves a target to search for: see [`Sqzer::palette_search`].
+    ///
     /// > **Note**: scoring needs the output format decodable in this
     /// > build. A registry with an encoder and no decoder for a format
     /// > returns [`sqzer_core::Error::Unsupported`] for a perceptual
@@ -491,7 +502,13 @@ impl Sqzer {
             )));
         }
 
+        let palette = self.palette_search(encoder)?;
         let (bytes, target, report) = match self.params.target {
+            Target::Ssimulacra2(t) if palette.is_some() => {
+                let key = palette.unwrap_or_default();
+                let found = self.search(encoder, image, &Search::colors(key, t), &mut observe)?;
+                (found.output, Resolved::Lossless, Some(found.report))
+            }
             Target::Ssimulacra2(_) | Target::Quality(_) if !caps.lossy => {
                 let params = EncodeParams {
                     target: Target::Lossless,
@@ -518,28 +535,9 @@ impl Sqzer {
                 )
             }
             Target::Ssimulacra2(t) => {
-                let mut reference = Reference::new(image)?;
-                let search = seeded_search(encoder, t);
-                let max = search.max_encodes;
-                let mut n = 0u8;
-                let found = search.encode_with(
-                    encoder,
-                    image,
-                    &self.params,
-                    &self.registry,
-                    |candidate| reference.score(candidate),
-                    |trial| {
-                        n = n.saturating_add(1);
-                        observe(Progress::Trial {
-                            n,
-                            max,
-                            quality: trial.quality,
-                            score: trial.score,
-                            size: trial.size,
-                        });
-                    },
-                )?;
-                let quality = Resolved::Quality(found.report.quality);
+                let found =
+                    self.search(encoder, image, &seeded_search(encoder, t), &mut observe)?;
+                let quality = Resolved::Quality(found.report.value);
                 (found.output, quality, Some(found.report))
             }
             _ => (
@@ -563,6 +561,38 @@ impl Sqzer {
         })
     }
 
+    /// Run `search` over `encoder` for `image`, scored against `image`,
+    /// reporting each trial to `observe`.
+    fn search(
+        &self,
+        encoder: &dyn Encoder,
+        image: &sqzer_core::image::Image,
+        search: &Search,
+        observe: &mut impl FnMut(Progress),
+    ) -> Result<Found<Vec<u8>>> {
+        let mut reference = Reference::new(image)?;
+        let (axis, max) = (search.axis, search.max_encodes);
+        let mut n = 0u8;
+        search.encode_with(
+            encoder,
+            image,
+            &self.params,
+            &self.registry,
+            |candidate| reference.score(candidate),
+            |trial| {
+                n = n.saturating_add(1);
+                observe(Progress::Trial {
+                    n,
+                    max,
+                    axis,
+                    value: trial.value,
+                    score: trial.score,
+                    size: trial.size,
+                });
+            },
+        )
+    }
+
     /// A quality asked for by name is a lossy mode asked for by name: an
     /// error when the encoder for a format set with [`Sqzer::format`] has
     /// none. Picked per image, the format is "whatever fits", and a
@@ -584,6 +614,34 @@ impl Sqzer {
                 available_in,
             }
         })
+    }
+
+    /// The codec option a perceptual target searches on `encoder` under
+    /// the options of this builder, in place of a quality: `png:colors`
+    /// under `png:colors=auto` (ADR-0013). `None` when the encoder names
+    /// none.
+    ///
+    /// [`Sqzer::encode`] runs that search, and refuses what this refuses;
+    /// a caller that wants to refuse earlier asks here.
+    ///
+    /// # Errors
+    /// [`sqzer_core::Error::InvalidParams`] when there is such an option
+    /// and nothing to search it against: an explicit quality, a lossless
+    /// target, or [`Sqzer::fast`].
+    pub fn palette_search(&self, encoder: &dyn Encoder) -> Result<Option<&'static str>> {
+        let Some(key) = encoder.palette_search(&self.params) else {
+            return Ok(None);
+        };
+        let instead = match self.params.target {
+            Target::Ssimulacra2(_) if self.fast => "fast mode skips the search",
+            Target::Ssimulacra2(_) => return Ok(Some(key)),
+            Target::Quality(_) => "an explicit quality leaves no target",
+            Target::Lossless => "a lossless target leaves no target",
+        };
+        Err(Error::InvalidParams(format!(
+            "`{key}=auto` searches the palette size against a perceptual target, and {instead}; \
+             give a palette size, or a target"
+        )))
     }
 
     /// The codec options set on this builder under which `encoder` gives
@@ -691,7 +749,11 @@ fn default_format(alpha: bool, content: Content, target: &Target, registry: &Reg
 #[cfg(all(test, feature = "portable"))]
 // Synthetic pixel data: the truncating casts are the point, and the
 // averages over it are small.
-#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)]
 mod tests {
     use super::*;
     use sqzer_core::image::{ColorType, Image};
@@ -1369,10 +1431,15 @@ mod tests {
         let out = s
             .encode_with(&decoded, |p| match p {
                 Progress::Trial {
-                    n, max, quality, ..
+                    n,
+                    max,
+                    axis,
+                    value,
+                    ..
                 } => {
                     assert_eq!(max, 6);
-                    seen.push((n, quality));
+                    assert_eq!(axis, Axis::Quality);
+                    seen.push((n, value));
                 }
             })
             .unwrap();
@@ -1381,14 +1448,14 @@ mod tests {
             .trials
             .iter()
             .enumerate()
-            .map(|(i, t)| (u8::try_from(i + 1).unwrap(), t.quality))
+            .map(|(i, t)| (u8::try_from(i + 1).unwrap(), t.value))
             .collect();
         assert_eq!(seen, expected);
         // The chosen trial's size is the output's.
         let chosen = report
             .trials
             .iter()
-            .find(|t| t.quality.to_bits() == report.quality.to_bits())
+            .find(|t| t.value.to_bits() == report.value.to_bits())
             .unwrap();
         assert_eq!(chosen.size, u64::try_from(out.bytes.len()).unwrap());
         // No search, no progress.
@@ -1431,7 +1498,8 @@ mod tests {
             "{report:?}"
         );
         assert!(report.reached, "a smooth gradient is reachable: {report:?}");
-        assert_eq!(out.target, Resolved::Quality(report.quality));
+        assert_eq!(report.axis, Axis::Quality);
+        assert_eq!(out.target, Resolved::Quality(report.value));
         assert_eq!(&out.bytes[4..8], b"ftyp");
     }
 
@@ -1463,6 +1531,165 @@ mod tests {
             .chunks_exact(back.image.channels())
             .collect();
         assert!(colors.len() <= 16, "{} colours", colors.len());
+    }
+
+    /// Distinct pixels of an 8-bit decode.
+    fn distinct(bytes: &[u8]) -> usize {
+        let back = Sqzer::new().decode(bytes).unwrap();
+        let channels = back.image.channels();
+        back.image
+            .samples()
+            .as_u8()
+            .unwrap()
+            .chunks_exact(channels)
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    }
+
+    #[test]
+    fn png_colors_auto_searches_the_palette_size_for_the_target() {
+        let s = portable()
+            .format(Format::Png)
+            .codec_opt("png", "colors", "auto");
+        let ready = s
+            .transform(s.decode(&png_bytes(ColorType::Rgba)).unwrap())
+            .unwrap();
+        let mut seen = Vec::new();
+        let out = s
+            .encode_with(&ready, |p| match p {
+                Progress::Trial { axis, value, .. } => seen.push((axis, value)),
+            })
+            .unwrap();
+        // PNG's one mode, a palette, and a search that says so.
+        assert_eq!(out.target, Resolved::Lossless);
+        assert!(!out.lossless);
+        let report = out.report.expect("a palette search reports");
+        assert_eq!(report.axis, Axis::Colors("png:colors"));
+        assert!(report.reached, "{report:?}");
+        assert!(report.iterations <= 6, "{report:?}");
+        for t in &report.trials {
+            assert!((2.0..=256.0).contains(&t.value), "{t:?}");
+            assert_eq!(t.value.fract(), 0.0, "{t:?}");
+        }
+        assert_eq!(
+            seen,
+            report
+                .trials
+                .iter()
+                .map(|t| (Axis::Colors("png:colors"), t.value))
+                .collect::<Vec<_>>()
+        );
+        // The bytes are the chosen trial's, at most that many colours.
+        let chosen = report
+            .trials
+            .iter()
+            .find(|t| t.value.to_bits() == report.value.to_bits())
+            .unwrap();
+        assert_eq!(chosen.size, out.bytes.len() as u64);
+        assert!(distinct(&out.bytes) <= report.value as usize, "{report:?}");
+        // A higher target takes at least as many colours.
+        let higher = s
+            .clone()
+            .target(Target::Ssimulacra2(85.0))
+            .encode(&ready)
+            .unwrap()
+            .report
+            .unwrap();
+        assert!(higher.value >= report.value, "{higher:?} {report:?}");
+        // `png:dither` stays what it says over the whole search.
+        let flat = s
+            .clone()
+            .codec_opt("png", "dither", "0")
+            .encode(&ready)
+            .unwrap();
+        let undithered = sqzer_codecs::oxipng::OxipngEncoder
+            .encode(
+                &ready.image,
+                &EncodeParams {
+                    target: Target::Lossless,
+                    ..s.params().clone()
+                }
+                .with_codec_opt("png", "dither", "0")
+                .with_codec_opt(
+                    "png",
+                    "colors",
+                    flat.report.as_ref().unwrap().value.to_string(),
+                ),
+            )
+            .unwrap();
+        assert_eq!(flat.bytes, undithered);
+    }
+
+    #[test]
+    fn png_colors_auto_on_a_graphic_settles_on_its_own_colours() {
+        // Four colours in blocks: from four up the palette is exact.
+        let mut samples = Vec::with_capacity(32 * 32 * 3);
+        for y in 0..32u32 {
+            for x in 0..32u32 {
+                let c = [[250, 20, 20], [20, 250, 20], [20, 20, 250], [240, 240, 240]]
+                    [((x / 16) + 2 * (y / 16)) as usize];
+                samples.extend_from_slice(&c);
+            }
+        }
+        let input = encode_png(&Image::from_u8(32, 32, ColorType::Rgb, samples).unwrap());
+        let out = portable()
+            .format(Format::Png)
+            .codec_opt("png", "colors", "auto")
+            .run(&input)
+            .unwrap();
+        let report = out.report.unwrap();
+        assert!(report.reached, "{report:?}");
+        assert!(report.value >= 4.0 && report.value <= 5.0, "{report:?}");
+        assert_eq!(distinct(&out.bytes), 4);
+        assert!(!out.lossless, "a promise read from the options");
+    }
+
+    #[test]
+    fn png_colors_auto_needs_a_target_to_search() {
+        let input = png_bytes(ColorType::Rgba);
+        let auto = || {
+            portable()
+                .format(Format::Png)
+                .codec_opt("png", "colors", "auto")
+        };
+        let err = auto().target(Target::Lossless).run(&input).unwrap_err();
+        assert!(
+            matches!(&err, Error::InvalidParams(m) if m.contains("`png:colors=auto`")),
+            "{err}"
+        );
+        let err = auto().fast(true).run(&input).unwrap_err();
+        assert!(
+            matches!(&err, Error::InvalidParams(m) if m.contains("fast mode")),
+            "{err}"
+        );
+        // A quality on a format picked per image that lands on PNG.
+        let mut narrow = Registry::new();
+        narrow.register_decoder(sqzer_codecs::png::PngDecoder);
+        narrow.register_encoder(sqzer_codecs::oxipng::OxipngEncoder);
+        let err = Sqzer::with_registry(narrow)
+            .target(Target::Quality(80.0))
+            .codec_opt("png", "colors", "auto")
+            .run(&input)
+            .unwrap_err();
+        assert!(
+            matches!(&err, Error::InvalidParams(m) if m.contains("explicit quality")),
+            "{err}"
+        );
+        // A fixed size searches nothing.
+        let out = portable()
+            .format(Format::Png)
+            .codec_opt("png", "colors", "16")
+            .run(&input)
+            .unwrap();
+        assert!(out.report.is_none());
+        // Addressed to PNG, the option leaves another format's search
+        // alone.
+        let out = portable()
+            .format(Format::Jpeg)
+            .codec_opt("png", "colors", "auto")
+            .run(&input)
+            .unwrap();
+        assert_eq!(out.report.unwrap().axis, Axis::Quality);
     }
 
     #[test]

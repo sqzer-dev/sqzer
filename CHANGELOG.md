@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### ⚠️ BREAKING CHANGES
+
+* **metrics:** the target search moves along an `Axis`, the quality or a palette size, so `Trial::quality` and `SearchReport::quality` are renamed `value`, and `SearchReport` and `Search` have a new public field, `axis`. Code that read `quality` reads `value`; a `Search` written out field by field adds `axis: Axis::Quality`, or starts from `..Search::new(target)` (ADR-0013)
+* **sqzer:** `Progress::Trial` carries `axis` and `value` in place of `quality`. A match that names every field names the two, or ends in `..`
+* **wasm:** `quality` on a `Trial` and on what `onTrial` receives is optional in the TypeScript types: a palette search reports `colors` in its place. A quality search still sets it
+
+### Features
+
+* **codecs:** `-x png:colors=auto` searches the palette size, 2 to 256, for the fewest colours that reach the target, as the quality is searched for a lossy format. `png:dither` stays at what it says through the search. `--fast`, `-q` and `--lossless` leave no target to search for and refuse `auto`, before any file is touched when `-f` names PNG. A fixed `png:colors` is unchanged ([#65](https://github.com/sqzer-dev/sqzer/issues/65), ADR-0013)
+* **core:** `Encoder::palette_search` names the codec option a perceptual target searches in place of a quality. It defaults to `None`; `oxipng` answers `png:colors` under `png:colors=auto`
+* **metrics:** `Search::colors` searches a palette size, bisected at the geometric mean of the bracket in place of the arithmetic one, and `Search::encode` writes each trial's size to the option the `Axis` names
+* **sqzer:** `Sqzer::palette_search` names the option the builder's target searches on an encoder, and refuses `png:colors=auto` next to an explicit quality, a lossless target or fast mode, for a caller that wants to refuse before encoding
+* **cli:** a `--json` record of a palette search has `colors`, the size it settled on, and each of its `trials` has `colors` in place of `quality`. The progress line, `-v` and the warning for a missed target print `64 colours` where a quality search prints `q64`
+* **wasm:** a result of a palette search has `colors`, and so do its `trials` and what `onTrial` receives, in place of `quality`
+
+### Bug Fixes
+
+* **cli:** `target` is left out of the `--json` record of a fixed `-x png:colors`, which searched for nothing and is not exact. It stays for a search and for lossless output, which meets any target ([#65](https://github.com/sqzer-dev/sqzer/issues/65))
+* **wasm:** the same for `target` in the result of a fixed `png:colors`, where 0.4.0 reported the default target ([#65](https://github.com/sqzer-dev/sqzer/issues/65))
+
 ## 0.4.0
 
 ### ⚠️ BREAKING CHANGES

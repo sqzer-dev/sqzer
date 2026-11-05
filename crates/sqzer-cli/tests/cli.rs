@@ -951,6 +951,103 @@ fn png_colors_write_a_palette_and_the_record_says_lossy() {
 }
 
 #[test]
+fn png_colors_auto_searches_the_palette_and_the_record_says_colors() {
+    let sb = Sandbox::new("palette-auto");
+    sb.fixture("pattern-rgba.webp", "in.webp");
+    let (code, out, err) = run(sb.sqzer().args([
+        "in.webp",
+        "-f",
+        "png",
+        "-x",
+        "png:colors=auto",
+        "--target",
+        "60",
+        "--force",
+        "--json",
+        "-v",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    let r = &json_lines(&out)[0];
+    assert_eq!(r["status"], "written", "{r}");
+    assert_eq!(r["lossless"], false, "{r}");
+    assert_eq!(r["target"], 60.0, "{r}");
+    assert!(r.get("quality").is_none(), "{r}");
+    let colors = r["colors"].as_u64().expect("the chosen palette size");
+    assert!((2..=256).contains(&colors), "{r}");
+    assert!(r["score"].is_number() && r["reached"].is_boolean(), "{r}");
+    let trials = r["trials"].as_array().unwrap();
+    assert!(!trials.is_empty() && trials.len() <= 6, "{r}");
+    for t in trials {
+        assert!(t.get("quality").is_none(), "{t}");
+        assert!(t["colors"].is_u64() && t["size"].is_u64(), "{t}");
+    }
+    assert!(trials.iter().any(|t| t["colors"] == r["colors"]), "{r}");
+    assert!(err.contains("colours"), "{err}");
+    // `oxipng` stores the palette however is smallest, which on this
+    // 48 x 32 pattern can be RGBA again: the size is the check.
+    assert_eq!(
+        fs::read(sb.path("in.png")).unwrap().len() as u64,
+        r["output_bytes"].as_u64().unwrap()
+    );
+
+    // The dry run plans the search: a target, and the `lossy` tag.
+    let (code, out, err) = run(sb.sqzer().args([
+        "in.webp",
+        "-f",
+        "png",
+        "-x",
+        "png:colors=auto",
+        "-n",
+        "--force",
+        "--json",
+        "--template",
+        "{stem}-{quality}.{ext}",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    let plan = &json_lines(&out)[0];
+    assert_eq!(plan["output"], "in-lossy.png", "{plan}");
+    assert_eq!(plan["target"], 70.0, "{plan}");
+
+    // A fixed size searched for nothing, and says no target.
+    let (code, out, err) = run(sb.sqzer().args([
+        "in.webp",
+        "-f",
+        "png",
+        "-x",
+        "png:colors=16",
+        "--force",
+        "--json",
+    ]));
+    assert_eq!(code, 0, "{err}");
+    let r = &json_lines(&out)[0];
+    assert!(
+        r.get("target").is_none() && r.get("colors").is_none(),
+        "{r}"
+    );
+    // Lossless PNG meets the target by its one mode, as before.
+    let (code, out, err) = run(sb
+        .sqzer()
+        .args(["in.webp", "-f", "png", "--force", "--json"]));
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(json_lines(&out)[0]["target"], 70.0);
+}
+
+#[test]
+fn png_colors_auto_without_a_search_is_an_argument_error() {
+    let sb = Sandbox::new("palette-auto-refused");
+    sb.fixture("pattern-rgba.webp", "in.webp");
+    for mode in [&["--fast"][..], &["--lossless"]] {
+        let (code, _, err) = run(sb
+            .sqzer()
+            .args(["in.webp", "-f", "png", "-x", "png:colors=auto"])
+            .args(mode));
+        assert_eq!(code, 2, "{mode:?}: {err}");
+        assert!(err.contains("png:colors=auto"), "{mode:?}: {err}");
+    }
+    assert!(!sb.path("in.png").exists());
+}
+
+#[test]
 fn a_quality_on_a_graphic_picked_for_lossless_webp_is_reported_lossless() {
     // Lossy WebP needs the native tier; this is about the portable pick.
     if cfg!(feature = "native") {

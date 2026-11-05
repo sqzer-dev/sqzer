@@ -62,6 +62,11 @@
       "path": "docs/adr/0012-png-palette-reduction.md",
       "description": "Palette reduction for PNG: png:colors and png:dither through quantizr inside the PNG encoder, an image with few enough colours left exact, Encoder::exact and Output::lossless for an option that gives up samples at a lossless target, png:optimize_alpha among them, the refusal of such an option together with a lossless target",
       "scope": ["crates/sqzer-codecs/src/oxipng.rs", "crates/sqzer-codecs/Cargo.toml", "crates/sqzer-core/src/codec.rs", "crates/sqzer/src/lib.rs", "crates/sqzer/tests/golden.rs", "crates/sqzer-cli/**", "crates/sqzer-wasm/src/**", "deny.toml"]
+    },
+    {
+      "path": "docs/adr/0013-palette-size-search.md",
+      "description": "png:colors=auto: the target search moves along the palette size, 2 to 256, at the geometric midpoint, png:dither fixed; Encoder::palette_search, the Axis of the search and the value of a trial; colors in the records; target left out where nothing was searched and nothing is exact",
+      "scope": ["crates/sqzer-codecs/src/oxipng.rs", "crates/sqzer-core/src/codec.rs", "crates/sqzer-metrics/src/search.rs", "crates/sqzer/src/lib.rs", "crates/sqzer-cli/src/report.rs", "crates/sqzer-cli/src/job.rs", "crates/sqzer-cli/src/config.rs", "crates/sqzer-wasm/src/**"]
     }
   ]
 }

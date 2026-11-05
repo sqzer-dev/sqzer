@@ -1,20 +1,29 @@
-//! The target search: bisect encoder quality until the score lands within a
-//! tolerance of the target.
+//! The target search: bisect an encoder setting until the score lands
+//! within a tolerance of the target.
 //!
-//! Quality is the abstract `0..=100` scale of
-//! [`sqzer_core::params::EncodeParams`], searched on whole numbers because
-//! that is the resolution every backend's own knob has. The search assumes
-//! score rises with quality, which is true up to encoder noise, and the
-//! final pick is made over everything it tried rather than trusting the
-//! bracket, so a non-monotonic run still returns the best candidate seen.
+//! The setting is the search's [`Axis`]. For a lossy encoder it is the
+//! abstract quality, `0..=100`, of [`sqzer_core::params::EncodeParams`].
+//! For a palette encoder it is the palette size, `2..=256`, written to the
+//! codec option the encoder names (ADR-0013). Either is searched on whole
+//! numbers, because that is the resolution every backend's own knob has.
+//! The search assumes score rises along the axis, which is true up to
+//! encoder noise, and the final pick is made over everything it tried
+//! rather than trusting the bracket, so a non-monotonic run still returns
+//! the best candidate seen.
 //!
-//! Budget rule: bisection from the full range needs about seven encodes to
-//! reach whole-number resolution, so the default cap of six leaves the
-//! answer within two quality steps of the true minimum. When every trial so
-//! far falls short and one encode is left, that encode goes to the ceiling
-//! instead of the midpoint: the midpoint would be within a step or two of
-//! the ceiling anyway, and trying the ceiling settles whether the target is
-//! reachable at all.
+//! Budget rule: bisection from the full quality range needs about seven
+//! encodes to reach whole-number resolution, so the default cap of six
+//! leaves the answer within two quality steps of the true minimum. When
+//! every trial so far falls short and one encode is left, that encode goes
+//! to the ceiling instead of the midpoint: the midpoint would be within a
+//! step or two of the ceiling anyway, and trying the ceiling settles
+//! whether the target is reachable at all.
+//!
+//! A palette size is bisected at the geometric mean of the bracket, not
+//! the arithmetic one: an index costs about the logarithm of the palette
+//! size in bits, and the score moves most between small palettes, so equal
+//! ratios are equal steps. Six encodes leave the answer within about 8 %
+//! of the true minimum.
 //!
 //! Seeding: a caller with a good guess sets [`Search::seed`] and usually
 //! [`Search::seed_step`]. The first trial is the seed. While every trial so
@@ -22,19 +31,58 @@
 //! the last by the step, doubling each time, until the target is
 //! bracketed; bisection then finishes inside a bracket a few steps wide
 //! instead of the whole range. The calibrated tables in [`crate::seeds`]
-//! supply both numbers.
+//! supply both numbers for the quality axis.
 
 use sqzer_core::codec::Encoder;
 use sqzer_core::image::Image;
 use sqzer_core::params::{DecodeOpts, EncodeParams, Target};
 use sqzer_core::{Error, Registry, Result};
 
-/// One quality the search tried and what it scored.
+/// What a search moves along (ADR-0013). More variants may arrive; match
+/// with a wildcard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum Axis {
+    /// The abstract quality of
+    /// [`EncodeParams::target`](sqzer_core::params::EncodeParams::target),
+    /// `0..=100`: what every lossy encoder is searched along.
+    #[default]
+    Quality,
+    /// A palette size, `2..=256`, written to the codec option this names,
+    /// `png:colors` for one, at a lossless target: what a palette encoder
+    /// is searched along, from
+    /// [`Encoder::palette_search`].
+    Colors(&'static str),
+}
+
+impl Axis {
+    /// The values the axis takes: `0..=100` for a quality, `2..=256` for
+    /// a palette size.
+    #[must_use]
+    pub fn range(self) -> std::ops::RangeInclusive<f32> {
+        match self {
+            Self::Quality => 0.0..=100.0,
+            Self::Colors(_) => 2.0..=256.0,
+        }
+    }
+
+    /// The middle of the bracket `lo..=hi`, on a whole number: arithmetic
+    /// for a quality, geometric for a palette size.
+    fn midpoint(self, lo: f32, hi: f32) -> f32 {
+        match self {
+            Self::Quality => lo.midpoint(hi).round(),
+            Self::Colors(_) => (lo * hi).sqrt().round(),
+        }
+    }
+}
+
+/// One value the search tried and what it scored.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Trial {
-    /// Abstract quality, a whole number.
-    pub quality: f32,
-    /// Metric score at that quality.
+    /// The value on the search's [`Axis`], a whole number: an abstract
+    /// quality, or a palette size.
+    pub value: f32,
+    /// Metric score at that value.
     pub score: f32,
     /// Size of the encoded output in bytes.
     pub size: u64,
@@ -43,16 +91,19 @@ pub struct Trial {
 /// Result of one target search.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchReport {
-    /// Quality the search settled on, `0..=100`.
-    pub quality: f32,
-    /// Score at that quality.
+    /// What the search moved along.
+    pub axis: Axis,
+    /// The value it settled on: an abstract quality, `0..=100`, or a
+    /// palette size, `2..=256`.
+    pub value: f32,
+    /// Score at that value.
     pub score: f32,
     /// Encodes performed.
     pub iterations: u8,
     /// The chosen score is at or above `target - tolerance`.
     pub reached: bool,
-    /// The ceiling quality was tried and still fell short of the target.
-    /// Implies `!reached`.
+    /// The ceiling was tried and still fell short of the target. Implies
+    /// `!reached`.
     pub capped: bool,
     /// Every trial, in the order made.
     pub trials: Vec<Trial>,
@@ -81,6 +132,8 @@ pub struct Scored<T> {
 /// Search settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Search {
+    /// What to move along. [`Search::colors`] sets it to a palette size.
+    pub axis: Axis,
     /// Score to aim for, on the metric's scale.
     pub target: f32,
     /// A score within this distance of `target` ends the search. A score
@@ -88,11 +141,11 @@ pub struct Search {
     pub tolerance: f32,
     /// Encode budget. The search never performs more encodes than this.
     pub max_encodes: u8,
-    /// Lowest quality to consider.
+    /// Lowest value to consider, inside [`Axis::range`].
     pub floor: f32,
-    /// Highest quality to consider.
+    /// Highest value to consider, inside [`Axis::range`].
     pub ceiling: f32,
-    /// First quality to try. `None` starts at the midpoint of the range.
+    /// First value to try. `None` starts at the midpoint of the range.
     pub seed: Option<f32>,
     /// Distance of the second trial from the seed when the seed misses.
     /// Doubles on every further miss on the same side. `None` bisects
@@ -104,9 +157,11 @@ pub struct Search {
 }
 
 impl Default for Search {
-    /// The `web` preset: target 70, tolerance 1, six encodes.
+    /// The `web` preset: target 70, tolerance 1, six encodes, along the
+    /// quality.
     fn default() -> Self {
         Self {
+            axis: Axis::Quality,
             target: 70.0,
             tolerance: 1.0,
             max_encodes: 6,
@@ -120,7 +175,7 @@ impl Default for Search {
 
 /// The candidate the search is currently holding.
 struct Candidate<T> {
-    quality: f32,
+    value: f32,
     score: f32,
     reaches: bool,
     output: T,
@@ -136,13 +191,26 @@ impl Search {
         }
     }
 
+    /// Default settings aimed at `target`, along the palette size written
+    /// to the codec option `key`, over the whole of `2..=256` (ADR-0013).
+    #[must_use]
+    pub fn colors(key: &'static str, target: f32) -> Self {
+        let axis = Axis::Colors(key);
+        Self {
+            axis,
+            floor: *axis.range().start(),
+            ceiling: *axis.range().end(),
+            ..Self::new(target)
+        }
+    }
+
     /// Check the settings make sense.
     ///
     /// # Errors
     /// [`Error::InvalidParams`] for a non-finite target, tolerance or seed,
     /// a negative tolerance, a seed step that is not positive, a zero
-    /// encode budget, or a range that is not inside `0..=100` with the
-    /// floor at or below the ceiling.
+    /// encode budget, or a range that is not inside [`Axis::range`] with
+    /// the floor at or below the ceiling.
     pub fn validate(&self) -> Result<()> {
         let bad = |what: &str| Err(Error::InvalidParams(format!("search: {what}")));
         if !self.target.is_finite() {
@@ -154,13 +222,22 @@ impl Search {
         if self.max_encodes == 0 {
             return bad("the encode budget must be at least 1");
         }
+        let axis = self.axis.range();
         let range_ok = self.floor.is_finite()
             && self.ceiling.is_finite()
-            && (0.0..=100.0).contains(&self.floor)
-            && (0.0..=100.0).contains(&self.ceiling)
+            && axis.contains(&self.floor)
+            && axis.contains(&self.ceiling)
             && self.floor <= self.ceiling;
         if !range_ok {
-            return bad("quality range must lie within 0..=100 with floor <= ceiling");
+            let what = match self.axis {
+                Axis::Quality => "quality",
+                Axis::Colors(_) => "palette size",
+            };
+            return bad(&format!(
+                "{what} range must lie within {}..={} with floor <= ceiling",
+                axis.start(),
+                axis.end()
+            ));
         }
         if self.seed.is_some_and(|s| !s.is_finite()) {
             return bad("seed must be a finite number");
@@ -171,8 +248,9 @@ impl Search {
         Ok(())
     }
 
-    /// Run the search over `trial`, which encodes at the given quality and
-    /// returns the encoded output with its score and its size in bytes.
+    /// Run the search over `trial`, which encodes at the given value on the
+    /// axis and returns the encoded output with its score and its size in
+    /// bytes.
     ///
     /// # Errors
     /// [`Error::InvalidParams`] from [`Search::validate`], or the first
@@ -181,7 +259,7 @@ impl Search {
         self.validate()?;
         let floor = self.floor.round();
         let ceiling = self.ceiling.round();
-        // `lo` is the highest quality known to fall short, `hi` the lowest
+        // `lo` is the highest value known to fall short, `hi` the lowest
         // known to reach; until a trial says otherwise they are the range
         // ends.
         let mut lo = floor;
@@ -194,6 +272,7 @@ impl Search {
         let mut best: Option<Candidate<T>> = None;
         let mut trials = Vec::with_capacity(usize::from(self.max_encodes));
 
+        let midpoint = |lo, hi| self.axis.midpoint(lo, hi);
         let mut next = self
             .seed
             .map_or_else(|| midpoint(lo, hi), |s| s.round().clamp(floor, ceiling));
@@ -221,7 +300,7 @@ impl Search {
                 size,
             } = trial(next)?;
             trials.push(Trial {
-                quality: next,
+                value: next,
                 score,
                 size,
             });
@@ -230,7 +309,7 @@ impl Search {
                 None => true,
                 Some(b) => match (reaches, b.reaches) {
                     // Among candidates that reach, the cheapest.
-                    (true, true) => next < b.quality,
+                    (true, true) => next < b.value,
                     (true, false) => true,
                     (false, true) => false,
                     // Among candidates that do not, the closest; on a tie
@@ -240,7 +319,7 @@ impl Search {
             };
             if better {
                 best = Some(Candidate {
-                    quality: next,
+                    value: next,
                     score,
                     reaches,
                     output,
@@ -265,14 +344,15 @@ impl Search {
         let best = best.ok_or_else(|| Error::InvalidParams("search: no trial ran".into()))?;
         // Whole numbers compare exactly.
         #[allow(clippy::float_cmp)]
-        let capped = !best.reaches && trials.iter().any(|t| t.quality == ceiling);
+        let capped = !best.reaches && trials.iter().any(|t| t.value == ceiling);
         // At most `max_encodes` trials ran, so the count fits.
         #[allow(clippy::cast_possible_truncation)]
         let iterations = trials.len() as u8;
         Ok(Found {
             output: best.output,
             report: SearchReport {
-                quality: best.quality,
+                axis: self.axis,
+                value: best.value,
                 score: best.score,
                 iterations,
                 reached: best.reaches,
@@ -283,9 +363,11 @@ impl Search {
     }
 
     /// Search `encoder` for `image`: each trial encodes with `params` at the
-    /// trial quality, decodes the result through `registry` and hands the
+    /// trial value, decodes the result through `registry` and hands the
     /// decoded picture to `score`. The target in `params` is ignored; the
-    /// search supplies its own.
+    /// search supplies its own. Along a palette size the target is
+    /// lossless and the trial's size is written to the axis's codec
+    /// option, over whatever `params` held there.
     ///
     /// The candidate decode is capped at the pixel count of `image`, since
     /// a candidate of any other size cannot be scored anyway.
@@ -325,8 +407,17 @@ impl Search {
             ..DecodeOpts::default()
         };
         let mut params = params.clone();
-        self.run(|quality| {
-            params.target = Target::Quality(quality);
+        let axis = self.axis;
+        self.run(|value| {
+            match axis {
+                Axis::Quality => params.target = Target::Quality(value),
+                Axis::Colors(key) => {
+                    params.target = Target::Lossless;
+                    params
+                        .codec_specific
+                        .insert(key.to_owned(), format!("{value:.0}"));
+                }
+            }
             let bytes = encoder.encode(image, &params)?;
             let decoded = match registry.decode(&bytes, &opts) {
                 Ok(d) => d.image,
@@ -346,7 +437,7 @@ impl Search {
             // The output is a byte vector, so the size fits.
             let size = bytes.len() as u64;
             observe(Trial {
-                quality,
+                value,
                 score: s,
                 size,
             });
@@ -357,10 +448,6 @@ impl Search {
             })
         })
     }
-}
-
-fn midpoint(lo: f32, hi: f32) -> f32 {
-    lo.midpoint(hi).round()
 }
 
 #[cfg(test)]
@@ -391,7 +478,7 @@ mod tests {
         let found = over(&Search::new(70.0), |q| q * 0.9);
         assert!(found.report.iterations > 1);
         for t in &found.report.trials {
-            assert_eq!(t.size, scored(t.quality, 0.0).size, "{t:?}");
+            assert_eq!(t.size, scored(t.value, 0.0).size, "{t:?}");
         }
     }
 
@@ -423,11 +510,11 @@ mod tests {
             assert!(r.reached, "{name}: {r:?}");
             assert!(!r.capped, "{name}");
             assert!(r.iterations <= 6, "{name}: {r:?}");
-            assert_eq!(found.output, r.quality, "{name}: output follows quality");
+            assert_eq!(found.output, r.value, "{name}: output follows quality");
             assert!(
-                r.quality >= min && r.quality - min <= 2.0,
+                r.value >= min && r.value - min <= 2.0,
                 "{name}: chose {} but the minimum is {min}",
-                r.quality
+                r.value
             );
             assert_eq!(r.trials.len(), usize::from(r.iterations));
         }
@@ -449,7 +536,7 @@ mod tests {
                 .report
                 .trials
                 .iter()
-                .map(|t| t.quality)
+                .map(|t| t.value)
                 .collect::<Vec<_>>()
         );
     }
@@ -461,22 +548,22 @@ mod tests {
         let r = &found.report;
         assert!(!r.reached);
         assert!(r.capped);
-        assert_eq!(r.quality, 100.0);
+        assert_eq!(r.value, 100.0);
         assert_eq!(r.score, 50.0);
         assert!(r.iterations <= 6);
-        assert!(r.trials.iter().any(|t| t.quality == 100.0));
+        assert!(r.trials.iter().any(|t| t.value == 100.0));
     }
 
     #[test]
     fn budget_is_spent_on_the_ceiling_only_when_nothing_reached() {
         // Everything reaches: the ceiling must never be tried.
         let found = over(&Search::new(70.0), |_| 100.0);
-        assert!(found.report.trials.iter().all(|t| t.quality < 100.0));
+        assert!(found.report.trials.iter().all(|t| t.value < 100.0));
         // Nothing reaches until 99: the last encode goes to 100 and finds
         // it reaches, so the target is met after all.
         let found = over(&Search::new(70.0), |q| if q >= 99.0 { 80.0 } else { 10.0 });
         assert!(found.report.reached, "{:?}", found.report);
-        assert!(found.report.quality >= 99.0);
+        assert!(found.report.value >= 99.0);
     }
 
     #[test]
@@ -484,10 +571,10 @@ mod tests {
         let found = over(&Search::new(70.0), |_| 100.0);
         let r = &found.report;
         assert!(r.reached);
-        assert!(r.quality <= 3.0, "{r:?}");
+        assert!(r.value <= 3.0, "{r:?}");
         assert_eq!(r.iterations, 6);
         // Every trial after the first went lower.
-        assert!(r.trials.windows(2).all(|w| w[1].quality < w[0].quality));
+        assert!(r.trials.windows(2).all(|w| w[1].value < w[0].value));
     }
 
     #[test]
@@ -498,7 +585,7 @@ mod tests {
         };
         let found = over(&search, |q| q);
         assert_eq!(found.report.iterations, 1);
-        assert_eq!(found.report.quality, 70.0);
+        assert_eq!(found.report.value, 70.0);
         assert!(found.report.reached);
 
         // Within tolerance from below counts too.
@@ -513,12 +600,12 @@ mod tests {
             seed: Some(80.4),
             ..Search::new(70.0)
         };
-        assert_eq!(over(&search, |q| q).report.trials[0].quality, 80.0);
+        assert_eq!(over(&search, |q| q).report.trials[0].value, 80.0);
         let search = Search {
             seed: Some(500.0),
             ..Search::new(70.0)
         };
-        assert_eq!(over(&search, |q| q).report.trials[0].quality, 100.0);
+        assert_eq!(over(&search, |q| q).report.trials[0].value, 100.0);
     }
 
     #[test]
@@ -538,8 +625,8 @@ mod tests {
         let r = &found.report;
         assert!(r.reached, "{r:?}");
         assert_eq!(r.iterations, 3, "{r:?}");
-        assert_eq!(r.quality, 78.0);
-        let tried: Vec<f32> = r.trials.iter().map(|t| t.quality).collect();
+        assert_eq!(r.value, 78.0);
+        let tried: Vec<f32> = r.trials.iter().map(|t| t.value).collect();
         assert_eq!(tried, [75.0, 80.0, 78.0]);
 
         // A seed above the answer walks down with a doubling step.
@@ -552,8 +639,8 @@ mod tests {
         let r = &found.report;
         assert!(r.reached, "{r:?}");
         assert!(r.iterations <= plain.report.iterations, "{r:?}");
-        assert!(r.quality >= 77.0 && r.quality <= 79.0, "{r:?}");
-        let tried: Vec<f32> = r.trials.iter().map(|t| t.quality).collect();
+        assert!(r.value >= 77.0 && r.value <= 79.0, "{r:?}");
+        let tried: Vec<f32> = r.trials.iter().map(|t| t.value).collect();
         assert_eq!(&tried[..3], [90.0, 85.0, 75.0]);
     }
 
@@ -571,8 +658,8 @@ mod tests {
         let r = &found.report;
         assert!(r.reached, "{r:?}");
         assert!(r.iterations <= 6);
-        assert!(r.quality >= 77.0, "{r:?}");
-        let tried: Vec<f32> = r.trials.iter().map(|t| t.quality).collect();
+        assert!(r.value >= 77.0, "{r:?}");
+        let tried: Vec<f32> = r.trials.iter().map(|t| t.value).collect();
         assert_eq!(&tried[..5], [10.0, 15.0, 25.0, 45.0, 85.0]);
     }
 
@@ -596,7 +683,7 @@ mod tests {
             ..Search::new(70.0)
         };
         let found = over(&search, |_| 100.0);
-        assert_eq!(found.report.quality, 1.0);
+        assert_eq!(found.report.value, 1.0);
         assert_eq!(found.report.iterations, 2);
 
         // A step without a seed is ignored.
@@ -605,8 +692,8 @@ mod tests {
             ..Search::new(70.0)
         };
         let found = over(&search, |q| q * 0.9);
-        assert_eq!(found.report.trials[0].quality, 51.0);
-        assert_eq!(found.report.trials[1].quality, 76.0);
+        assert_eq!(found.report.trials[0].value, 51.0);
+        assert_eq!(found.report.trials[1].value, 76.0);
     }
 
     #[test]
@@ -658,7 +745,7 @@ mod tests {
         fn output_matches(&self) -> bool {
             self.trials
                 .iter()
-                .any(|t| t.quality == self.quality && t.score.to_bits() == self.score.to_bits())
+                .any(|t| t.value == self.value && t.score.to_bits() == self.score.to_bits())
         }
     }
 
@@ -675,7 +762,7 @@ mod tests {
                 .report
                 .trials
                 .iter()
-                .all(|t| (60.0..=80.0).contains(&t.quality))
+                .all(|t| (60.0..=80.0).contains(&t.value))
         );
         let pinned = Search {
             floor: 42.0,
@@ -684,7 +771,7 @@ mod tests {
         };
         let found = over(&pinned, |q| q);
         assert_eq!(found.report.iterations, 1);
-        assert_eq!(found.report.quality, 42.0);
+        assert_eq!(found.report.value, 42.0);
         assert!(found.report.capped);
     }
 
@@ -728,6 +815,91 @@ mod tests {
             seed_step: Some(f32::NAN),
             ..Search::default()
         });
+    }
+
+    /// A score that rises with the logarithm of the palette size, as a
+    /// palette's does: 20 at two colours, 90 at 256.
+    fn log_curve(c: f32) -> f32 {
+        10.0 + 10.0 * c.log2()
+    }
+
+    #[test]
+    fn colors_search_the_whole_palette_range_from_its_geometric_middle() {
+        let search = Search::colors("png:colors", 70.0);
+        assert_eq!(search.axis, Axis::Colors("png:colors"));
+        assert_eq!((search.floor, search.ceiling), (2.0, 256.0));
+        let found = over(&search, log_curve);
+        let r = &found.report;
+        assert_eq!(r.axis, Axis::Colors("png:colors"));
+        // The geometric mean of 2 and 256 is 22.6.
+        assert_eq!(r.trials[0].value, 23.0);
+        assert!(r.trials.iter().all(|t| (2.0..=256.0).contains(&t.value)));
+        assert!(r.trials.iter().all(|t| t.value.fract() == 0.0));
+        // 69 is reached from 2^5.9, 59.7 colours, upward. A score within
+        // the tolerance of 70 ends the search, here at 66.
+        assert!(r.reached, "{r:?}");
+        assert!(r.iterations <= 6, "{r:?}");
+        assert!(r.value >= 60.0 && r.value <= 66.0, "{r:?}");
+        assert_eq!(found.output, r.value);
+    }
+
+    #[test]
+    fn colors_bisect_by_ratio_not_by_difference() {
+        // A target only the smallest palettes miss: the search closes in
+        // on a handful of colours, where a linear bisection would take
+        // 129 and 66 first.
+        let found = over(&Search::colors("png:colors", 40.0), log_curve);
+        let r = &found.report;
+        let tried: Vec<f32> = r.trials.iter().map(|t| t.value).collect();
+        assert_eq!(tried, [23.0, 7.0, 13.0, 10.0, 8.0], "{r:?}");
+        // 39 is reached from 2^2.9, 7.5 colours: 8 is the answer.
+        assert!(r.reached, "{r:?}");
+        assert_eq!(r.value, 8.0, "{r:?}");
+    }
+
+    #[test]
+    fn colors_unreachable_end_at_256() {
+        let found = over(&Search::colors("png:colors", 95.0), log_curve);
+        let r = &found.report;
+        assert!(!r.reached && r.capped, "{r:?}");
+        assert_eq!(r.value, 256.0);
+        assert!(r.iterations <= 6, "{r:?}");
+    }
+
+    #[test]
+    fn colors_flat_curve_walks_down_to_a_few() {
+        let found = over(&Search::colors("png:colors", 70.0), |_| 100.0);
+        let r = &found.report;
+        assert!(r.reached, "{r:?}");
+        assert!(r.value <= 3.0, "{r:?}");
+        assert!(r.trials.windows(2).all(|w| w[1].value < w[0].value));
+    }
+
+    #[test]
+    fn colors_range_is_the_palette_range() {
+        let bad = |s: Search| {
+            let err = s.run(|v| Ok(scored(v, v))).unwrap_err();
+            assert!(
+                matches!(&err, Error::InvalidParams(m) if m.contains("palette size range")),
+                "{err}"
+            );
+        };
+        bad(Search {
+            ceiling: 257.0,
+            ..Search::colors("png:colors", 70.0)
+        });
+        bad(Search {
+            floor: 1.0,
+            ..Search::colors("png:colors", 70.0)
+        });
+        // A quality search keeps its own range.
+        let err = Search {
+            ceiling: 256.0,
+            ..Search::new(70.0)
+        }
+        .run(|v| Ok(scored(v, v)))
+        .unwrap_err();
+        assert!(err.to_string().contains("quality range"), "{err}");
     }
 
     #[test]

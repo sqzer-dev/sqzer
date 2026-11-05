@@ -106,6 +106,11 @@ sqzer --list-codecs -v                      # every backend's keys and defaults
 sqzer logo.png -f png -x png:colors=256
 sqzer logo.png -f png -x png:colors=32 -x png:dither=50   # fewer colours, half the dithering
 
+# the fewest colours that still reach the target, searched as a quality is. --json names the
+# palette size under "colors", per trial and for the output
+sqzer logo.png -f png -x png:colors=auto --target 80
+sqzer logo.png -f png -x png:colors=auto -x png:dither=0 --target 80   # the same, undithered
+
 # where outputs go
 sqzer photo.jpg -o out.avif                 # a file, when there is one input and one format
 sqzer *.jpg -o dist                         # a directory otherwise
@@ -150,7 +155,8 @@ rimage avif in.jpg                   sqzer -f avif in.jpg
 -d <dir>                             -o <dir>
 -s <suffix>                          --suffix <suffix>
 -t <threads>                         -j <jobs>        (-t is now --target)
---quantization / --dithering         -x png:colors=<2-256> -x png:dither=<0-100>    (a colour count, not a quality)
+--quantization / --dithering         -x png:colors=<2-256> -x png:dither=<0-100>    (a colour count, not a quality;
+                                     -x png:colors=auto searches the count for --target)
 --resize 1600w                       --width 1600 --enlarge
 --resize 900h                        --height 900 --enlarge
 --resize 512l                        --width 512 --height 512 --enlarge

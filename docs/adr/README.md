@@ -15,6 +15,7 @@ One file per decision, numbered, never edited after acceptance. A superseded rec
 0010-stage-types-and-fit-outside.md     `Prepared` and `Ready` in place of 0009's stage methods, `--fit outside` for the shortest side, a translucent `--background` needs alpha
 0011-browser-build.md                    the npm package and the page on `sqzer.dev`: portable means runs everywhere (a C compiler may be needed to build), `oxipng` on wasm32 through `freestanding`, AVIF decoding through a published `rav1d` fork, the JavaScript API, `simd128`, a `dist` publish job with npm trusted publishing, GitHub Pages
 0012-png-palette-reduction.md            `-x png:colors=` through `quantizr`, measured against `imagequant`; `png:dither`; the step inside the PNG encoder; `Encoder::exact` and `Output::lossless` for an option that gives up pixels on a lossless encoder
+0013-palette-size-search.md              `-x png:colors=auto`: the target search along the palette size, bisected by ratio, with `png:dither` fixed; `Encoder::palette_search`, the search's `Axis`, `colors` in the records
 ```
 
 Template for new records: copy the headings from `0001` (Context, Decision, Options considered, Trade-offs, Consequences, Action items).

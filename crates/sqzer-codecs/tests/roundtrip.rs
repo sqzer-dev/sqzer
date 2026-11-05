@@ -695,6 +695,42 @@ fn png_colors_and_dither_refuse_values_out_of_range() {
     assert!(png.encode(&src, &palette("off")).is_ok());
 }
 
+#[test]
+fn png_colors_auto_names_the_option_to_search_and_is_not_encoded_as_it_is() {
+    let reg = registry();
+    let png = reg.encoder(Format::Png).unwrap();
+    let src = test_image(ColorType::Rgb);
+    let auto = palette("auto");
+    assert_eq!(png.palette_search(&auto), Some("png:colors"));
+    assert!(!png.exact(&auto), "auto ends in a palette");
+    // Only `auto` asks for a search.
+    for value in ["16", "256", "off"] {
+        assert_eq!(png.palette_search(&palette(value)), None, "{value}");
+    }
+    assert_eq!(png.palette_search(&Target::Lossless.into_params()), None);
+    // The search writes a number on each trial. Left at `auto`, there is
+    // no number to quantise to.
+    let err = png.encode(&src, &auto).unwrap_err();
+    assert!(
+        matches!(&err, Error::InvalidParams(m) if m.contains("png:colors=auto")),
+        "{err}"
+    );
+    // `png:dither` stays what it says, so it is taken next to `auto`.
+    let dithered = auto.clone().with_codec_opt("png", "dither", "0");
+    assert_eq!(png.palette_search(&dithered), Some("png:colors"));
+    // No other encoder searches a palette.
+    for encoder in reg.encoders() {
+        if encoder.caps().format != Format::Png {
+            assert_eq!(
+                encoder.palette_search(&auto),
+                None,
+                "{}",
+                encoder.caps().name
+            );
+        }
+    }
+}
+
 /// Every option of every encoder with a lossless mode, at a value that is
 /// not its default, and whether a lossless encode stays exact under it.
 /// An option missing here fails the test below: a new one has to say which

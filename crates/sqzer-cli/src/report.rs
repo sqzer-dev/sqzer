@@ -12,7 +12,7 @@ use sqzer::core::Registry;
 use sqzer::core::codec::{Encoder, Format};
 use sqzer::core::content::Content;
 use sqzer::core::params::Resolved;
-use sqzer::metrics::SearchReport;
+use sqzer::metrics::{Axis, SearchReport};
 
 use crate::cli::format_name;
 
@@ -32,11 +32,15 @@ pub enum Status {
     Failed,
 }
 
-/// One quality the search tried.
+/// One value the search tried: a quality, or a palette size.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Trial {
-    /// Abstract quality.
-    pub quality: f32,
+    /// Abstract quality, on a quality search.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<f32>,
+    /// Palette size, on a search of `png:colors=auto` (ADR-0013).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub colors: Option<u16>,
     /// SSIMULACRA2 score.
     pub score: f32,
     /// Size of the encoded trial in bytes.
@@ -107,12 +111,18 @@ pub struct Record {
     /// Abstract quality the encoder ran with.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality: Option<f32>,
+    /// Palette size the search settled on, for `png:colors=auto`
+    /// (ADR-0013).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub colors: Option<u16>,
     /// The output holds exactly the samples the encoder was given.
     /// `false` at a quality, and under an option that gives samples up,
     /// such as `png:colors`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lossless: Option<bool>,
-    /// SSIMULACRA2 target that was searched for.
+    /// SSIMULACRA2 target that was searched for, or that lossless output
+    /// meets by its one mode. Left out where neither holds: a fixed
+    /// `png:colors` searched nothing and is not exact.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<f32>,
     /// SSIMULACRA2 score of the output.
@@ -179,6 +189,9 @@ impl Record {
     }
 
     fn with_report(&mut self, r: &SearchReport) {
+        if let Axis::Colors(_) = r.axis {
+            self.colors = Some(palette_size(r.value));
+        }
         self.score = Some(r.score);
         self.reached = Some(r.reached);
         self.capped = Some(r.capped);
@@ -186,13 +199,34 @@ impl Record {
         self.trials = Some(
             r.trials
                 .iter()
-                .map(|t| Trial {
-                    quality: t.quality,
-                    score: t.score,
-                    size: t.size,
+                .map(|t| {
+                    let colors = matches!(r.axis, Axis::Colors(_));
+                    Trial {
+                        quality: (!colors).then_some(t.value),
+                        colors: colors.then(|| palette_size(t.value)),
+                        score: t.score,
+                        size: t.size,
+                    }
                 })
                 .collect(),
         );
+    }
+}
+
+/// A palette size off the search, which tries whole numbers in `2..=256`.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn palette_size(value: f32) -> u16 {
+    value.round().clamp(0.0, f32::from(u16::MAX)) as u16
+}
+
+impl Trial {
+    /// The value tried as `-v` prints it: `q72`, or `64 colours`.
+    fn label(&self) -> String {
+        match (self.quality, self.colors) {
+            (_, Some(c)) => format!("{c} colours"),
+            (Some(q), None) => format!("q{q}"),
+            (None, None) => String::new(),
+        }
     }
 }
 
@@ -424,8 +458,10 @@ pub enum Stage {
         n: u8,
         /// The budget.
         max: u8,
-        /// Quality tried.
-        quality: f32,
+        /// What the search moves along.
+        axis: Axis,
+        /// The quality or palette size tried.
+        value: f32,
         /// Score it reached.
         score: f32,
         /// Size of the encoded trial in bytes.
@@ -441,13 +477,15 @@ impl From<sqzer::Progress> for Stage {
             sqzer::Progress::Trial {
                 n,
                 max,
-                quality,
+                axis,
+                value,
                 score,
                 size,
             } => Self::Trial {
                 n,
                 max,
-                quality,
+                axis,
+                value,
                 score,
                 size,
             },
@@ -498,16 +536,23 @@ impl Worker<'_> {
             Stage::Trial {
                 n,
                 max,
-                quality,
+                axis,
+                value,
                 score,
                 size,
-            } => (
-                "magenta",
-                format!(
-                    "search {n}/{max}  q{quality} -> {score:.1}  {}",
-                    fmt_bytes(size)
-                ),
-            ),
+            } => {
+                let tried = match axis {
+                    Axis::Colors(_) => format!("{} colours", palette_size(value)),
+                    _ => format!("q{value}"),
+                };
+                (
+                    "magenta",
+                    format!(
+                        "search {n}/{max}  {tried} -> {score:.1}  {}",
+                        fmt_bytes(size)
+                    ),
+                )
+            }
             Stage::Write => ("green", "write".to_string()),
         };
         self.bar.set_style(
@@ -649,7 +694,7 @@ impl Printer {
         {
             let list: Vec<String> = trials
                 .iter()
-                .map(|t| format!("q{} {:.2} {}", t.quality, t.score, fmt_bytes(t.size)))
+                .map(|t| format!("{} {:.2} {}", t.label(), t.score, fmt_bytes(t.size)))
                 .collect();
             let _ = writeln!(
                 err,
@@ -666,7 +711,11 @@ impl Printer {
             && !fb.quiet
             && r.status == Status::Written
         {
-            let q = r.quality.map_or(String::new(), |q| format!(" at q{q}"));
+            let q = match (r.quality, r.colors) {
+                (_, Some(c)) => format!(" at {c} colours"),
+                (Some(q), None) => format!(" at q{q}"),
+                (None, None) => String::new(),
+            };
             let _ = writeln!(
                 err,
                 "{} {} -> {}: target {target} not reached, best score {score:.1}{q}",
@@ -740,6 +789,9 @@ impl Printer {
                 };
                 let how = match (r.lossless, r.quality, r.score) {
                     (Some(true), _, _) => "lossless".to_string(),
+                    (_, _, Some(s)) if r.colors.is_some() => {
+                        format!("{} colours s{s:.1}", r.colors.unwrap_or_default())
+                    }
                     (_, Some(q), Some(s)) => format!("q{q} s{s:.1}"),
                     (_, Some(q), None) => format!("q{q}"),
                     _ => String::new(),

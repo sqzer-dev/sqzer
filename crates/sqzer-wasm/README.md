@@ -77,7 +77,8 @@ enlarge       allow scaling up. nothing scales up without it
 filter        "lanczos3" | "mitchell" | "catmull-rom" | "bilinear" | "box" | "nearest"
 maxPixels     refuse a larger image. default 24 million
 codecOpts     backend options, { "jpeg:progressive": "false" }. codecs() lists the keys
-onTrial       called per trial of the search with { n, max, quality, score, size }
+onTrial       called per trial of the search with { n, max, quality, score, size },
+              or with colors in place of quality when png:colors is "auto"
 ```
 
 > **Note**: `maxPixels` defaults to 24 million, not the 268 million of the command line. The target search needs about 160 bytes per pixel, and a WebAssembly module addresses 4 GiB.
@@ -106,6 +107,18 @@ options();
   target: 70, score: 70.3, reached: true, capped: false, iterations: 3,
   trials: [{ quality: 62, score: 69.1, size: 48213 }, ...]
 }
+```
+
+A palette PNG has no quality to search. With `png:colors` at `auto` the search moves along the palette size instead, 2 to 256, and the result names it under `colors`. A fixed `png:colors` searches nothing and reports no `target`.
+
+```js
+// codec_wiki.png of gb82-sc, a 2560 x 1664 screenshot of 197711 bytes
+optimize(bytes, { format: "png", target: 80, codecOpts: { "png:colors": "auto" } });
+// { format: "png", backend: "oxipng", lossless: false, colors: 42,
+//   target: 80, score: 79.67728, reached: true, capped: false, iterations: 3,
+//   trials: [{ colors: 23, score: 66.42542, size: 44198 },
+//            { colors: 77, score: 82.29079, size: 58183 },
+//            { colors: 42, score: 79.67728, size: 51599 }] }
 ```
 
 Every function throws a `SqzerError`: an `Error` whose `kind` names the failure, and whose `availableIn` lists the `sqzer` Cargo features that have a missing backend.
